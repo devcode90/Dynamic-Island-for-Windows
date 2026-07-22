@@ -5566,6 +5566,20 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 }
                 g_state.fileTray.active = true;
                 g_state.fileTray.lastUpdated = NowSeconds();
+
+                // 1. Instantly pop up a notification toast banner showing the dropped file name!
+                if (!g_state.fileTray.items.empty()) {
+                    g_state.notification.active = true;
+                    g_state.notification.app = L"File Tray";
+                    g_state.notification.title = L"File Staged to Island";
+                    g_state.notification.body = g_state.fileTray.items[0].fileName;
+                    g_state.notification.expiresAt = NowSeconds() + 4.0;
+                }
+
+                // 2. Auto-switch g_idleTab to File Tray Drawer card index
+                int fileTrayTab = 1 + (g_settings.hardwareMonitorModule ? 1 : 0) + (g_settings.bluetoothModule ? 1 : 0);
+                g_idleTab = fileTrayTab;
+
                 g_layoutDirty = true;
             }
             DragFinish(hDrop);
