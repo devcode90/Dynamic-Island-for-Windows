@@ -3803,14 +3803,27 @@ class Renderer {
                            D2D1::RectF(rect.left + 35.0f * scale, rect.top + 30.0f * scale, rect.right - 25.0f * scale, rect.top + 55.0f * scale),
                            textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-        std::wstring trayText = L"Drag & Drop files onto island to hold";
-        if (!state.clipboard.text.empty() && !state.clipboard.image) {
-            trayText = L"Clipboard item staged";
+        std::wstring line1 = L"Drag & Drop files onto island to stage";
+        std::wstring line2 = L"Staged files will appear here";
+
+        if (!state.fileTray.items.empty()) {
+            line1 = L"📄 " + state.fileTray.items[0].fileName;
+            wchar_t countBuf[64] = {};
+            swprintf_s(countBuf, L"%zu file(s) staged \u2022 Double-click to open", state.fileTray.items.size());
+            line2 = countBuf;
+        } else if (!state.clipboard.text.empty() && !state.clipboard.image) {
+            line1 = L"📋 Clipboard Text Staged";
+            line2 = state.clipboard.text.substr(0, 45);
         }
 
+        textBrush_->SetOpacity(0.95f);
+        target_->DrawTextW(line1.c_str(), static_cast<UINT32>(line1.length()), textFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 65.0f * scale, rect.right - 25.0f * scale, rect.top + 95.0f * scale),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
         mutedBrush_->SetOpacity(0.85f);
-        target_->DrawTextW(trayText.c_str(), static_cast<UINT32>(trayText.length()), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 70.0f * scale, rect.right - 25.0f * scale, rect.top + 115.0f * scale),
+        target_->DrawTextW(line2.c_str(), static_cast<UINT32>(line2.length()), smallTextFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 95.0f * scale, rect.right - 25.0f * scale, rect.top + 125.0f * scale),
                            mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
@@ -5516,7 +5529,36 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_CREATE:
             AddClipboardFormatListener(hwnd);
             RegisterShellHookWindow(hwnd);
+            DragAcceptFiles(hwnd, TRUE);
+            ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, 1 /* MSGFLT_ALLOW */, nullptr);
+            ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, 1 /* MSGFLT_ALLOW */, nullptr);
+            ChangeWindowMessageFilterEx(hwnd, 0x0049 /* WM_COPYGLOBALDATA */, 1 /* MSGFLT_ALLOW */, nullptr);
             return 0;
+
+        case WM_DROPFILES: {
+            HDROP hDrop = reinterpret_cast<HDROP>(wParam);
+            UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
+            if (count > 0) {
+                std::lock_guard lock(g_stateMutex);
+                g_state.fileTray.items.clear();
+                for (UINT i = 0; i < count; ++i) {
+                    wchar_t filePath[MAX_PATH] = {};
+                    if (DragQueryFileW(hDrop, i, filePath, MAX_PATH) > 0) {
+                        FileTrayItem item;
+                        item.path = filePath;
+                        const wchar_t* fn = wcsrchr(filePath, L'\\');
+                        item.fileName = fn ? (fn + 1) : filePath;
+                        g_state.fileTray.items.push_back(item);
+                    }
+                }
+                g_state.fileTray.active = true;
+                g_state.fileTray.lastUpdated = NowSeconds();
+                g_layoutDirty = true;
+            }
+            DragFinish(hDrop);
+            TriggerNudge();
+            return 0;
+        }
 
         case WM_DESTROY:
             RemoveClipboardFormatListener(hwnd);
@@ -5790,7 +5832,7 @@ DWORD WINAPI RenderThreadProc(void*) {
     RegisterClassExW(&wc);
 
     HWND hwnd = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_ACCEPTFILES | WS_EX_TRANSPARENT,
         kWindowClass, L"Dynamic Island for Windows", WS_POPUP, 0, 0, 520, 140,
         nullptr, nullptr, wc.hInstance, nullptr);
 
@@ -6036,7 +6078,8 @@ DWORD WINAPI RenderThreadProc(void*) {
             g_state.system.renderFps = ClampInt(static_cast<int>(1.0f / std::max(dt, 0.001f) + 0.5f), 0, 240);
         }
 
-        SetClickThrough(hwnd, primary.kind == IslandKind::Idle && !hover && !pinned);
+        const bool draggingOrHover = hover || ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 && PtInRect(&windowRect, cursor));
+        SetClickThrough(hwnd, (primary.kind == IslandKind::Idle && !draggingOrHover && !pinned));
 
         // Check if animating structurally
         if (std::abs(widthSpring.velocity) > 0.01f || std::abs(widthSpring.target - widthSpring.value) > 0.01f ||
