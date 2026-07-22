@@ -211,9 +211,6 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - BluetoothModule: true
     $name: Include Bluetooth card in scroll loop
     $description: Add Bluetooth devices & battery status card to mouse-wheel scroll loop.
-  - FileTrayModule: true
-    $name: Enable File Tray Drawer
-    $description: Staging drawer to drag and drop files onto the island for quick holding and opening.
   - GameOverlay: false
     $name: Enable game overlay mode
     $description: Replaces the clock with live stats like FPS, CPU, and RAM usage.
@@ -361,7 +358,6 @@ struct Settings {
     bool w11Style = false;
     bool hardwareMonitorModule = true;
     bool bluetoothModule = true;
-    bool fileTrayModule = true;
     // Color customization
     D2D1_COLOR_F pillBgColor = D2D1::ColorF(0.051f, 0.051f, 0.059f, 1.0f); // #0D0D0F
     D2D1_COLOR_F textPrimaryColor = D2D1::ColorF(0.969f, 0.969f, 0.969f, 1.0f); // #F7F7F7
@@ -494,18 +490,6 @@ struct WeatherSnapshot {
     double lastUpdated = 0.0;
 };
 
-struct FileTrayItem {
-    std::wstring path;
-    std::wstring fileName;
-    uint64_t fileSize = 0;
-};
-
-struct FileTraySnapshot {
-    bool active = false;
-    std::vector<FileTrayItem> items;
-    double lastUpdated = 0.0;
-};
-
 struct SharedState {
     MediaSnapshot media;
     ClipboardSnapshot clipboard;
@@ -517,7 +501,6 @@ struct SharedState {
     ProgressSnapshot progress;
     SystemSnapshot system;
     WeatherSnapshot weather;
-    FileTraySnapshot fileTray;
     std::array<float, 48> waveform{};
     size_t waveformWrite = 0;
     bool muted = false;
@@ -806,7 +789,6 @@ void LoadSettings() {
     next.autoHideFullscreen = Wh_GetIntSetting(L"Appearance.AutoHideFullscreen") != 0;
     next.hardwareMonitorModule = Wh_GetIntSetting(L"Modules.HardwareMonitorModule") != 0;
     next.bluetoothModule = Wh_GetIntSetting(L"Modules.BluetoothModule") != 0;
-    next.fileTrayModule = Wh_GetIntSetting(L"Modules.FileTrayModule") != 0;
     next.contourBorderEnabled = Wh_GetIntSetting(L"Themes.ContourBorderEnabled") != 0;
     next.contourBorderColor = ColorFromHex(GetStringSettingCopy(L"Themes.ContourBorderHex"), D2D1::ColorF(0.200f, 0.200f, 0.220f, 1.0f));
     next.privacyDotsEnabled = Wh_GetIntSetting(L"Indicators.PrivacyDotsEnabled") != 0;
@@ -3829,36 +3811,6 @@ class Renderer {
                            mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
-    void DrawFileTrayDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, float scale) {
-        textBrush_->SetOpacity(0.96f);
-        target_->DrawTextW(L"File Tray Drawer", 16, boldTextFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 30.0f * scale, rect.right - 25.0f * scale, rect.top + 55.0f * scale),
-                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-
-        std::wstring line1 = L"Drag & Drop files onto island to stage";
-        std::wstring line2 = L"Staged files will appear here";
-
-        if (!state.fileTray.items.empty()) {
-            line1 = L"📄 " + state.fileTray.items[0].fileName;
-            wchar_t countBuf[64] = {};
-            swprintf_s(countBuf, L"%zu file(s) staged \u2022 Double-click to open", state.fileTray.items.size());
-            line2 = countBuf;
-        } else if (!state.clipboard.text.empty() && !state.clipboard.image) {
-            line1 = L"📋 Clipboard Text Staged";
-            line2 = state.clipboard.text.substr(0, 45);
-        }
-
-        textBrush_->SetOpacity(0.95f);
-        target_->DrawTextW(line1.c_str(), static_cast<UINT32>(line1.length()), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 65.0f * scale, rect.right - 25.0f * scale, rect.top + 95.0f * scale),
-                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-
-        mutedBrush_->SetOpacity(0.85f);
-        target_->DrawTextW(line2.c_str(), static_cast<UINT32>(line2.length()), smallTextFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 95.0f * scale, rect.right - 25.0f * scale, rect.top + 125.0f * scale),
-                           mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-    }
-
     void DrawIdleDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings,
                            double now) {
         if (settings.gameOverlay || Wh_GetIntValue(L"GameOverlayPinned", 0) != 0) {
@@ -3916,7 +3868,7 @@ class Renderer {
 
         // Expanded Mode
         bool hasMedia = settings.media && state.media.available;
-        int extraTabs = (settings.hardwareMonitorModule ? 1 : 0) + (settings.bluetoothModule ? 1 : 0) + (settings.fileTrayModule ? 1 : 0);
+        int extraTabs = (settings.hardwareMonitorModule ? 1 : 0) + (settings.bluetoothModule ? 1 : 0);
         const int totalTabs = (hasMedia ? 1 : 0) + 2 + extraTabs;
         int tab = g_idleTab % totalTabs;
         if (tab < 0) tab += totalTabs;
@@ -3929,10 +3881,8 @@ class Renderer {
             int subIdx = relativeTab - 2;
             if (settings.hardwareMonitorModule && subIdx == 0) {
                 DrawHardwareMonitorDashboard(state, rect, settings, scale);
-            } else if (settings.bluetoothModule && (subIdx == 0 || (settings.hardwareMonitorModule && subIdx == 1))) {
-                DrawBluetoothDashboard(state, rect, settings, scale);
             } else {
-                DrawFileTrayDashboard(state, rect, settings, scale);
+                DrawBluetoothDashboard(state, rect, settings, scale);
             }
         }
 
@@ -5564,45 +5514,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_CREATE:
             AddClipboardFormatListener(hwnd);
             RegisterShellHookWindow(hwnd);
-            DragAcceptFiles(hwnd, TRUE);
-            ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, 1 /* MSGFLT_ALLOW */, nullptr);
-            ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, 1 /* MSGFLT_ALLOW */, nullptr);
-            ChangeWindowMessageFilterEx(hwnd, 0x0049 /* WM_COPYGLOBALDATA */, 1 /* MSGFLT_ALLOW */, nullptr);
             return 0;
-
-        case WM_DROPFILES: {
-            HDROP hDrop = reinterpret_cast<HDROP>(wParam);
-            UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
-            if (count > 0) {
-                std::lock_guard lock(g_stateMutex);
-                g_state.fileTray.items.clear();
-                for (UINT i = 0; i < count; ++i) {
-                    wchar_t filePath[MAX_PATH] = {};
-                    if (DragQueryFileW(hDrop, i, filePath, MAX_PATH) > 0) {
-                        FileTrayItem item;
-                        item.path = filePath;
-                        const wchar_t* fn = wcsrchr(filePath, L'\\');
-                        item.fileName = fn ? (fn + 1) : filePath;
-                        g_state.fileTray.items.push_back(item);
-                    }
-                }
-                g_state.fileTray.active = true;
-                g_state.fileTray.lastUpdated = NowSeconds();
-
-                // Auto-switch g_idleTab to File Tray Drawer card index
-                bool hasMedia = g_settings.media && g_state.media.available;
-                int fileTrayTab = (hasMedia ? 1 : 0) + 1 + (g_settings.hardwareMonitorModule ? 1 : 0) + (g_settings.bluetoothModule ? 1 : 0);
-                g_idleTab = fileTrayTab;
-
-                // Expand island on hover/click interaction
-                g_clickExpanded = true;
-
-                g_layoutDirty = true;
-            }
-            DragFinish(hDrop);
-            TriggerNudge();
-            return 0;
-        }
 
         case WM_DESTROY:
             RemoveClipboardFormatListener(hwnd);
@@ -5876,7 +5788,7 @@ DWORD WINAPI RenderThreadProc(void*) {
     RegisterClassExW(&wc);
 
     HWND hwnd = CreateWindowExW(
-        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_ACCEPTFILES | WS_EX_TRANSPARENT,
+        WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
         kWindowClass, L"Dynamic Island for Windows", WS_POPUP, 0, 0, 520, 140,
         nullptr, nullptr, wc.hInstance, nullptr);
 
