@@ -814,6 +814,8 @@ void LoadSettings() {
     next.micDotColor = ColorFromHex(GetStringSettingCopy(L"Indicators.MicDotHex"), D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f));
     next.camDotColor = ColorFromHex(GetStringSettingCopy(L"Indicators.CamDotHex"), D2D1::ColorF(0.204f, 0.780f, 0.349f, 1.0f));
 
+    Wh_SetIntValue(L"PinnedExpanded", 0);
+
     bool cityChanged = next.weatherCity != g_settings.weatherCity;
     g_settings = next;
     g_layoutDirty = true;
@@ -5575,8 +5577,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 int fileTrayTab = (hasMedia ? 1 : 0) + 1 + (g_settings.hardwareMonitorModule ? 1 : 0) + (g_settings.bluetoothModule ? 1 : 0);
                 g_idleTab = fileTrayTab;
 
-                // Keep island pinned open so the File Tray Drawer stays visible!
-                Wh_SetIntValue(L"PinnedExpanded", 1);
+                // Expand island on hover/click interaction
+                g_clickExpanded = true;
 
                 g_layoutDirty = true;
             }
@@ -6037,8 +6039,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             primary.height = 64.0f * g_settings.sizeScale;
         }
         if (primary.kind == IslandKind::Media) {
-            bool recentArtChange = (NowSeconds() - g_state.media.artChangedAt) < 4.0;
-            if (!isFullscreen && (isHoverExpanded || pinned || recentArtChange)) {
+            if (!isFullscreen && (isHoverExpanded || pinned)) {
                 primary.width = 380.0f * g_settings.sizeScale;
                 primary.height = 184.0f * g_settings.sizeScale;
             }
@@ -6049,10 +6050,6 @@ DWORD WINAPI RenderThreadProc(void*) {
         if (secondary) {
             targetWidth = primary.width + secondary->width + 12.0f * g_settings.sizeScale;
             targetHeight = std::max(primary.height, secondary->height);
-        }
-        if (pinned) {
-            targetWidth = std::max(targetWidth, 380.0f * g_settings.sizeScale);
-            targetHeight = std::max(targetHeight, 64.0f * g_settings.sizeScale);
         }
 
         widthSpring.target = targetWidth;
