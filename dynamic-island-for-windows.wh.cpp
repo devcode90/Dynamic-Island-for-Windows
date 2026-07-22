@@ -95,6 +95,9 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - OffsetY: 0
     $name: Offset Y
     $description: Adjust the vertical position (in pixels). Positive values move it down, negative values move it up.
+  - BorderMergedMode: false
+    $name: Border-Merged Mode
+    $description: Attach the island flush to the top edge of the monitor without a floating gap.
   - SizeScale: '1.0'
     $name: Size scale
     $description: Makes the entire island and its contents larger or smaller.
@@ -116,6 +119,9 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
       - '10': Hide after 10 seconds
       - '30': Hide after 30 seconds
       - '60': Hide after 60 seconds
+  - AutoHideFullscreen: true
+    $name: Hide on full screen
+    $description: Automatically hide the island when playing a video or app in full screen mode.
   - UnhideOnHover: true
     $name: Unhide on hover
     $description: Allow the hidden island to reappear when you hover your mouse over it.
@@ -159,6 +165,12 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - TextSecondaryColor: "#888888"
     $name: Secondary text color
     $description: Hex color for artist names and muted labels.
+  - ContourBorderEnabled: true
+    $name: Show contour border
+    $description: Enable gray contour stroke line around the island.
+  - ContourBorderHex: "#333338"
+    $name: Contour border hex color
+    $description: Hex color for the island contour stroke.
   - TintIntensity: 72
     $name: Background tint intensity
     $description: 0 to 100. Controls how dark the background tint behind the island is.
@@ -166,6 +178,20 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
     $name: Pill transparency
     $description: 35 to 100. Lower values make the island more see-through.
   $name: Colors & Theming
+- Indicators:
+  - PrivacyDotsEnabled: true
+    $name: Show privacy indicators
+    $description: Display orange (mic) and green (camera) dots when hardware is in use.
+  - PrivacyDotPulsing: true
+    $name: Pulse privacy dots
+    $description: Enable smooth pulsing animation on active privacy dots.
+  - MicDotHex: "#FF9500"
+    $name: Microphone dot color
+    $description: Hex color for microphone privacy indicator.
+  - CamDotHex: "#34C759"
+    $name: Camera dot color
+    $description: Hex color for camera privacy indicator.
+  $name: Privacy Indicators
 - Modules:
   - Media: true
     $name: Media module
@@ -179,6 +205,9 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - Progress: true
     $name: Progress module
     $description: Shows a progress ring around the island for downloads or file copies.
+  - HardwareMonitorModule: true
+    $name: Include Hardware Monitor in scroll loop
+    $description: Add CPU, GPU, RAM, FPS and Network stats card to mouse-wheel scroll loop.
   - GameOverlay: false
     $name: Enable game overlay mode
     $description: Replaces the clock with live stats like FPS, CPU, and RAM usage.
@@ -317,15 +346,24 @@ struct Settings {
     std::wstring weatherCity;
     bool weatherFahrenheit = false;
     int autoHideIdleSeconds = 0;
+    bool autoHideFullscreen = true;
+    bool borderMergedMode = false;
     bool unhideOnHover = true;
     bool alwaysOnTop = true;
     bool expandOnHover = true;
     bool autoDpiScale = true;
     bool w11Style = false;
+    bool hardwareMonitorModule = true;
     // Color customization
     D2D1_COLOR_F pillBgColor = D2D1::ColorF(0.051f, 0.051f, 0.059f, 1.0f); // #0D0D0F
     D2D1_COLOR_F textPrimaryColor = D2D1::ColorF(0.969f, 0.969f, 0.969f, 1.0f); // #F7F7F7
     D2D1_COLOR_F textSecondaryColor = D2D1::ColorF(0.533f, 0.533f, 0.533f, 1.0f); // #888888
+    bool contourBorderEnabled = true;
+    D2D1_COLOR_F contourBorderColor = D2D1::ColorF(0.200f, 0.200f, 0.220f, 1.0f); // #333338
+    bool privacyDotsEnabled = true;
+    bool privacyDotPulsing = true;
+    D2D1_COLOR_F micDotColor = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f); // #FF9500
+    D2D1_COLOR_F camDotColor = D2D1::ColorF(0.204f, 0.780f, 0.349f, 1.0f); // #34C759
 };
 
 struct BitmapPixels {
@@ -578,6 +616,39 @@ D2D1_COLOR_F ColorFromHex(std::wstring text, D2D1_COLOR_F fallback) {
         1.0f);
 }
 
+// Returns true if the currently active foreground window is in full screen mode
+bool IsForegroundFullscreen(HWND targetHwnd) {
+    HWND fg = GetForegroundWindow();
+    if (!fg || fg == targetHwnd || fg == GetDesktopWindow() || fg == GetShellWindow()) {
+        return false;
+    }
+
+    if (!IsWindowVisible(fg)) return false;
+
+    wchar_t className[256] = {};
+    GetClassNameW(fg, className, 256);
+    if (wcscmp(className, L"WorkerW") == 0 || wcscmp(className, L"Progman") == 0 ||
+        wcscmp(className, L"Shell_TrayWnd") == 0) {
+        return false;
+    }
+
+    RECT appRect = {};
+    if (!GetWindowRect(fg, &appRect)) return false;
+
+    HMONITOR hMon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = { sizeof(MONITORINFO) };
+    if (GetMonitorInfoW(hMon, &mi)) {
+        if (appRect.left <= mi.rcMonitor.left &&
+            appRect.top <= mi.rcMonitor.top &&
+            appRect.right >= mi.rcMonitor.right &&
+            appRect.bottom >= mi.rcMonitor.bottom) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // Returns the DPI scale factor for the primary monitor (1.0 = 96 DPI = 100%)
 float GetPrimaryMonitorDpiScale() {
     POINT pt = {0, 0};
@@ -710,6 +781,16 @@ void LoadSettings() {
                                                D2D1::ColorF(0.533f, 0.533f, 0.533f, 1.0f));
     }
 
+    next.borderMergedMode = Wh_GetIntSetting(L"Appearance.BorderMergedMode") != 0;
+    next.autoHideFullscreen = Wh_GetIntSetting(L"Appearance.AutoHideFullscreen") != 0;
+    next.hardwareMonitorModule = Wh_GetIntSetting(L"Modules.HardwareMonitorModule") != 0;
+    next.contourBorderEnabled = Wh_GetIntSetting(L"Themes.ContourBorderEnabled") != 0;
+    next.contourBorderColor = ColorFromHex(GetStringSettingCopy(L"Themes.ContourBorderHex"), D2D1::ColorF(0.200f, 0.200f, 0.220f, 1.0f));
+    next.privacyDotsEnabled = Wh_GetIntSetting(L"Indicators.PrivacyDotsEnabled") != 0;
+    next.privacyDotPulsing = Wh_GetIntSetting(L"Indicators.PrivacyDotPulsing") != 0;
+    next.micDotColor = ColorFromHex(GetStringSettingCopy(L"Indicators.MicDotHex"), D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f));
+    next.camDotColor = ColorFromHex(GetStringSettingCopy(L"Indicators.CamDotHex"), D2D1::ColorF(0.204f, 0.780f, 0.349f, 1.0f));
+
     bool cityChanged = next.weatherCity != g_settings.weatherCity;
     g_settings = next;
     g_layoutDirty = true;
@@ -766,17 +847,18 @@ RECT GetAnchorWorkRect() {
 
 void PositionOverlayWindow(HWND hwnd, int width, int height) {
     RECT work = GetAnchorWorkRect();
+    const int topMargin = g_settings.borderMergedMode ? 0 : 8;
     int x = work.left + (work.right - work.left - width) / 2;
-    int y = work.top + 8;
+    int y = work.top + topMargin;
 
     switch (g_settings.position) {
         case Position::TopLeft:
             x = work.left + 16;
-            y = work.top + 8;
+            y = work.top + topMargin;
             break;
         case Position::TopRight:
             x = work.right - width - 16;
-            y = work.top + 8;
+            y = work.top + topMargin;
             break;
         case Position::BottomCenter:
             x = work.left + (work.right - work.left - width) / 2;
@@ -3266,7 +3348,7 @@ class Renderer {
         DrawSoftShadow(rect, radius);
 
         D2D1_ROUNDED_RECT pill = D2D1::RoundedRect(rect, radius, radius);
-        DrawPillSurface(rect, radius, activity.kind, settings.w11Style);
+        DrawPillSurface(rect, radius, activity.kind, settings);
 
         if (activity.kind == IslandKind::Progress) {
             DrawProgressRing(rect, state.progress.percent);
@@ -3337,7 +3419,7 @@ class Renderer {
         // ── Apple-style privacy indicator dots ───────────────────────────────
         // Green dot = camera in use, Orange dot = mic in use.
         // Drawn in top-right corner of pill, outside content area.
-        DrawPrivacyDots(state, unscaledRect, now);
+        DrawPrivacyDots(state, settings, unscaledRect, now);
 
         target_->SetTransform(oldTransform);
     }
@@ -3349,13 +3431,15 @@ class Renderer {
 
     // Apple Dynamic Island privacy dots.
     // Placed inside the pill near the top-right edge — pulsing glow like iPhone.
-    void DrawPrivacyDots(const SharedState& state, D2D1_RECT_F rect, double now) {
+    void DrawPrivacyDots(const SharedState& state, const Settings& settings, D2D1_RECT_F rect, double now) {
+        if (!settings.privacyDotsEnabled) return;
         const bool mic = state.system.micActive;
         const bool cam = state.system.cameraActive;
         if (!mic && !cam) return;
 
-        // Soft breathing pulse (0.75 Hz like iPhone).
-        const float pulse = 0.72f + 0.28f * std::sin(static_cast<float>(now * 2.0 * 3.14159265 * 0.75));
+        // Soft breathing pulse (0.75 Hz like iPhone) or steady solid dot if pulsing disabled.
+        const float pulse = settings.privacyDotPulsing ? 
+            (0.72f + 0.28f * std::sin(static_cast<float>(now * 2.0 * 3.14159265 * 0.75))) : 1.0f;
 
         const float dotR   = 4.5f;   // dot radius
         const float gap    = 5.5f;   // gap between dots
@@ -3367,19 +3451,21 @@ class Renderer {
         // Green = camera (rightmost when both active).
         if (cam) {
             ComPtr<ID2D1SolidColorBrush> camBrush;
-            // Bright iOS camera green.
-            target_->CreateSolidColorBrush(
-                D2D1::ColorF(0.133f, 0.776f, 0.239f, pulse * settingsOpacity_), &camBrush);
+            D2D1_COLOR_F cCol = settings.camDotColor;
+            cCol.a = pulse * settingsOpacity_;
+            target_->CreateSolidColorBrush(cCol, &camBrush);
             if (camBrush) {
                 target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY), dotR, dotR),
                                      camBrush.Get());
-                // Glow halo.
-                ComPtr<ID2D1SolidColorBrush> glow;
-                target_->CreateSolidColorBrush(
-                    D2D1::ColorF(0.133f, 0.776f, 0.239f, 0.18f * pulse * settingsOpacity_), &glow);
-                if (glow) {
-                    target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY),
-                                                        dotR * 2.2f, dotR * 2.2f), glow.Get());
+                if (settings.privacyDotPulsing) {
+                    ComPtr<ID2D1SolidColorBrush> glow;
+                    D2D1_COLOR_F gCol = cCol;
+                    gCol.a = 0.18f * pulse * settingsOpacity_;
+                    target_->CreateSolidColorBrush(gCol, &glow);
+                    if (glow) {
+                        target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY),
+                                                            dotR * 2.2f, dotR * 2.2f), glow.Get());
+                    }
                 }
             }
             x -= (dotR * 2.0f + gap);
@@ -3388,24 +3474,27 @@ class Renderer {
         // Orange = microphone.
         if (mic) {
             ComPtr<ID2D1SolidColorBrush> micBrush;
-            // iOS orange.
-            target_->CreateSolidColorBrush(
-                D2D1::ColorF(1.0f, 0.584f, 0.0f, pulse * settingsOpacity_), &micBrush);
+            D2D1_COLOR_F mCol = settings.micDotColor;
+            mCol.a = pulse * settingsOpacity_;
+            target_->CreateSolidColorBrush(mCol, &micBrush);
             if (micBrush) {
                 target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY), dotR, dotR),
                                      micBrush.Get());
-                ComPtr<ID2D1SolidColorBrush> glow;
-                target_->CreateSolidColorBrush(
-                    D2D1::ColorF(1.0f, 0.584f, 0.0f, 0.18f * pulse * settingsOpacity_), &glow);
-                if (glow) {
-                    target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY),
-                                                        dotR * 2.2f, dotR * 2.2f), glow.Get());
+                if (settings.privacyDotPulsing) {
+                    ComPtr<ID2D1SolidColorBrush> glow;
+                    D2D1_COLOR_F gCol = mCol;
+                    gCol.a = 0.18f * pulse * settingsOpacity_;
+                    target_->CreateSolidColorBrush(gCol, &glow);
+                    if (glow) {
+                        target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY),
+                                                            dotR * 2.2f, dotR * 2.2f), glow.Get());
+                    }
                 }
             }
         }
     }
 
-    void DrawPillSurface(D2D1_RECT_F rect, float radius, IslandKind kind, bool w11Style) {
+    void DrawPillSurface(D2D1_RECT_F rect, float radius, IslandKind kind, const Settings& settings) {
         UNREFERENCED_PARAMETER(kind);
 
         if (tintBrush_) {
@@ -3423,18 +3512,19 @@ class Renderer {
                                           blackBrush.Get());
         }
 
-        if (w11Style) {
-            // In Windows 11 style, we draw a double-layer modern border.
-            // Windows 11 uses a very subtle 1px border. In dark mode, it's white with 15% opacity.
-            ComPtr<ID2D1SolidColorBrush> border;
-            target_->CreateSolidColorBrush(
-                D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.15f * settingsOpacity_), &border);
-            if (border) {
-                target_->DrawRoundedRectangle(
-                    D2D1::RoundedRect(D2D1::RectF(rect.left + 0.5f, rect.top + 0.5f,
-                                                  rect.right - 0.5f, rect.bottom - 0.5f),
-                                      radius, radius),
-                    border.Get(), 1.0f);
+        if (settings.w11Style) {
+            if (settings.contourBorderEnabled) {
+                ComPtr<ID2D1SolidColorBrush> border;
+                D2D1_COLOR_F contourCol = settings.contourBorderColor;
+                contourCol.a *= settingsOpacity_;
+                target_->CreateSolidColorBrush(contourCol, &border);
+                if (border) {
+                    target_->DrawRoundedRectangle(
+                        D2D1::RoundedRect(D2D1::RectF(rect.left + 0.5f, rect.top + 0.5f,
+                                                      rect.right - 0.5f, rect.bottom - 0.5f),
+                                          radius, radius),
+                        border.Get(), 1.0f);
+                }
             }
         } else {
             // Thin top-edge gloss: simulates iPhone notch glass shine.
@@ -3447,15 +3537,18 @@ class Renderer {
                 target_->FillRectangle(glossLine, gloss.Get());
             }
 
-            // Outer border: extremely subtle white rim like iPhone Dynamic Island edge.
-            ComPtr<ID2D1SolidColorBrush> border;
-            target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.08f * settingsOpacity_),
-                                           &border);
-            if (border) {
-                target_->DrawRoundedRectangle(D2D1::RoundedRect(
-                    D2D1::RectF(rect.left + 0.5f, rect.top + 0.5f,
-                                rect.right - 0.5f, rect.bottom - 0.5f),
-                    radius, radius), border.Get(), 0.8f);
+            // Outer border: customizable contour rim edge.
+            if (settings.contourBorderEnabled) {
+                ComPtr<ID2D1SolidColorBrush> border;
+                D2D1_COLOR_F contourCol = settings.contourBorderColor;
+                contourCol.a *= settingsOpacity_;
+                target_->CreateSolidColorBrush(contourCol, &border);
+                if (border) {
+                    target_->DrawRoundedRectangle(D2D1::RoundedRect(
+                        D2D1::RectF(rect.left + 0.5f, rect.top + 0.5f,
+                                    rect.right - 0.5f, rect.bottom - 0.5f),
+                        radius, radius), border.Get(), 0.8f);
+                }
             }
         }
     }
@@ -3643,6 +3736,35 @@ class Renderer {
                            rightLine5, mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
+    void DrawHardwareMonitorDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, float scale) {
+        textBrush_->SetOpacity(0.96f);
+        target_->DrawTextW(L"Hardware & Performance", 22, boldTextFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 30.0f * scale, rect.right - 25.0f * scale, rect.top + 55.0f * scale),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+        wchar_t line1[128] = {};
+        swprintf_s(line1, L"CPU: %d%%   \u2022   RAM: %d%%",
+                   state.system.cpuPercent, state.system.memoryPercent);
+
+        wchar_t line2[128] = {};
+        if (state.system.gpuPercent >= 0) {
+            swprintf_s(line2, L"GPU: %d%%   \u2022   FPS: %d",
+                       state.system.gpuPercent, state.system.renderFps);
+        } else {
+            swprintf_s(line2, L"FPS: %d   \u2022   Disk Free: %d%%",
+                       state.system.renderFps, state.system.diskFreePercent);
+        }
+
+        mutedBrush_->SetOpacity(0.85f);
+        target_->DrawTextW(line1, static_cast<UINT32>(wcslen(line1)), textFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 65.0f * scale, rect.right - 25.0f * scale, rect.top + 95.0f * scale),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+        target_->DrawTextW(line2, static_cast<UINT32>(wcslen(line2)), textFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 95.0f * scale, rect.right - 25.0f * scale, rect.top + 125.0f * scale),
+                           mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+    }
+
     void DrawIdleDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings,
                            double now) {
         if (settings.gameOverlay || Wh_GetIntValue(L"GameOverlayPinned", 0) != 0) {
@@ -3651,7 +3773,7 @@ class Renderer {
         }
         target_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         
-        bool privacyActive = state.system.micActive || state.system.cameraActive;
+        bool privacyActive = (state.system.micActive || state.system.cameraActive) && settings.privacyDotsEnabled;
         if (!clockFormat_) return;
 
         SYSTEMTIME local = {};
@@ -3699,18 +3821,18 @@ class Renderer {
         }
 
         // Expanded Mode
-        int tab = g_idleTab % 2;
-        if (tab < 0) tab += 2;
+        const int totalTabs = settings.hardwareMonitorModule ? 3 : 2;
+        int tab = g_idleTab % totalTabs;
+        if (tab < 0) tab += totalTabs;
 
         if (tab == 0) DrawCalendarDashboard(state, rect, settings, now, scale, local);
-        else DrawWeatherDashboard(state, rect, settings, now, scale, hasWeather, wIcon, wText);
+        else if (tab == 1) DrawWeatherDashboard(state, rect, settings, now, scale, hasWeather, wIcon, wText);
+        else DrawHardwareMonitorDashboard(state, rect, settings, scale);
 
         // Pagination dots (Vertical on the right edge)
         float shiftX = 0.0f;
-        if (state.system.micActive && state.system.cameraActive) {
-            shiftX = 30.0f * scale;
-        } else if (state.system.micActive || state.system.cameraActive) {
-            shiftX = 16.0f * scale;
+        if (privacyActive) {
+            shiftX = 24.0f * scale;
         }
         const float dotX = rect.right - 10.0f * scale - shiftX;
         const float dotY = (rect.top + rect.bottom) * 0.5f;
@@ -3721,8 +3843,10 @@ class Renderer {
         target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.85f * settingsOpacity_), &activeDot);
         target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.25f * settingsOpacity_), &inactiveDot);
 
-        target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, dotY - spacing * 0.5f), r, r), tab == 0 ? activeDot.Get() : inactiveDot.Get());
-        target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, dotY + spacing * 0.5f), r, r), tab == 1 ? activeDot.Get() : inactiveDot.Get());
+        for (int t = 0; t < totalTabs; ++t) {
+            float py = dotY + (t - (totalTabs - 1) * 0.5f) * spacing;
+            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, py), r, r), tab == t ? activeDot.Get() : inactiveDot.Get());
+        }
 
         target_->PopAxisAlignedClip();
     }
@@ -5559,11 +5683,13 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             lastScrollTime = now;
 
             bool mediaActive = false;
+            bool hwMonActive = false;
             {
                 std::lock_guard lock(g_stateMutex);
                 mediaActive = g_settings.media && g_state.media.available;
+                hwMonActive = g_settings.hardwareMonitorModule;
             }
-            int tabCount = mediaActive ? 3 : 2;
+            int tabCount = (mediaActive ? 1 : 0) + 2 + (hwMonActive ? 1 : 0);
             int delta = GET_WHEEL_DELTA_WPARAM(wParam);
             if (delta > 0) {
                 if (g_idleTab > 0) g_idleTab--;
@@ -5736,7 +5862,16 @@ DWORD WINAPI RenderThreadProc(void*) {
             needsRender = true;
         }
         static double lastInteractionTime = NowSeconds();
-        bool currentlyHidden = false;
+        static double lastTopmostTime = 0.0;
+
+        // Reinforce HWND_TOPMOST every 2 seconds to prevent third-party apps (e.g. PowerToys) from covering the island
+        if (g_settings.alwaysOnTop && (now - lastTopmostTime > 2.0)) {
+            lastTopmostTime = now;
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+
+        const bool isFullscreen = g_settings.autoHideFullscreen && IsForegroundFullscreen(hwnd);
+        bool currentlyHidden = isFullscreen;
         if (g_settings.autoHideIdleSeconds == -1) {
             currentlyHidden = true;
         } else if (g_settings.autoHideIdleSeconds > 0) {
@@ -5748,34 +5883,36 @@ DWORD WINAPI RenderThreadProc(void*) {
         if (currentlyHidden && !g_settings.unhideOnHover && primary.kind == IslandKind::Idle) {
             isHoverExpanded = false;
         } else if (isHoverExpanded || pinned || primary.kind != IslandKind::Idle) {
-            lastInteractionTime = now;
+            if (!isFullscreen) {
+                lastInteractionTime = now;
+            }
         }
         
-        bool isHidden = false;
+        bool isHidden = isFullscreen;
         if (g_settings.autoHideIdleSeconds == -1) {
             isHidden = true;
         } else if (g_settings.autoHideIdleSeconds > 0) {
             isHidden = (now - lastInteractionTime > g_settings.autoHideIdleSeconds);
         }
 
-        bool privacyActive = snapshot.system.micActive || snapshot.system.cameraActive;
+        bool privacyActive = (snapshot.system.micActive || snapshot.system.cameraActive) && g_settings.privacyDotsEnabled;
         if (primary.kind == IslandKind::Idle) {
-            if (pinned || isHoverExpanded) {
+            if (!isFullscreen && (pinned || isHoverExpanded)) {
                 primary.width = 380.0f * g_settings.sizeScale;
                 primary.height = 184.0f * g_settings.sizeScale;
-            } else if (isHidden && !privacyActive) {
+            } else if ((isHidden || isFullscreen) && !privacyActive) {
                 primary.width = 0.0f;
                 primary.height = 0.0f;
             }
         }
-        if (primary.kind == IslandKind::Idle &&
+        if (!isFullscreen && primary.kind == IslandKind::Idle &&
             (g_settings.gameOverlay || Wh_GetIntValue(L"GameOverlayPinned", 0) != 0)) {
             primary.width = 372.0f * g_settings.sizeScale;
             primary.height = 64.0f * g_settings.sizeScale;
         }
         if (primary.kind == IslandKind::Media) {
             bool recentArtChange = (NowSeconds() - g_state.media.artChangedAt) < 4.0;
-            if (isHoverExpanded || pinned || recentArtChange) {
+            if (!isFullscreen && (isHoverExpanded || pinned || recentArtChange)) {
                 primary.width = 380.0f * g_settings.sizeScale;
                 primary.height = 184.0f * g_settings.sizeScale;
             }
