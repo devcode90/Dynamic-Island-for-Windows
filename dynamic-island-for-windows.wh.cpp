@@ -3448,8 +3448,21 @@ class Renderer {
     }
 
     void DrawSoftShadow(D2D1_RECT_F rect, float radius) {
-        UNREFERENCED_PARAMETER(rect);
-        UNREFERENCED_PARAMETER(radius);
+        if (!shadowBrush_) return;
+        
+        // Multi-pass 3D ambient drop shadow
+        const float shadowLayers[3] = { 4.0f, 9.0f, 16.0f };
+        const float shadowOpacities[3] = { 0.25f, 0.12f, 0.05f };
+
+        for (int i = 0; i < 3; ++i) {
+            float exp = shadowLayers[i];
+            shadowBrush_->SetOpacity(shadowOpacities[i] * settingsOpacity_);
+            D2D1_RECT_F sRect = D2D1::RectF(rect.left - exp * 0.5f, rect.top - exp * 0.2f + exp * 0.4f,
+                                            rect.right + exp * 0.5f, rect.bottom + exp * 0.6f);
+            target_->FillRoundedRectangle(D2D1::RoundedRect(sRect, radius + exp * 0.5f, radius + exp * 0.5f),
+                                          shadowBrush_.Get());
+        }
+        shadowBrush_->SetOpacity(1.0f);
     }
 
     // Apple Dynamic Island privacy dots.
