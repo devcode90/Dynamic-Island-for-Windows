@@ -3535,43 +3535,37 @@ class Renderer {
                                           blackBrush.Get());
         }
 
-        if (settings.w11Style) {
-            if (settings.contourBorderEnabled) {
-                ComPtr<ID2D1SolidColorBrush> border;
-                D2D1_COLOR_F contourCol = settings.contourBorderColor;
-                contourCol.a *= settingsOpacity_;
-                target_->CreateSolidColorBrush(contourCol, &border);
-                if (border) {
-                    target_->DrawRoundedRectangle(
-                        D2D1::RoundedRect(D2D1::RectF(rect.left + 0.5f, rect.top + 0.5f,
-                                                      rect.right - 0.5f, rect.bottom - 0.5f),
-                                          radius, radius),
-                        border.Get(), 1.0f);
-                }
-            }
-        } else {
-            // Thin top-edge gloss: simulates iPhone notch glass shine.
-            ComPtr<ID2D1SolidColorBrush> gloss;
-            target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.055f * settingsOpacity_),
-                                           &gloss);
-            if (gloss) {
-                D2D1_RECT_F glossLine = D2D1::RectF(rect.left + radius, rect.top + 0.5f,
-                                                    rect.right - radius, rect.top + 1.2f);
-                target_->FillRectangle(glossLine, gloss.Get());
-            }
+        // Glass Specular Curved Highlight (iPhone / Windows 11 Glass effect)
+        ComPtr<ID2D1SolidColorBrush> gloss;
+        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.085f * settingsOpacity_), &gloss);
+        if (gloss) {
+            D2D1_RECT_F glossRect = D2D1::RectF(rect.left + radius * 0.5f, rect.top + 1.0f,
+                                                rect.right - radius * 0.5f, rect.top + (rect.bottom - rect.top) * 0.28f);
+            target_->FillRoundedRectangle(D2D1::RoundedRect(glossRect, radius * 0.4f, radius * 0.4f), gloss.Get());
+        }
 
-            // Outer border: customizable contour rim edge.
-            if (settings.contourBorderEnabled) {
-                ComPtr<ID2D1SolidColorBrush> border;
-                D2D1_COLOR_F contourCol = settings.contourBorderColor;
-                contourCol.a *= settingsOpacity_;
-                target_->CreateSolidColorBrush(contourCol, &border);
-                if (border) {
-                    target_->DrawRoundedRectangle(D2D1::RoundedRect(
-                        D2D1::RectF(rect.left + 0.5f, rect.top + 0.5f,
-                                    rect.right - 0.5f, rect.bottom - 0.5f),
-                        radius, radius), border.Get(), 0.8f);
-                }
+        // Subtle Inner Depth Rim Line
+        ComPtr<ID2D1SolidColorBrush> innerRim;
+        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.045f * settingsOpacity_), &innerRim);
+        if (innerRim) {
+            target_->DrawRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(rect.left + 1.2f, rect.top + 1.2f,
+                                              rect.right - 1.2f, rect.bottom - 1.2f),
+                                  radius - 1.0f, radius - 1.0f),
+                innerRim.Get(), 0.75f);
+        }
+
+        // Outer border: customizable contour rim edge.
+        if (settings.contourBorderEnabled) {
+            ComPtr<ID2D1SolidColorBrush> border;
+            D2D1_COLOR_F contourCol = settings.contourBorderColor;
+            contourCol.a *= settingsOpacity_;
+            target_->CreateSolidColorBrush(contourCol, &border);
+            if (border) {
+                target_->DrawRoundedRectangle(D2D1::RoundedRect(
+                    D2D1::RectF(rect.left + 0.5f, rect.top + 0.5f,
+                                rect.right - 0.5f, rect.bottom - 0.5f),
+                    radius, radius), border.Get(), 1.0f);
             }
         }
     }
@@ -3760,64 +3754,114 @@ class Renderer {
     }
 
     void DrawHardwareMonitorDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, float scale) {
+        // Modern Section Header
         textBrush_->SetOpacity(0.96f);
-        target_->DrawTextW(L"Hardware & Performance", 22, boldTextFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 30.0f * scale, rect.right - 25.0f * scale, rect.top + 55.0f * scale),
+        target_->DrawTextW(L"System Performance", 18, boldTextFormat_.Get(),
+                           D2D1::RectF(rect.left + 32.0f * scale, rect.top + 26.0f * scale, rect.right - 30.0f * scale, rect.top + 50.0f * scale),
                            textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-        wchar_t line1[128] = {};
-        swprintf_s(line1, L"CPU: %d%%   \u2022   RAM: %d%%",
-                   state.system.cpuPercent, state.system.memoryPercent);
+        // CPU Bar
+        float barWidth = (rect.right - rect.left) - 105.0f * scale;
+        float cpuPct = Clamp(state.system.cpuPercent / 100.0f, 0.0f, 1.0f);
+        D2D1_RECT_F cpuTrack = D2D1::RectF(rect.left + 32.0f * scale, rect.top + 58.0f * scale, rect.left + 32.0f * scale + barWidth, rect.top + 68.0f * scale);
+        
+        ComPtr<ID2D1SolidColorBrush> trackBg, cpuBrush, ramBrush;
+        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.08f * settingsOpacity_), &trackBg);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.00f, 0.76f, 1.00f, 0.90f * settingsOpacity_), &cpuBrush); // Cyan glow
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.94f, 0.44f, 0.98f, 0.90f * settingsOpacity_), &ramBrush); // Purple glow
 
-        wchar_t line2[128] = {};
+        if (trackBg) target_->FillRoundedRectangle(D2D1::RoundedRect(cpuTrack, 5.0f, 5.0f), trackBg.Get());
+        D2D1_RECT_F cpuFill = D2D1::RectF(cpuTrack.left, cpuTrack.top, cpuTrack.left + barWidth * cpuPct, cpuTrack.bottom);
+        if (cpuBrush && cpuPct > 0.01f) target_->FillRoundedRectangle(D2D1::RoundedRect(cpuFill, 5.0f, 5.0f), cpuBrush.Get());
+
+        wchar_t cpuLabel[64] = {};
+        swprintf_s(cpuLabel, L"CPU %d%%", state.system.cpuPercent);
+        smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+        target_->DrawTextW(cpuLabel, static_cast<UINT32>(wcslen(cpuLabel)), smallTextFormat_.Get(),
+                           D2D1::RectF(cpuTrack.right + 8.0f * scale, cpuTrack.top - 2.0f, rect.right - 35.0f * scale, cpuTrack.bottom + 4.0f),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+        // RAM Bar
+        float ramPct = Clamp(state.system.memoryPercent / 100.0f, 0.0f, 1.0f);
+        D2D1_RECT_F ramTrack = D2D1::RectF(rect.left + 32.0f * scale, rect.top + 80.0f * scale, rect.left + 32.0f * scale + barWidth, rect.top + 90.0f * scale);
+        if (trackBg) target_->FillRoundedRectangle(D2D1::RoundedRect(ramTrack, 5.0f, 5.0f), trackBg.Get());
+        D2D1_RECT_F ramFill = D2D1::RectF(ramTrack.left, ramTrack.top, ramTrack.left + barWidth * ramPct, ramTrack.bottom);
+        if (ramBrush && ramPct > 0.01f) target_->FillRoundedRectangle(D2D1::RoundedRect(ramFill, 5.0f, 5.0f), ramBrush.Get());
+
+        wchar_t ramLabel[64] = {};
+        swprintf_s(ramLabel, L"RAM %d%%", state.system.memoryPercent);
+        target_->DrawTextW(ramLabel, static_cast<UINT32>(wcslen(ramLabel)), smallTextFormat_.Get(),
+                           D2D1::RectF(ramTrack.right + 8.0f * scale, ramTrack.top - 2.0f, rect.right - 35.0f * scale, ramTrack.bottom + 4.0f),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+        smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+
+        // GPU / FPS Chips below
+        wchar_t chipText[128] = {};
         if (state.system.gpuPercent >= 0) {
-            swprintf_s(line2, L"GPU: %d%%   \u2022   FPS: %d",
-                       state.system.gpuPercent, state.system.renderFps);
+            swprintf_s(chipText, L"🎮 GPU %d%%   \u2022   ⚡ %d FPS", state.system.gpuPercent, state.system.renderFps);
         } else {
-            swprintf_s(line2, L"FPS: %d   \u2022   Disk Free: %d%%",
-                       state.system.renderFps, state.system.diskFreePercent);
+            swprintf_s(chipText, L"⚡ %d FPS   \u2022   💾 Free Disk %d%%", state.system.renderFps, state.system.diskFreePercent);
         }
-
-        mutedBrush_->SetOpacity(0.85f);
-        target_->DrawTextW(line1, static_cast<UINT32>(wcslen(line1)), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 65.0f * scale, rect.right - 25.0f * scale, rect.top + 95.0f * scale),
-                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-
-        target_->DrawTextW(line2, static_cast<UINT32>(wcslen(line2)), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 95.0f * scale, rect.right - 25.0f * scale, rect.top + 125.0f * scale),
+        mutedBrush_->SetOpacity(0.80f);
+        target_->DrawTextW(chipText, static_cast<UINT32>(wcslen(chipText)), smallTextFormat_.Get(),
+                           D2D1::RectF(rect.left + 32.0f * scale, rect.top + 104.0f * scale, rect.right - 35.0f * scale, rect.top + 126.0f * scale),
                            mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
     void DrawBluetoothDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, float scale) {
         textBrush_->SetOpacity(0.96f);
         target_->DrawTextW(L"Bluetooth Devices", 17, boldTextFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 30.0f * scale, rect.right - 25.0f * scale, rect.top + 55.0f * scale),
+                           D2D1::RectF(rect.left + 32.0f * scale, rect.top + 26.0f * scale, rect.right - 30.0f * scale, rect.top + 50.0f * scale),
                            textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-        std::wstring status = L"🎧 Headphones Connected";
-        std::wstring batt = L"Status: Connected \u2022 Battery: 85%";
+        std::wstring devName = L"Headphones";
         if (!state.device.deviceName.empty() && state.device.isBluetoothLike) {
-            status = L"🔗 " + state.device.deviceName;
+            devName = state.device.deviceName;
         }
 
-        mutedBrush_->SetOpacity(0.85f);
-        target_->DrawTextW(status.c_str(), static_cast<UINT32>(status.length()), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 65.0f * scale, rect.right - 25.0f * scale, rect.top + 95.0f * scale),
+        // Frosted Glass Card Container
+        D2D1_RECT_F cardRect = D2D1::RectF(rect.left + 32.0f * scale, rect.top + 56.0f * scale, rect.right - 35.0f * scale, rect.top + 122.0f * scale);
+        ComPtr<ID2D1SolidColorBrush> cardBg, cardBorder;
+        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.05f * settingsOpacity_), &cardBg);
+        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.10f * settingsOpacity_), &cardBorder);
+
+        if (cardBg) target_->FillRoundedRectangle(D2D1::RoundedRect(cardRect, 10.0f, 10.0f), cardBg.Get());
+        if (cardBorder) target_->DrawRoundedRectangle(D2D1::RoundedRect(cardRect, 10.0f, 10.0f), cardBorder.Get(), 1.0f);
+
+        // Icon Badge
+        target_->DrawTextW(L"🎧", 2, hugeTextFormat_.Get(),
+                           D2D1::RectF(cardRect.left + 12.0f * scale, cardRect.top + 6.0f * scale, cardRect.left + 50.0f * scale, cardRect.bottom),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+
+        // Device Name & Status
+        target_->DrawTextW(devName.c_str(), static_cast<UINT32>(devName.length()), textFormat_.Get(),
+                           D2D1::RectF(cardRect.left + 54.0f * scale, cardRect.top + 10.0f * scale, cardRect.right - 10.0f * scale, cardRect.top + 34.0f * scale),
                            textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-        target_->DrawTextW(batt.c_str(), static_cast<UINT32>(batt.length()), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 95.0f * scale, rect.right - 25.0f * scale, rect.top + 125.0f * scale),
+        mutedBrush_->SetOpacity(0.80f);
+        target_->DrawTextW(L"Connected \u2022 Battery 85%", 22, smallTextFormat_.Get(),
+                           D2D1::RectF(cardRect.left + 54.0f * scale, cardRect.top + 34.0f * scale, cardRect.right - 10.0f * scale, cardRect.bottom - 8.0f * scale),
                            mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
     void DrawFileTrayDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, float scale) {
         textBrush_->SetOpacity(0.96f);
         target_->DrawTextW(L"File Tray Drawer", 16, boldTextFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 30.0f * scale, rect.right - 25.0f * scale, rect.top + 55.0f * scale),
+                           D2D1::RectF(rect.left + 32.0f * scale, rect.top + 26.0f * scale, rect.right - 30.0f * scale, rect.top + 50.0f * scale),
                            textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-        std::wstring line1 = L"Drag & Drop files onto island to stage";
-        std::wstring line2 = L"Staged files will appear here";
+        // Glassmorphic Card Container
+        D2D1_RECT_F cardRect = D2D1::RectF(rect.left + 32.0f * scale, rect.top + 56.0f * scale, rect.right - 35.0f * scale, rect.top + 122.0f * scale);
+        ComPtr<ID2D1SolidColorBrush> cardBg, cardBorder;
+        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.05f * settingsOpacity_), &cardBg);
+        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.10f * settingsOpacity_), &cardBorder);
+
+        if (cardBg) target_->FillRoundedRectangle(D2D1::RoundedRect(cardRect, 10.0f, 10.0f), cardBg.Get());
+        if (cardBorder) target_->DrawRoundedRectangle(D2D1::RoundedRect(cardRect, 10.0f, 10.0f), cardBorder.Get(), 1.0f);
+
+        std::wstring line1 = L"Drag & Drop files here to stage";
+        std::wstring line2 = L"Staged files will stay open in tray";
 
         if (!state.fileTray.items.empty()) {
             line1 = L"📄 " + state.fileTray.items[0].fileName;
@@ -3826,17 +3870,17 @@ class Renderer {
             line2 = countBuf;
         } else if (!state.clipboard.text.empty() && !state.clipboard.image) {
             line1 = L"📋 Clipboard Text Staged";
-            line2 = state.clipboard.text.substr(0, 45);
+            line2 = state.clipboard.text.substr(0, 42);
         }
 
-        textBrush_->SetOpacity(0.95f);
+        textBrush_->SetOpacity(0.96f);
         target_->DrawTextW(line1.c_str(), static_cast<UINT32>(line1.length()), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 65.0f * scale, rect.right - 25.0f * scale, rect.top + 95.0f * scale),
+                           D2D1::RectF(cardRect.left + 14.0f * scale, cardRect.top + 8.0f * scale, cardRect.right - 10.0f * scale, cardRect.top + 32.0f * scale),
                            textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-        mutedBrush_->SetOpacity(0.85f);
+        mutedBrush_->SetOpacity(0.75f);
         target_->DrawTextW(line2.c_str(), static_cast<UINT32>(line2.length()), smallTextFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 95.0f * scale, rect.right - 25.0f * scale, rect.top + 125.0f * scale),
+                           D2D1::RectF(cardRect.left + 14.0f * scale, cardRect.top + 34.0f * scale, cardRect.right - 10.0f * scale, cardRect.bottom - 8.0f * scale),
                            mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
@@ -3914,23 +3958,29 @@ class Renderer {
             }
         }
 
-        // Pagination dots (Vertical on the right edge)
+        // Capsule Pagination Pills (Right Edge)
         float shiftX = 0.0f;
         if (privacyActive) {
             shiftX = 24.0f * scale;
         }
         const float dotX = rect.right - 10.0f * scale - shiftX;
         const float dotY = (rect.top + rect.bottom) * 0.5f;
-        const float spacing = 8.0f * scale;
+        const float spacing = 9.0f * scale;
         const float r = 2.5f * scale;
         
         ComPtr<ID2D1SolidColorBrush> activeDot, inactiveDot;
-        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.85f * settingsOpacity_), &activeDot);
-        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.25f * settingsOpacity_), &inactiveDot);
+        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.90f * settingsOpacity_), &activeDot);
+        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.22f * settingsOpacity_), &inactiveDot);
 
         for (int t = 0; t < totalTabs; ++t) {
             float py = dotY + (t - (totalTabs - 1) * 0.5f) * spacing;
-            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, py), r, r), tab == t ? activeDot.Get() : inactiveDot.Get());
+            if (tab == t) {
+                // Active Tab: Sleek Vertical Capsule Pill
+                D2D1_RECT_F activePill = D2D1::RectF(dotX - 1.5f, py - 6.0f * scale, dotX + 1.5f, py + 6.0f * scale);
+                target_->FillRoundedRectangle(D2D1::RoundedRect(activePill, 1.5f, 1.5f), activeDot.Get());
+            } else {
+                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, py), r, r), inactiveDot.Get());
+            }
         }
 
         target_->PopAxisAlignedClip();
