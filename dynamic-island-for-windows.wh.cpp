@@ -494,6 +494,18 @@ struct WeatherSnapshot {
     double lastUpdated = 0.0;
 };
 
+struct FileTrayItem {
+    std::wstring path;
+    std::wstring fileName;
+    uint64_t fileSize = 0;
+};
+
+struct FileTraySnapshot {
+    bool active = false;
+    std::vector<FileTrayItem> items;
+    double lastUpdated = 0.0;
+};
+
 struct SharedState {
     MediaSnapshot media;
     ClipboardSnapshot clipboard;
@@ -505,6 +517,7 @@ struct SharedState {
     ProgressSnapshot progress;
     SystemSnapshot system;
     WeatherSnapshot weather;
+    FileTraySnapshot fileTray;
     std::array<float, 48> waveform{};
     size_t waveformWrite = 0;
     bool muted = false;
