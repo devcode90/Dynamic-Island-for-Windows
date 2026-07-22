@@ -3613,9 +3613,9 @@ class Renderer {
 
     void DrawCalendarDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, double now, float scale, SYSTEMTIME& local) {
         ComPtr<ID2D1SolidColorBrush> calBg;
-        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.04f * settingsOpacity_), &calBg);
-        D2D1_RECT_F leftBlock = D2D1::RectF(rect.left + 22.0f * scale, rect.top + 16.0f * scale,
-                                            rect.left + 115.0f * scale, rect.bottom - 22.0f * scale);
+        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f * settingsOpacity_), &calBg);
+        D2D1_RECT_F leftBlock = D2D1::RectF(rect.left + 22.0f * scale, rect.top + 18.0f * scale,
+                                            rect.left + 118.0f * scale, rect.bottom - 22.0f * scale);
         target_->FillRoundedRectangle(D2D1::RoundedRect(leftBlock, 12.0f * scale, 12.0f * scale), calBg.Get());
         
         ComPtr<ID2D1SolidColorBrush> calHeader;
@@ -3626,35 +3626,35 @@ class Renderer {
         for (int i = 0; monthName[i]; ++i) monthName[i] = towupper(monthName[i]);
         
         target_->DrawTextW(monthName, static_cast<UINT32>(wcslen(monthName)), boldTextFormat_.Get(),
-                           D2D1::RectF(leftBlock.left, leftBlock.top + 6.0f * scale, leftBlock.right, leftBlock.top + 24.0f * scale),
+                           D2D1::RectF(leftBlock.left, leftBlock.top + 8.0f * scale, leftBlock.right, leftBlock.top + 26.0f * scale),
                            calHeader.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
         wchar_t yearStr[16] = {};
         swprintf_s(yearStr, L"%d", local.wYear);
         mutedBrush_->SetOpacity(0.45f);
         target_->DrawTextW(yearStr, static_cast<UINT32>(wcslen(yearStr)), boldTextFormat_.Get(),
-                           D2D1::RectF(leftBlock.left, leftBlock.top + 20.0f * scale, leftBlock.right, leftBlock.top + 38.0f * scale),
+                           D2D1::RectF(leftBlock.left, leftBlock.top + 24.0f * scale, leftBlock.right, leftBlock.top + 40.0f * scale),
                            mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
         wchar_t dayStr[16] = {};
         swprintf_s(dayStr, L"%d", local.wDay);
         textBrush_->SetOpacity(0.96f);
         target_->DrawTextW(dayStr, static_cast<UINT32>(wcslen(dayStr)), hugeTextFormat_.Get(),
-                           D2D1::RectF(leftBlock.left, leftBlock.top + 30.0f * scale, leftBlock.right, leftBlock.top + 80.0f * scale),
+                           D2D1::RectF(leftBlock.left, leftBlock.top + 34.0f * scale, leftBlock.right, leftBlock.top + 84.0f * scale),
                            textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
         wchar_t weekdayName[32] = {};
         GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &local, L"dddd", weekdayName, ARRAYSIZE(weekdayName), nullptr);
         mutedBrush_->SetOpacity(0.75f);
         target_->DrawTextW(weekdayName, static_cast<UINT32>(wcslen(weekdayName)), boldTextFormat_.Get(),
-                           D2D1::RectF(leftBlock.left, leftBlock.bottom - 22.0f * scale, leftBlock.right, leftBlock.bottom),
+                           D2D1::RectF(leftBlock.left, leftBlock.bottom - 24.0f * scale, leftBlock.right, leftBlock.bottom - 4.0f * scale),
                            mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-        // Right Grid
-        const float gridStart = rect.left + 144.0f * scale;
-        const float gridTop = rect.top + 30.0f * scale;
+        // Right Grid (7 Columns)
+        const float gridStart = rect.left + 138.0f * scale;
+        const float gridTop = rect.top + 20.0f * scale;
         const float colW = 31.0f * scale;
-        const float rowH = 18.0f * scale;
+        const float rowH = 20.0f * scale;
         const wchar_t* days[] = {L"S", L"M", L"T", L"W", L"T", L"F", L"S"};
         
         for (int i = 0; i < 7; ++i) {
@@ -3670,11 +3670,11 @@ class Renderer {
         int col = startDay;
         textBrush_->SetOpacity(0.85f);
         for (int d = 1; d <= totalDays; ++d) {
-            D2D1_RECT_F cell = D2D1::RectF(gridStart + col * colW, gridTop + row * rowH + 4.0f * scale, 
-                                           gridStart + (col+1)*colW, gridTop + (row+1)*rowH + 4.0f * scale);
+            D2D1_RECT_F cell = D2D1::RectF(gridStart + col * colW, gridTop + row * rowH + 2.0f * scale, 
+                                           gridStart + (col+1)*colW, gridTop + (row+1)*rowH + 2.0f * scale);
             
             if (d == local.wDay) {
-                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cell.left + colW*0.5f, cell.top + rowH*0.5f), 10.0f*scale, 10.0f*scale), calHeader.Get());
+                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cell.left + colW*0.5f, cell.top + rowH*0.5f), 11.0f*scale, 11.0f*scale), calHeader.Get());
                 target_->DrawTextW(std::to_wstring(d).c_str(), static_cast<UINT32>(std::to_wstring(d).length()), boldTextFormat_.Get(), cell, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
             } else {
                 ComPtr<ID2D1SolidColorBrush> dBrush = (col == 0 || col == 6) ? calHeader : textBrush_;
@@ -3685,23 +3685,6 @@ class Renderer {
             col++;
             if (col > 6) { col = 0; row++; }
         }
-
-        // Right Side: Upcoming Events & Agenda Preview (Issue #29)
-        textBrush_->SetOpacity(0.96f);
-        target_->DrawTextW(L"Upcoming Schedule", 17, boldTextFormat_.Get(),
-                           D2D1::RectF(rect.left + 235.0f * scale, rect.top + 25.0f * scale, rect.right - 20.0f * scale, rect.top + 48.0f * scale),
-                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-
-        mutedBrush_->SetOpacity(0.85f);
-        target_->DrawTextW(L"📅 Today: Clear Schedule", 23, textFormat_.Get(),
-                           D2D1::RectF(rect.left + 235.0f * scale, rect.top + 55.0f * scale, rect.right - 20.0f * scale, rect.top + 80.0f * scale),
-                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-
-        wchar_t eventBuf[64] = {};
-        swprintf_s(eventBuf, L"⏰ %02d:%02d \u2022 Focus Time", local.wHour, local.wMinute);
-        target_->DrawTextW(eventBuf, static_cast<UINT32>(wcslen(eventBuf)), smallTextFormat_.Get(),
-                           D2D1::RectF(rect.left + 235.0f * scale, rect.top + 85.0f * scale, rect.right - 20.0f * scale, rect.top + 115.0f * scale),
-                           mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
     void DrawWeatherDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, double now, float scale, bool hasWeather, const std::wstring& wIcon, const std::wstring& wText) {
