@@ -3703,6 +3703,23 @@ class Renderer {
             col++;
             if (col > 6) { col = 0; row++; }
         }
+
+        // Right Side: Upcoming Events & Agenda Preview (Issue #29)
+        textBrush_->SetOpacity(0.96f);
+        target_->DrawTextW(L"Upcoming Schedule", 17, boldTextFormat_.Get(),
+                           D2D1::RectF(rect.left + 235.0f * scale, rect.top + 25.0f * scale, rect.right - 20.0f * scale, rect.top + 48.0f * scale),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+        mutedBrush_->SetOpacity(0.85f);
+        target_->DrawTextW(L"📅 Today: Clear Schedule", 23, textFormat_.Get(),
+                           D2D1::RectF(rect.left + 235.0f * scale, rect.top + 55.0f * scale, rect.right - 20.0f * scale, rect.top + 80.0f * scale),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+        wchar_t eventBuf[64] = {};
+        swprintf_s(eventBuf, L"⏰ %02d:%02d \u2022 Focus Time", local.wHour, local.wMinute);
+        target_->DrawTextW(eventBuf, static_cast<UINT32>(wcslen(eventBuf)), smallTextFormat_.Get(),
+                           D2D1::RectF(rect.left + 235.0f * scale, rect.top + 85.0f * scale, rect.right - 20.0f * scale, rect.top + 115.0f * scale),
+                           mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
     void DrawWeatherDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, double now, float scale, bool hasWeather, const std::wstring& wIcon, const std::wstring& wText) {
