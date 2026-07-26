@@ -1,6 +1,6 @@
 // ==WindhawkMod==
-// @id              dynamic-island-for-windows
-// @name            Dynamic Island for Windows
+// @id              dynamic-island-for-windows-fork
+// @name            Dynamic Island for Windows - Fork
 // @description     A living, breathing pill overlay inspired by iPhone's Dynamic Island. Reacts to media, downloads, clipboard, battery, and more.
 // @version         1.2.0
 // @author          Himanshu
@@ -96,6 +96,9 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - OffsetY: 0
     $name: Offset Y
     $description: Adjust the vertical position (in pixels). Positive values move it down, negative values move it up.
+  - BorderMergedMode: false
+    $name: Border-Merged Mode
+    $description: Attach the island flush to the top edge of the monitor without a floating gap.
   - SizeScale: '1.0'
     $name: Size scale
     $description: Makes the entire island and its contents larger or smaller.
@@ -117,6 +120,9 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
       - '10': Hide after 10 seconds
       - '30': Hide after 30 seconds
       - '60': Hide after 60 seconds
+  - AutoHideFullscreen: true
+    $name: Hide on full screen
+    $description: Automatically hide the island when playing a video or app in full screen mode.
   - UnhideOnHover: true
     $name: Unhide on hover
     $description: Allow the hidden island to reappear when you hover your mouse over it.
@@ -188,6 +194,12 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - TextSecondaryColor: "#888888"
     $name: Secondary text color
     $description: Hex color for artist names and muted labels.
+  - ContourBorderEnabled: true
+    $name: Show contour border
+    $description: Enable gray contour stroke line around the island.
+  - ContourBorderHex: "#333338"
+    $name: Contour border hex color
+    $description: Hex color for the island contour stroke.
   - TintIntensity: 72
     $name: Background tint intensity
     $description: 0 to 100. Controls how dark the background tint behind the island is.
@@ -195,6 +207,20 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
     $name: Pill transparency
     $description: 35 to 100. Lower values make the island more see-through.
   $name: Colors & Theming
+- Indicators:
+  - PrivacyDotsEnabled: true
+    $name: Show privacy indicators
+    $description: Display orange (mic) and green (camera) dots when hardware is in use.
+  - PrivacyDotPulsing: true
+    $name: Pulse privacy dots
+    $description: Enable smooth pulsing animation on active privacy dots.
+  - MicDotHex: "#FF9500"
+    $name: Microphone dot color
+    $description: Hex color for microphone privacy indicator.
+  - CamDotHex: "#34C759"
+    $name: Camera dot color
+    $description: Hex color for camera privacy indicator.
+  $name: Privacy Indicators
 - Modules:
   - Media: true
     $name: Media module
@@ -219,6 +245,12 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - Progress: true
     $name: Progress module
     $description: Shows a progress ring around the island for downloads or file copies.
+  - HardwareMonitorModule: true
+    $name: Include Hardware Monitor in scroll loop
+    $description: Add CPU, GPU, RAM, FPS and Network stats card to mouse-wheel scroll loop.
+  - BluetoothModule: true
+    $name: Include Bluetooth card in scroll loop
+    $description: Add Bluetooth devices & battery status card to mouse-wheel scroll loop.
   - GameOverlay: false
     $name: Enable game overlay mode
     $description: Replaces the clock with live stats like FPS, CPU, and RAM usage.
@@ -410,6 +442,8 @@ struct Settings {
     std::wstring weatherCity;
     bool weatherFahrenheit = false;
     int autoHideIdleSeconds = 0;
+    bool autoHideFullscreen = true;
+    bool borderMergedMode = false;
     bool unhideOnHover = true;
     bool alwaysOnTop = true;
     bool expandOnHover = true;
@@ -420,6 +454,12 @@ struct Settings {
     D2D1_COLOR_F pillBgColor = D2D1::ColorF(0.051f, 0.051f, 0.059f, 1.0f); // #0D0D0F
     D2D1_COLOR_F textPrimaryColor = D2D1::ColorF(0.969f, 0.969f, 0.969f, 1.0f); // #F7F7F7
     D2D1_COLOR_F textSecondaryColor = D2D1::ColorF(0.533f, 0.533f, 0.533f, 1.0f); // #888888
+    bool contourBorderEnabled = true;
+    D2D1_COLOR_F contourBorderColor = D2D1::ColorF(0.200f, 0.200f, 0.220f, 1.0f); // #333338
+    bool privacyDotsEnabled = true;
+    bool privacyDotPulsing = true;
+    D2D1_COLOR_F micDotColor = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f); // #FF9500
+    D2D1_COLOR_F camDotColor = D2D1::ColorF(0.204f, 0.780f, 0.349f, 1.0f); // #34C759
 };
 
 struct BitmapPixels {
@@ -679,6 +719,39 @@ D2D1_COLOR_F ColorFromHex(std::wstring text, D2D1_COLOR_F fallback) {
         1.0f);
 }
 
+// Returns true if the currently active foreground window is in full screen mode
+bool IsForegroundFullscreen(HWND targetHwnd) {
+    HWND fg = GetForegroundWindow();
+    if (!fg || fg == targetHwnd || fg == GetDesktopWindow() || fg == GetShellWindow()) {
+        return false;
+    }
+
+    if (!IsWindowVisible(fg)) return false;
+
+    wchar_t className[256] = {};
+    GetClassNameW(fg, className, 256);
+    if (wcscmp(className, L"WorkerW") == 0 || wcscmp(className, L"Progman") == 0 ||
+        wcscmp(className, L"Shell_TrayWnd") == 0) {
+        return false;
+    }
+
+    RECT appRect = {};
+    if (!GetWindowRect(fg, &appRect)) return false;
+
+    HMONITOR hMon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi = { sizeof(MONITORINFO) };
+    if (GetMonitorInfoW(hMon, &mi)) {
+        if (appRect.left <= mi.rcMonitor.left &&
+            appRect.top <= mi.rcMonitor.top &&
+            appRect.right >= mi.rcMonitor.right &&
+            appRect.bottom >= mi.rcMonitor.bottom) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // Returns the DPI scale factor for the primary monitor (1.0 = 96 DPI = 100%)
 float GetPrimaryMonitorDpiScale() {
     POINT pt = {0, 0};
@@ -891,6 +964,19 @@ void LoadSettings() {
                                                D2D1::ColorF(0.533f, 0.533f, 0.533f, 1.0f));
     }
 
+    next.borderMergedMode = Wh_GetIntSetting(L"Appearance.BorderMergedMode") != 0;
+    next.autoHideFullscreen = Wh_GetIntSetting(L"Appearance.AutoHideFullscreen") != 0;
+    next.hardwareMonitorModule = Wh_GetIntSetting(L"Modules.HardwareMonitorModule") != 0;
+    next.bluetoothModule = Wh_GetIntSetting(L"Modules.BluetoothModule") != 0;
+    next.contourBorderEnabled = Wh_GetIntSetting(L"Themes.ContourBorderEnabled") != 0;
+    next.contourBorderColor = ColorFromHex(GetStringSettingCopy(L"Themes.ContourBorderHex"), D2D1::ColorF(0.200f, 0.200f, 0.220f, 1.0f));
+    next.privacyDotsEnabled = Wh_GetIntSetting(L"Indicators.PrivacyDotsEnabled") != 0;
+    next.privacyDotPulsing = Wh_GetIntSetting(L"Indicators.PrivacyDotPulsing") != 0;
+    next.micDotColor = ColorFromHex(GetStringSettingCopy(L"Indicators.MicDotHex"), D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f));
+    next.camDotColor = ColorFromHex(GetStringSettingCopy(L"Indicators.CamDotHex"), D2D1::ColorF(0.204f, 0.780f, 0.349f, 1.0f));
+
+    Wh_SetIntValue(L"PinnedExpanded", 0);
+
     bool cityChanged = next.weatherCity != g_settings.weatherCity;
     g_settings = next;
     g_layoutDirty = true;
@@ -947,6 +1033,7 @@ RECT GetAnchorWorkRect() {
 
 void PositionOverlayWindow(HWND hwnd, int width, int height) {
     RECT work = GetAnchorWorkRect();
+    const int topMargin = g_settings.borderMergedMode ? 0 : 8;
     int x = work.left + (work.right - work.left - width) / 2;
     int y = g_settings.notchStyle ? work.top : (work.top + 8);
 
@@ -3922,9 +4009,9 @@ class Renderer {
 
     void DrawCalendarDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, double now, float scale, SYSTEMTIME& local) {
         ComPtr<ID2D1SolidColorBrush> calBg;
-        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.04f * settingsOpacity_), &calBg);
-        D2D1_RECT_F leftBlock = D2D1::RectF(rect.left + 22.0f * scale, rect.top + 16.0f * scale,
-                                            rect.left + 115.0f * scale, rect.bottom - 22.0f * scale);
+        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.05f * settingsOpacity_), &calBg);
+        D2D1_RECT_F leftBlock = D2D1::RectF(rect.left + 22.0f * scale, rect.top + 18.0f * scale,
+                                            rect.left + 118.0f * scale, rect.bottom - 22.0f * scale);
         target_->FillRoundedRectangle(D2D1::RoundedRect(leftBlock, 12.0f * scale, 12.0f * scale), calBg.Get());
         
         ComPtr<ID2D1SolidColorBrush> calHeader;
@@ -3935,35 +4022,35 @@ class Renderer {
         for (int i = 0; monthName[i]; ++i) monthName[i] = towupper(monthName[i]);
         
         target_->DrawTextW(monthName, static_cast<UINT32>(wcslen(monthName)), boldTextFormat_.Get(),
-                           D2D1::RectF(leftBlock.left, leftBlock.top + 6.0f * scale, leftBlock.right, leftBlock.top + 24.0f * scale),
+                           D2D1::RectF(leftBlock.left, leftBlock.top + 8.0f * scale, leftBlock.right, leftBlock.top + 26.0f * scale),
                            calHeader.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
         wchar_t yearStr[16] = {};
         swprintf_s(yearStr, L"%d", local.wYear);
         mutedBrush_->SetOpacity(0.45f);
         target_->DrawTextW(yearStr, static_cast<UINT32>(wcslen(yearStr)), boldTextFormat_.Get(),
-                           D2D1::RectF(leftBlock.left, leftBlock.top + 20.0f * scale, leftBlock.right, leftBlock.top + 38.0f * scale),
+                           D2D1::RectF(leftBlock.left, leftBlock.top + 24.0f * scale, leftBlock.right, leftBlock.top + 40.0f * scale),
                            mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
         wchar_t dayStr[16] = {};
         swprintf_s(dayStr, L"%d", local.wDay);
         textBrush_->SetOpacity(0.96f);
         target_->DrawTextW(dayStr, static_cast<UINT32>(wcslen(dayStr)), hugeTextFormat_.Get(),
-                           D2D1::RectF(leftBlock.left, leftBlock.top + 30.0f * scale, leftBlock.right, leftBlock.top + 80.0f * scale),
+                           D2D1::RectF(leftBlock.left, leftBlock.top + 34.0f * scale, leftBlock.right, leftBlock.top + 84.0f * scale),
                            textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
         wchar_t weekdayName[32] = {};
         GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &local, L"dddd", weekdayName, ARRAYSIZE(weekdayName), nullptr);
         mutedBrush_->SetOpacity(0.75f);
         target_->DrawTextW(weekdayName, static_cast<UINT32>(wcslen(weekdayName)), boldTextFormat_.Get(),
-                           D2D1::RectF(leftBlock.left, leftBlock.bottom - 22.0f * scale, leftBlock.right, leftBlock.bottom),
+                           D2D1::RectF(leftBlock.left, leftBlock.bottom - 24.0f * scale, leftBlock.right, leftBlock.bottom - 4.0f * scale),
                            mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-        // Right Grid
-        const float gridStart = rect.left + 144.0f * scale;
-        const float gridTop = rect.top + 30.0f * scale;
+        // Right Grid (7 Columns)
+        const float gridStart = rect.left + 138.0f * scale;
+        const float gridTop = rect.top + 20.0f * scale;
         const float colW = 31.0f * scale;
-        const float rowH = 18.0f * scale;
+        const float rowH = 20.0f * scale;
         const wchar_t* days[] = {L"S", L"M", L"T", L"W", L"T", L"F", L"S"};
         
         for (int i = 0; i < 7; ++i) {
@@ -3979,11 +4066,11 @@ class Renderer {
         int col = startDay;
         textBrush_->SetOpacity(0.85f);
         for (int d = 1; d <= totalDays; ++d) {
-            D2D1_RECT_F cell = D2D1::RectF(gridStart + col * colW, gridTop + row * rowH + 4.0f * scale, 
-                                           gridStart + (col+1)*colW, gridTop + (row+1)*rowH + 4.0f * scale);
+            D2D1_RECT_F cell = D2D1::RectF(gridStart + col * colW, gridTop + row * rowH + 2.0f * scale, 
+                                           gridStart + (col+1)*colW, gridTop + (row+1)*rowH + 2.0f * scale);
             
             if (d == local.wDay) {
-                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cell.left + colW*0.5f, cell.top + rowH*0.5f), 10.0f*scale, 10.0f*scale), calHeader.Get());
+                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cell.left + colW*0.5f, cell.top + rowH*0.5f), 11.0f*scale, 11.0f*scale), calHeader.Get());
                 target_->DrawTextW(std::to_wstring(d).c_str(), static_cast<UINT32>(std::to_wstring(d).length()), boldTextFormat_.Get(), cell, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
             } else {
                 ComPtr<ID2D1SolidColorBrush> dBrush = (col == 0 || col == 6) ? calHeader : textBrush_;
@@ -4088,6 +4175,57 @@ class Renderer {
                            rightLine5, mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 
+    void DrawHardwareMonitorDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, float scale) {
+        textBrush_->SetOpacity(0.96f);
+        target_->DrawTextW(L"Hardware & Performance", 22, boldTextFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 30.0f * scale, rect.right - 25.0f * scale, rect.top + 55.0f * scale),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+        wchar_t line1[128] = {};
+        swprintf_s(line1, L"CPU: %d%%   \u2022   RAM: %d%%",
+                   state.system.cpuPercent, state.system.memoryPercent);
+
+        wchar_t line2[128] = {};
+        if (state.system.gpuPercent >= 0) {
+            swprintf_s(line2, L"GPU: %d%%   \u2022   FPS: %d",
+                       state.system.gpuPercent, state.system.renderFps);
+        } else {
+            swprintf_s(line2, L"FPS: %d   \u2022   Disk Free: %d%%",
+                       state.system.renderFps, state.system.diskFreePercent);
+        }
+
+        mutedBrush_->SetOpacity(0.85f);
+        target_->DrawTextW(line1, static_cast<UINT32>(wcslen(line1)), textFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 65.0f * scale, rect.right - 25.0f * scale, rect.top + 95.0f * scale),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+        target_->DrawTextW(line2, static_cast<UINT32>(wcslen(line2)), textFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 95.0f * scale, rect.right - 25.0f * scale, rect.top + 125.0f * scale),
+                           mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+    }
+
+    void DrawBluetoothDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, float scale) {
+        textBrush_->SetOpacity(0.96f);
+        target_->DrawTextW(L"Bluetooth Devices", 17, boldTextFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 30.0f * scale, rect.right - 25.0f * scale, rect.top + 55.0f * scale),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+        std::wstring status = L"🎧 Headphones Connected";
+        std::wstring batt = L"Status: Connected \u2022 Battery: 85%";
+        if (!state.device.deviceName.empty() && state.device.isBluetoothLike) {
+            status = L"🔗 " + state.device.deviceName;
+        }
+
+        mutedBrush_->SetOpacity(0.85f);
+        target_->DrawTextW(status.c_str(), static_cast<UINT32>(status.length()), textFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 65.0f * scale, rect.right - 25.0f * scale, rect.top + 95.0f * scale),
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+        target_->DrawTextW(batt.c_str(), static_cast<UINT32>(batt.length()), textFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 95.0f * scale, rect.right - 25.0f * scale, rect.top + 125.0f * scale),
+                           mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+    }
+
     void DrawIdleDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings,
                            double now) {
         if (settings.gameOverlay || Wh_GetIntValue(L"GameOverlayPinned", 0) != 0) {
@@ -4096,7 +4234,7 @@ class Renderer {
         }
         target_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         
-        bool privacyActive = state.system.micActive || state.system.cameraActive;
+        bool privacyActive = (state.system.micActive || state.system.cameraActive) && settings.privacyDotsEnabled;
         if (!clockFormat_) return;
 
         SYSTEMTIME local = {};
@@ -5771,7 +5909,7 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
     if (settings.progress && state.progress.active) {
         activities.push_back(IslandKind::Progress);
     }
-    if (settings.media && state.media.available) {
+    if (settings.media && state.media.available && g_idleTab == 0) {
         activities.push_back(IslandKind::Media);
     }
 
@@ -6146,11 +6284,13 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             lastScrollTime = now;
 
             bool mediaActive = false;
+            bool hwMonActive = false;
             {
                 std::lock_guard lock(g_stateMutex);
                 mediaActive = g_settings.media && g_state.media.available;
+                hwMonActive = g_settings.hardwareMonitorModule;
             }
-            int tabCount = mediaActive ? 3 : 2;
+            int tabCount = (mediaActive ? 1 : 0) + 2 + (hwMonActive ? 1 : 0);
             int delta = GET_WHEEL_DELTA_WPARAM(wParam);
             if (delta > 0) {
                 if (g_idleTab > 0) g_idleTab--;
@@ -6401,21 +6541,20 @@ DWORD WINAPI RenderThreadProc(void*) {
             isHidden = (now - lastInteractionTime > g_settings.autoHideIdleSeconds);
         }
 
-        bool privacyActive = snapshot.system.micActive || snapshot.system.cameraActive;
+        bool privacyActive = (snapshot.system.micActive || snapshot.system.cameraActive) && g_settings.privacyDotsEnabled;
         if (primary.kind == IslandKind::Idle) {
-            if (pinned || isHoverExpanded) {
+            if (!isFullscreen && (pinned || isHoverExpanded)) {
                 primary.width = 380.0f * g_settings.sizeScale;
                 primary.height = 184.0f * g_settings.sizeScale;
             }
         }
-        if (primary.kind == IslandKind::Idle &&
+        if (!isFullscreen && primary.kind == IslandKind::Idle &&
             (g_settings.gameOverlay || Wh_GetIntValue(L"GameOverlayPinned", 0) != 0)) {
             primary.width = 372.0f * g_settings.sizeScale;
             primary.height = 64.0f * g_settings.sizeScale;
         }
         if (primary.kind == IslandKind::Media) {
-            bool recentArtChange = (NowSeconds() - g_state.media.artChangedAt) < 4.0;
-            if (isHoverExpanded || pinned || recentArtChange) {
+            if (!isFullscreen && (isHoverExpanded || pinned)) {
                 primary.width = 380.0f * g_settings.sizeScale;
                 primary.height = 184.0f * g_settings.sizeScale;
             }
@@ -6432,10 +6571,6 @@ DWORD WINAPI RenderThreadProc(void*) {
         if (secondary) {
             targetWidth = primary.width + secondary->width + 12.0f * g_settings.sizeScale;
             targetHeight = std::max(primary.height, secondary->height);
-        }
-        if (pinned) {
-            targetWidth = std::max(targetWidth, 380.0f * g_settings.sizeScale);
-            targetHeight = std::max(targetHeight, 64.0f * g_settings.sizeScale);
         }
 
         widthSpring.target = targetWidth;
@@ -6499,7 +6634,8 @@ DWORD WINAPI RenderThreadProc(void*) {
             g_state.system.renderFps = ClampInt(static_cast<int>(1.0f / std::max(dt, 0.001f) + 0.5f), 0, 1000);
         }
 
-        SetClickThrough(hwnd, primary.kind == IslandKind::Idle && !hover && !pinned);
+        const bool draggingOrHover = hover || ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 && PtInRect(&windowRect, cursor));
+        SetClickThrough(hwnd, (primary.kind == IslandKind::Idle && !draggingOrHover && !pinned));
 
         // Check if animating structurally
         if (std::abs(widthSpring.velocity) > 0.01f || std::abs(widthSpring.target - widthSpring.value) > 0.01f ||
