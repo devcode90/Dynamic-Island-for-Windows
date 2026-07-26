@@ -63,6 +63,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 
 ### Credits
 - **[ciizerr @GitHub](https://github.com/ciizerr)**: Improved the UI by refining layout alignment, fixing dashboard scaling, and enhancing calendar and weather module integration.
+- **[ChrisSch-dev @GitHub](https://github.com/ChrisSch-dev)**: Added album title support, word wrapping for weather descriptions, sleep resume fixes, and various performance/movement stability improvements.
 
 */
 // ==/WindhawkModReadme==
@@ -107,8 +108,8 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
       - '2.0': 2.0x
       - '2.5': 2.5x
   - AutoHideIdleSeconds: '0'
-    $name: Auto-hide idle island
-    $description: Hide the idle pill after this many seconds of inactivity. 0 to disable.
+    $name: Auto-hide island (all states)
+    $description: Hide the island (including idle, media, and other states) after this many seconds of inactivity. 0 to disable.
     $options:
       - '-1': Hide instantly
       - '0': Never hide (default)
@@ -122,12 +123,13 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - AutoDpiScale: true
     $name: Auto DPI scaling
     $description: Automatically scales the island to match your monitor's DPI. Recommended for 4K screens.
-  - W11Style: false
-    $name: Native Windows 11 style
-    $description: Changes the shape from an Apple pill to a Windows 11 rounded box.
-  - MacOsNotchStyle: false
-    $name: macOS Notch style
-    $description: Changes the shape to a MacBook notch that attaches flush to the top edge of your screen.
+  - ShapeStyle: default
+    $name: Island Shape Style
+    $description: Change the overall shape of the island (Pill, Windows 11, or macOS Notch).
+    $options:
+      - default: Default (Apple Pill)
+      - w11: Windows 11 (Rounded Box)
+      - notch: macOS Notch (Top Edge Flush)
   - AlwaysOnTop: true
     $name: Always on top
     $description: Keeps the island above all other windows. Turn this off if it blocks other apps.
@@ -223,12 +225,36 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - ShowMetricText: false
     $name: Show labels in metric chips
     $description: Adds text labels (like "CPU") inside the game overlay bars.
+  - Weather: true
+    $name: Weather module
+    $description: Shows the weather on the right side of the pill. Turn off to only show the clock.
   - WeatherCity: ""
     $name: Weather City (Optional)
     $description: Enter your city (e.g. London). Leave blank to use auto IP geolocation.
   - WeatherFahrenheit: false
     $name: Use Fahrenheit
     $description: Display weather temperature and wind speed in imperial units.
+  - PrivacyDots: true
+    $name: Show privacy indicators (Mic & Camera)
+    $description: Master toggle to display the iOS-style orange/green privacy dots when microphone or camera is in use.
+  - PrivacyDotsMic: true
+    $name: Show microphone indicator (Orange dot)
+    $description: Show the orange dot when microphone is in use. Turn off if background apps (like Discord/OBS) keep it permanently active.
+  - PrivacyDotsCam: true
+    $name: Show camera indicator (Green dot)
+    $description: Show the green dot when webcam is in use.
+  - PrivacyDotsPulse: true
+    $name: Privacy dots pulsing animation
+    $description: Animate the privacy dots with a soft breathing pulse. Turn off for static dots.
+  - PrivacyDotsMicHex: "#FF9500"
+    $name: Microphone dot custom hex color
+    $description: Custom hex color for microphone indicator (default #FF9500).
+  - PrivacyDotsCamHex: "#10B981"
+    $name: Camera dot custom hex color
+    $description: Custom hex color for camera indicator (default #10B981).
+  - CapsLock: true
+    $name: Caps Lock module
+    $description: Shows an indicator when Caps Lock or Num Lock state changes.
   $name: Modules & Features
 */
 // ==/WindhawkModSettings==
@@ -284,6 +310,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <set>
 
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
@@ -368,10 +395,18 @@ struct Settings {
     D2D1_COLOR_F clipboardIconBgHex = D2D1::ColorF(0.18f, 0.18f, 0.22f, 1.0f); // #2E2E38
     bool battery = true;
     bool progress = true;
+    bool privacyDots = true;
+    bool privacyDotsMic = true;
+    bool privacyDotsCam = true;
+    bool privacyDotsPulse = true;
+    bool capsLock = true;
+    D2D1_COLOR_F privacyDotsMicHex = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f); // #FF9500
+    D2D1_COLOR_F privacyDotsCamHex = D2D1::ColorF(0.133f, 0.776f, 0.239f, 1.0f); // #10B981
     float tintOpacity = 0.72f;
     float pillOpacity = 0.96f;
     bool gameOverlay = false;
     bool showMetricText = true;
+    bool weather = true;
     std::wstring weatherCity;
     bool weatherFahrenheit = false;
     int autoHideIdleSeconds = 0;
@@ -400,6 +435,7 @@ struct MediaSnapshot {
     bool playing = false;
     std::wstring title;
     std::wstring artist;
+    std::wstring albumTitle;
     std::wstring sourceAppUserModelId;
     std::wstring sourceName;
     std::wstring sourceBadge;
@@ -573,6 +609,7 @@ FILETIME g_prevIdleTime = {};
 FILETIME g_prevKernelTime = {};
 FILETIME g_prevUserTime = {};
 UINT g_shellHookMessage = 0;
+UINT g_taskbarCreatedMessage = 0;
 bool g_volumeInitialized = false;
 std::atomic<double> g_lastNudgeTime = 0.0;
 
@@ -786,6 +823,13 @@ void LoadSettings() {
 
     next.battery = Wh_GetIntSetting(L"Modules.Battery") != 0;
     next.progress = Wh_GetIntSetting(L"Modules.Progress") != 0;
+    next.privacyDots = Wh_GetIntSetting(L"Modules.PrivacyDots") != 0;
+    next.privacyDotsMic = Wh_GetIntSetting(L"Modules.PrivacyDotsMic") != 0;
+    next.privacyDotsCam = Wh_GetIntSetting(L"Modules.PrivacyDotsCam") != 0;
+    next.privacyDotsPulse = Wh_GetIntSetting(L"Modules.PrivacyDotsPulse") != 0;
+    next.privacyDotsMicHex = ColorFromHex(GetStringSettingCopy(L"Modules.PrivacyDotsMicHex"), D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f));
+    next.privacyDotsCamHex = ColorFromHex(GetStringSettingCopy(L"Modules.PrivacyDotsCamHex"), D2D1::ColorF(0.133f, 0.776f, 0.239f, 1.0f));
+    next.capsLock = Wh_GetIntSetting(L"Modules.CapsLock") != 0;
     next.tintOpacity = Clamp(Wh_GetIntSetting(L"Themes.TintIntensity") / 100.0f, 0.0f, 1.0f);
     const int settingOpacity = Wh_GetIntSetting(L"Themes.PillOpacity");
     const int localOpacity = Wh_GetIntValue(L"PillOpacityOverride", -1);
@@ -793,6 +837,7 @@ void LoadSettings() {
                              0.35f, 1.0f);
     next.gameOverlay = Wh_GetIntSetting(L"Modules.GameOverlay") != 0;
     next.showMetricText = Wh_GetIntSetting(L"Modules.ShowMetricText") != 0;
+    next.weather = Wh_GetIntSetting(L"Modules.Weather") != 0;
     next.weatherCity = GetStringSettingCopy(L"Modules.WeatherCity");
     next.weatherFahrenheit = Wh_GetIntSetting(L"Modules.WeatherFahrenheit") != 0;
     const std::wstring hideSec = GetStringSettingCopy(L"Appearance.AutoHideIdleSeconds");
@@ -810,11 +855,15 @@ void LoadSettings() {
     else if (mon == L"follow") next.targetMonitor = -1;
     else next.targetMonitor = _wtoi(mon.c_str());
 
+    std::wstring shapeStr = GetStringSettingCopy(L"Appearance.ShapeStyle");
+    bool baseW11 = EqualsNoCase(shapeStr, L"w11");
+    bool baseNotch = EqualsNoCase(shapeStr, L"notch");
+
     const int localW11Style = Wh_GetIntValue(L"W11StyleOverride", -1);
-    next.w11Style = localW11Style >= 0 ? (localW11Style != 0) : (Wh_GetIntSetting(L"Appearance.W11Style") != 0);
+    next.w11Style = localW11Style >= 0 ? (localW11Style != 0) : baseW11;
 
     const int localNotchStyle = Wh_GetIntValue(L"NotchStyleOverride", -1);
-    next.notchStyle = localNotchStyle >= 0 ? (localNotchStyle != 0) : (Wh_GetIntSetting(L"Appearance.MacOsNotchStyle") != 0);
+    next.notchStyle = localNotchStyle >= 0 ? (localNotchStyle != 0) : baseNotch;
 
     // Color settings — check local theme override first, then settings YAML.
     struct ThemeColors { const wchar_t* bg; const wchar_t* fg; const wchar_t* sec; };
@@ -1611,6 +1660,7 @@ DWORD WINAPI MediaThreadProc(void*) {
                     next.playing = playback.PlaybackStatus() == PlaybackStatus::Playing;
                     next.title = properties.Title().c_str();
                     next.artist = properties.Artist().c_str();
+                    next.albumTitle = properties.AlbumTitle().c_str();
                     
                     if (timeline) {
                         int64_t np = timeline.Position().count();
@@ -1634,11 +1684,34 @@ DWORD WINAPI MediaThreadProc(void*) {
                     next.sourceAppUserModelId = session.SourceAppUserModelId().c_str();
                     next.sourceName = FriendlyMediaSourceName(next.sourceAppUserModelId);
                     
+                    // Fallback for VLC which sometimes fails to provide SMTC Title metadata
+                    if (next.title.empty() && next.sourceName == L"VLC") {
+                        HWND hwnd = nullptr;
+                        while ((hwnd = FindWindowExW(nullptr, hwnd, nullptr, nullptr)) != nullptr) {
+                            wchar_t windowTitle[512];
+                            if (GetWindowTextW(hwnd, windowTitle, ARRAYSIZE(windowTitle))) {
+                                std::wstring t(windowTitle);
+                                const std::wstring suffix = L" - VLC media player";
+                                if (t.size() > suffix.size() && t.substr(t.size() - suffix.size()) == suffix) {
+                                    next.title = t.substr(0, t.size() - suffix.size());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    
                     std::wstring prevSourceAppUserModelId;
                     bool hasPrevIcon = false;
                     BitmapPixels prevIcon;
                     uint64_t prevIconGeneration = 0;
                     std::wstring prevBadge;
+                    
+                    std::wstring prevTitle;
+                    std::wstring prevArtist;
+                    BitmapPixels prevArt;
+                    uint64_t prevArtGeneration = 0;
+                    double prevArtChangedAt = 0.0;
+                    
                     {
                         std::lock_guard lock(g_stateMutex);
                         prevSourceAppUserModelId = g_state.media.sourceAppUserModelId;
@@ -1646,6 +1719,12 @@ DWORD WINAPI MediaThreadProc(void*) {
                         prevIcon = g_state.media.sourceIcon;
                         prevIconGeneration = g_state.media.sourceIconGeneration;
                         prevBadge = g_state.media.sourceBadge;
+                        
+                        prevTitle = g_state.media.title;
+                        prevArtist = g_state.media.artist;
+                        prevArt = g_state.media.art;
+                        prevArtGeneration = g_state.media.artGeneration;
+                        prevArtChangedAt = g_state.media.artChangedAt;
                     }
 
                     if (next.sourceAppUserModelId == prevSourceAppUserModelId) {
@@ -1666,7 +1745,11 @@ DWORD WINAPI MediaThreadProc(void*) {
                         next.sourceIconGeneration = next.sourceIcon.generation;
                     }
 
-                    if (auto thumbnail = properties.Thumbnail()) {
+                    if (next.title == prevTitle && next.artist == prevArtist && !prevArt.bgra.empty()) {
+                        next.art = prevArt;
+                        next.artGeneration = prevArtGeneration;
+                        next.artChangedAt = prevArtChangedAt;
+                    } else if (auto thumbnail = properties.Thumbnail()) {
                         std::vector<uint8_t> bytes = ReadWinRtStreamBytes(thumbnail);
                         if (!bytes.empty()) {
                             BitmapPixels decoded;
@@ -1694,7 +1777,8 @@ DWORD WINAPI MediaThreadProc(void*) {
                 next.artist != g_state.media.artist;
 
             if (!g_state.media.art.bgra.empty() &&
-                next.title == g_state.media.title && next.artist == g_state.media.artist) {
+                next.title == g_state.media.title && next.artist == g_state.media.artist &&
+                next.positionTicks >= g_state.media.positionTicks) {
                 next.art = g_state.media.art;
                 next.artGeneration = g_state.media.artGeneration;
                 next.artChangedAt = g_state.media.artChangedAt;
@@ -1727,94 +1811,172 @@ DWORD WINAPI NotificationThreadProc(void*) {
     using winrt::Windows::UI::Notifications::Management::UserNotificationListener;
     using winrt::Windows::UI::Notifications::Management::UserNotificationListenerAccessStatus;
 
-    uint32_t lastSeenId = 0;
+    std::set<uint32_t> seenIds;
+    bool firstPoll = true;
     bool accessLogged = false;
 
-    try {
-        auto listener = UserNotificationListener::Current();
-        auto access = listener.RequestAccessAsync().get();
-        if (access != UserNotificationListenerAccessStatus::Allowed) {
-            Wh_Log(L"Notification listener permission not granted; shell-hook notification fallback remains active.");
-            winrt::uninit_apartment();
-            return 0;
+    // The Windows Notification Service (WNS) and UWP subsystem take time to initialize on boot.
+    // If explorer.exe is injected too early, instantiating UserNotificationListener::Current()
+    // can permanently bind to an uninitialized COM proxy, permanently breaking notifications for the process.
+    // To prevent this, we enforce a strict 30-second delay from process creation before touching the API.
+    FILETIME creationTime, exitTime, kernelTime, userTime;
+    if (GetProcessTimes(GetCurrentProcess(), &creationTime, &exitTime, &kernelTime, &userTime)) {
+        ULARGE_INTEGER ct;
+        ct.LowPart = creationTime.dwLowDateTime;
+        ct.HighPart = creationTime.dwHighDateTime;
+        
+        FILETIME systemTime;
+        GetSystemTimeAsFileTime(&systemTime);
+        ULARGE_INTEGER st;
+        st.LowPart = systemTime.dwLowDateTime;
+        st.HighPart = systemTime.dwHighDateTime;
+        
+        uint64_t msSinceProcessStart = (st.QuadPart - ct.QuadPart) / 10000;
+        if (msSinceProcessStart < 30000) {
+            DWORD waitTime = 30000 - (DWORD)msSinceProcessStart;
+            Wh_Log(L"Process started recently. Delaying UserNotificationListener init by %d ms to let UWP subsystem load...", waitTime);
+            WaitForSingleObject(g_stopEvent, waitTime);
         }
+    }
 
-        while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
-            try {
-                auto notifications = listener.GetNotificationsAsync(NotificationKinds::Toast).get();
-                for (uint32_t i = 0; i < notifications.Size(); ++i) {
-                    auto userNotification = notifications.GetAt(i);
-                    const uint32_t id = userNotification.Id();
-                    if (id <= lastSeenId) {
+    while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
+        try {
+            auto listener = UserNotificationListener::Current();
+            auto access = listener.RequestAccessAsync().get();
+            if (access != UserNotificationListenerAccessStatus::Allowed) {
+                if (!accessLogged) {
+                    Wh_Log(L"Notification listener permission not granted or UWP subsystem not ready on boot (status: %d); retrying connection loop...", (int)access);
+                    accessLogged = true;
+                }
+                WaitForSingleObject(g_stopEvent, 3000);
+                continue;
+            }
+
+            if (accessLogged) {
+                Wh_Log(L"WinRT UserNotificationListener successfully connected.");
+                accessLogged = false;
+            }
+
+            while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
+                try {
+                    auto notifications = listener.GetNotificationsAsync(NotificationKinds::Toast).get();
+                    std::set<uint32_t> currentIds;
+                    
+                    for (uint32_t i = 0; i < notifications.Size(); ++i) {
+                        currentIds.insert(notifications.GetAt(i).Id());
+                    }
+                    
+                    if (firstPoll) {
+                        seenIds = std::move(currentIds);
+                        firstPoll = false;
+                        WaitForSingleObject(g_stopEvent, 1000);
                         continue;
                     }
 
-                    NotificationSnapshot snapshot;
-                    snapshot.active = true;
-                    snapshot.expiresAt = NowSeconds() + 4.0;
-                    auto appInfo = userNotification.AppInfo();
-                    auto displayInfo = appInfo.DisplayInfo();
-                    snapshot.app = displayInfo.DisplayName().c_str();
-                    try {
-                        auto logo = displayInfo.GetLogo({32.0f, 32.0f});
-                        std::vector<uint8_t> logoBytes = ReadWinRtStreamBytes(logo);
-                        if (!logoBytes.empty()) {
-                            DecodeImageBytesToPixels(logoBytes, &snapshot.icon);
+                    for (uint32_t i = 0; i < notifications.Size(); ++i) {
+                        try {
+                            auto userNotification = notifications.GetAt(i);
+                            const uint32_t id = userNotification.Id();
+                            
+                            if (seenIds.count(id)) {
+                                continue;
+                            }
+                            
+                            // Immediately mark as seen so we don't process it again
+                            seenIds.insert(id);
+
+                            NotificationSnapshot snapshot;
+                            snapshot.active = true;
+                            snapshot.expiresAt = NowSeconds() + 4.0;
+                            auto appInfo = userNotification.AppInfo();
+                            auto displayInfo = appInfo.DisplayInfo();
+                            snapshot.app = displayInfo.DisplayName().c_str();
+                            try {
+                                auto logo = displayInfo.GetLogo({32.0f, 32.0f});
+                                std::vector<uint8_t> logoBytes = ReadWinRtStreamBytes(logo);
+                                if (!logoBytes.empty()) {
+                                    DecodeImageBytesToPixels(logoBytes, &snapshot.icon);
+                                }
+                            } catch (...) {
+                            }
+
+                            if (snapshot.icon.bgra.empty() && !snapshot.app.empty()) {
+                                snapshot.icon = FindAppIconByName(snapshot.app, 64);
+                            }
+
+                            auto notification = userNotification.Notification();
+                            auto binding = notification.Visual().GetBinding(KnownNotificationBindings::ToastGeneric());
+                            if (binding) {
+                                auto textElements = binding.GetTextElements();
+                                if (textElements.Size() > 0) {
+                                    snapshot.title = textElements.GetAt(0).Text().c_str();
+                                }
+                                if (textElements.Size() > 1) {
+                                    snapshot.body = textElements.GetAt(1).Text().c_str();
+                                }
+                            }
+
+                            if (snapshot.title.empty()) {
+                                snapshot.title = snapshot.app.empty() ? L"New notification" : snapshot.app;
+                            }
+                            if (!snapshot.body.empty()) {
+                                snapshot.title += L" - " + snapshot.body;
+                            }
+                            if (snapshot.title.size() > 120) {
+                                snapshot.title.resize(120);
+                                snapshot.title += L"...";
+                            }
+
+                            {
+                                std::lock_guard lock(g_stateMutex);
+                                g_state.notification = std::move(snapshot);
+                            }
+                            TriggerNudge();
+                        } catch (const winrt::hresult_error& nex) {
+                            if (nex.to_abi() == 0x80004001 || nex.to_abi() == 0x80040154) { // E_NOTIMPL or REGDB_E_CLASSNOTREG
+                                // UWP subsystem not ready, skip without spamming logs
+                            } else {
+                                Wh_Log(L"Failed to parse a notification (0x%08X); skipping.", nex.to_abi());
+                            }
+                        } catch (...) {
+                            Wh_Log(L"Failed to parse a notification; skipping.");
                         }
-                    } catch (...) {
                     }
-
-                    if (snapshot.icon.bgra.empty() && !snapshot.app.empty()) {
-                        snapshot.icon = FindAppIconByName(snapshot.app, 64);
-                    }
-
-                    auto notification = userNotification.Notification();
-                    auto binding = notification.Visual().GetBinding(KnownNotificationBindings::ToastGeneric());
-                    if (binding) {
-                        auto textElements = binding.GetTextElements();
-                        if (textElements.Size() > 0) {
-                            snapshot.title = textElements.GetAt(0).Text().c_str();
+                    
+                    seenIds = std::move(currentIds);
+                } catch (const winrt::hresult_error& ex) {
+                    const HRESULT hr = ex.to_abi();
+                    if (hr == 0x80004001 || hr == 0x80040154) { // E_NOTIMPL or REGDB_E_CLASSNOTREG
+                        if (!accessLogged) {
+                            Wh_Log(L"Notification listener UWP subsystem not fully ready (0x%08X). Retrying in background...", hr);
+                            accessLogged = true;
                         }
-                        if (textElements.Size() > 1) {
-                            snapshot.body = textElements.GetAt(1).Text().c_str();
-                        }
+                    } else {
+                        Wh_Log(L"NotificationThreadProc inner loop WinRT error: %s (0x%08X); reconnecting...", ex.message().c_str(), hr);
                     }
-
-                    if (snapshot.title.empty()) {
-                        snapshot.title = snapshot.app.empty() ? L"New notification" : snapshot.app;
-                    }
-                    if (!snapshot.body.empty()) {
-                        snapshot.title += L" - " + snapshot.body;
-                    }
-                    if (snapshot.title.size() > 120) {
-                        snapshot.title.resize(120);
-                        snapshot.title += L"...";
-                    }
-
-                    {
-                        std::lock_guard lock(g_stateMutex);
-                        g_state.notification = std::move(snapshot);
-                    }
-                    TriggerNudge();
-                    lastSeenId = id;
-                }
-            } catch (const winrt::hresult_error& ex) {
-                const HRESULT hr = ex.to_abi();
-                Wh_Log(L"NotificationThreadProc loop WinRT error: %s (0x%08X)", ex.message().c_str(), hr);
-                if (hr == E_NOTIMPL || hr == E_ACCESSDENIED || hr == REGDB_E_CLASSNOTREG) {
-                    Wh_Log(L"NotificationThreadProc: Fatal/Unsupported WinRT context. Exiting WinRT notification listener thread.");
+                    WaitForSingleObject(g_stopEvent, 3000);
+                    break;
+                } catch (...) {
+                    Wh_Log(L"NotificationThreadProc inner loop unknown exception; reconnecting...");
+                    WaitForSingleObject(g_stopEvent, 3000);
                     break;
                 }
-            } catch (...) {
-                Wh_Log(L"NotificationThreadProc loop unknown exception.");
-            }
 
-            WaitForSingleObject(g_stopEvent, 1000);
+                WaitForSingleObject(g_stopEvent, 1000);
+            }
+        } catch (const winrt::hresult_error& ex) {
+            if (!accessLogged) {
+                Wh_Log(L"NotificationThreadProc connection error: %s (0x%08X). Retrying in 3s...", ex.message().c_str(), ex.to_abi());
+                accessLogged = true;
+            }
+            WaitForSingleObject(g_stopEvent, 3000);
+        } catch (...) {
+            if (!accessLogged) {
+                Wh_Log(L"NotificationThreadProc unknown connection exception. Retrying in 3s...");
+                accessLogged = true;
+            }
+            WaitForSingleObject(g_stopEvent, 3000);
         }
-    } catch (const winrt::hresult_error& ex) {
-        Wh_Log(L"NotificationThreadProc initialization WinRT error: %s (0x%08X). Falling back to shell hook.", ex.message().c_str(), ex.to_abi());
-    } catch (...) {
-        Wh_Log(L"NotificationThreadProc initialization unknown exception. Falling back to shell hook.");
     }
 
     winrt::uninit_apartment();
@@ -1967,10 +2129,17 @@ DWORD WINAPI WeatherThreadProc(void*) {
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         std::wstring cityOverride;
         bool isFahrenheit = false;
+        bool weatherEnabled = true;
         {
             std::lock_guard lock(g_stateMutex);
+            weatherEnabled = g_settings.weather;
             cityOverride = g_settings.weatherCity;
             isFahrenheit = g_settings.weatherFahrenheit;
+        }
+
+        if (!weatherEnabled) {
+            WaitForSingleObject(g_stopEvent, 2000);
+            continue;
         }
 
         std::wstring url = L"/?format=j1";
@@ -2488,8 +2657,8 @@ void UpdateProgressSnapshot() {
 }
 
 void UpdatePrivacyIndicators() {
-    const bool mic = IsMicrophoneActive();
-    const bool cam = IsCameraActive();
+    const bool mic = (g_settings.privacyDots && g_settings.privacyDotsMic) ? IsMicrophoneActive() : false;
+    const bool cam = (g_settings.privacyDots && g_settings.privacyDotsCam) ? IsCameraActive() : false;
     std::lock_guard lock(g_stateMutex);
     g_state.system.micActive = mic;
     g_state.system.cameraActive = cam;
@@ -2734,7 +2903,6 @@ void CaptureClipboard(HWND hwnd) {
             std::lock_guard lock(g_stateMutex);
             g_state.clipboard = std::move(clip);
         }
-        TriggerNudge();
     }
 }
 
@@ -2951,13 +3119,14 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
     AppendMenuW(menu, MF_STRING, 1, L"Dismiss");
     AppendMenuW(menu, MF_STRING, 2, L"Pin expanded");
     AppendMenuW(menu, MF_STRING, 3, Wh_GetIntValue(L"GameOverlayPinned", 0) ? L"Hide game overlay" : L"Show game overlay");
+    std::wstring shapeStr = GetStringSettingCopy(L"Appearance.ShapeStyle");
     const int activeW11 = Wh_GetIntValue(L"W11StyleOverride", -1) >= 0
                           ? Wh_GetIntValue(L"W11StyleOverride", 0)
-                          : Wh_GetIntSetting(L"Appearance.W11Style");
+                          : EqualsNoCase(shapeStr, L"w11");
     AppendMenuW(menu, MF_STRING, 10, activeW11 ? L"Use iPhone Pill Style" : L"Use Windows 11 Flyout Style");
     const int activeNotch = Wh_GetIntValue(L"NotchStyleOverride", -1) >= 0
                           ? Wh_GetIntValue(L"NotchStyleOverride", 0)
-                          : Wh_GetIntSetting(L"Appearance.MacOsNotchStyle");
+                          : EqualsNoCase(shapeStr, L"notch");
     AppendMenuW(menu, MF_STRING, 12, activeNotch ? L"Disable macOS Notch Style" : L"Use macOS Notch Style");
     const int activeExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1) >= 0
                           ? Wh_GetIntValue(L"ExpandOnHoverOverride", 0)
@@ -3031,9 +3200,10 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             break;
         }
         case 10: {
+            std::wstring shapeStr = GetStringSettingCopy(L"Appearance.ShapeStyle");
             const int activeW11Val = Wh_GetIntValue(L"W11StyleOverride", -1) >= 0
                                   ? Wh_GetIntValue(L"W11StyleOverride", 0)
-                                  : Wh_GetIntSetting(L"Appearance.W11Style");
+                                  : EqualsNoCase(shapeStr, L"w11");
             Wh_SetIntValue(L"W11StyleOverride", activeW11Val ? 0 : 1);
             if (!activeW11Val) Wh_SetIntValue(L"NotchStyleOverride", 0);
             LoadSettings();
@@ -3041,9 +3211,10 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             break;
         }
         case 12: {
+            std::wstring shapeStr = GetStringSettingCopy(L"Appearance.ShapeStyle");
             const int activeNotchVal = Wh_GetIntValue(L"NotchStyleOverride", -1) >= 0
                                     ? Wh_GetIntValue(L"NotchStyleOverride", 0)
-                                    : Wh_GetIntSetting(L"Appearance.MacOsNotchStyle");
+                                    : EqualsNoCase(shapeStr, L"notch");
             Wh_SetIntValue(L"NotchStyleOverride", activeNotchVal ? 0 : 1);
             if (!activeNotchVal) Wh_SetIntValue(L"W11StyleOverride", 0);
             LoadSettings();
@@ -3180,7 +3351,9 @@ class Renderer {
         EnsureBrushes(settings, state);
         settingsOpacity_ = settings.pillOpacity;
 
-        const float hoverScale = hover || pinned ? 1.025f : 1.0f;
+        const bool gameMetricsPresent = primary.kind == IslandKind::Idle &&
+            (settings.gameOverlay || Wh_GetIntValue(L"GameOverlayPinned", 0) != 0);
+        const float hoverScale = ((hover && !gameMetricsPresent) || pinned) ? 1.025f : 1.0f;
         const float scale = hoverScale;
 
         const float top = settings.notchStyle ? std::max(0.0f, nudge) : (kRenderPadY + nudge);
@@ -3492,7 +3665,7 @@ class Renderer {
         // ── Apple-style privacy indicator dots ───────────────────────────────
         // Green dot = camera in use, Orange dot = mic in use.
         // Drawn in top-right corner of pill, outside content area.
-        DrawPrivacyDots(state, unscaledRect, now);
+        DrawPrivacyDots(state, settings, unscaledRect, now);
 
         target_->SetTransform(oldTransform);
     }
@@ -3504,13 +3677,15 @@ class Renderer {
 
     // Apple Dynamic Island privacy dots.
     // Placed inside the pill near the top-right edge — pulsing glow like iPhone.
-    void DrawPrivacyDots(const SharedState& state, D2D1_RECT_F rect, double now) {
-        const bool mic = state.system.micActive;
-        const bool cam = state.system.cameraActive;
+    void DrawPrivacyDots(const SharedState& state, const Settings& settings, D2D1_RECT_F rect, double now) {
+        const bool mic = state.system.micActive && settings.privacyDots && settings.privacyDotsMic;
+        const bool cam = state.system.cameraActive && settings.privacyDots && settings.privacyDotsCam;
         if (!mic && !cam) return;
 
-        // Soft breathing pulse (0.75 Hz like iPhone).
-        const float pulse = 0.72f + 0.28f * std::sin(static_cast<float>(now * 2.0 * 3.14159265 * 0.75));
+        // Soft breathing pulse (0.75 Hz like iPhone) or static 1.0f.
+        const float pulse = settings.privacyDotsPulse
+            ? (0.72f + 0.28f * std::sin(static_cast<float>(now * 2.0 * 3.14159265 * 0.75)))
+            : 1.0f;
 
         const float dotR   = 4.5f;   // dot radius
         const float gap    = 5.5f;   // gap between dots
@@ -3522,16 +3697,17 @@ class Renderer {
         // Green = camera (rightmost when both active).
         if (cam) {
             ComPtr<ID2D1SolidColorBrush> camBrush;
-            // Bright iOS camera green.
-            target_->CreateSolidColorBrush(
-                D2D1::ColorF(0.133f, 0.776f, 0.239f, pulse * settingsOpacity_), &camBrush);
+            D2D1_COLOR_F camColor = settings.privacyDotsCamHex;
+            camColor.a = pulse * settingsOpacity_;
+            target_->CreateSolidColorBrush(camColor, &camBrush);
             if (camBrush) {
                 target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY), dotR, dotR),
                                      camBrush.Get());
                 // Glow halo.
                 ComPtr<ID2D1SolidColorBrush> glow;
-                target_->CreateSolidColorBrush(
-                    D2D1::ColorF(0.133f, 0.776f, 0.239f, 0.18f * pulse * settingsOpacity_), &glow);
+                D2D1_COLOR_F glowColor = camColor;
+                glowColor.a = 0.18f * pulse * settingsOpacity_;
+                target_->CreateSolidColorBrush(glowColor, &glow);
                 if (glow) {
                     target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY),
                                                         dotR * 2.2f, dotR * 2.2f), glow.Get());
@@ -3543,15 +3719,16 @@ class Renderer {
         // Orange = microphone.
         if (mic) {
             ComPtr<ID2D1SolidColorBrush> micBrush;
-            // iOS orange.
-            target_->CreateSolidColorBrush(
-                D2D1::ColorF(1.0f, 0.584f, 0.0f, pulse * settingsOpacity_), &micBrush);
+            D2D1_COLOR_F micColor = settings.privacyDotsMicHex;
+            micColor.a = pulse * settingsOpacity_;
+            target_->CreateSolidColorBrush(micColor, &micBrush);
             if (micBrush) {
                 target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY), dotR, dotR),
                                      micBrush.Get());
                 ComPtr<ID2D1SolidColorBrush> glow;
-                target_->CreateSolidColorBrush(
-                    D2D1::ColorF(1.0f, 0.584f, 0.0f, 0.18f * pulse * settingsOpacity_), &glow);
+                D2D1_COLOR_F glowColor = micColor;
+                glowColor.a = 0.18f * pulse * settingsOpacity_;
+                target_->CreateSolidColorBrush(glowColor, &glow);
                 if (glow) {
                     target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY),
                                                         dotR * 2.2f, dotR * 2.2f), glow.Get());
@@ -3819,6 +3996,18 @@ class Renderer {
         }
     }
 
+    std::wstring WindDirToArrow(const std::wstring& dir) {
+        if (dir == L"N") return L"\x2193";
+        if (dir == L"NNE" || dir == L"NE" || dir == L"ENE") return L"\x2199";
+        if (dir == L"E") return L"\x2190";
+        if (dir == L"ESE" || dir == L"SE" || dir == L"SSE") return L"\x2196";
+        if (dir == L"S") return L"\x2191";
+        if (dir == L"SSW" || dir == L"SW" || dir == L"WSW") return L"\x2197";
+        if (dir == L"W") return L"\x2192";
+        if (dir == L"WNW" || dir == L"NW" || dir == L"NNW") return L"\x2198";
+        return dir;
+    }
+
     void DrawWeatherDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, double now, float scale, bool hasWeather, const std::wstring& wIcon, const std::wstring& wText) {
         wchar_t wTemp[32] = {};
         if (hasWeather) swprintf_s(wTemp, L"%.0f\x00B0", state.weather.temperature);
@@ -3843,11 +4032,35 @@ class Renderer {
                            D2D1::RectF(rect.left + 95.0f * scale, rect.top + 60.0f * scale, rect.left + 185.0f * scale, rect.bottom),
                            textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-        mutedBrush_->SetOpacity(0.85f);
         // Description
-        target_->DrawTextW(desc.c_str(), static_cast<UINT32>(desc.length()), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 120.0f * scale, rect.left + 185.0f * scale, rect.bottom),
+        const size_t descLength = desc.length();
+        float descFontSize = 13.5f;
+        if (descLength > 58) descFontSize = 9.8f;
+        else if (descLength > 44) descFontSize = 10.5f;
+        else if (descLength > 32) descFontSize = 11.5f;
+        else if (descLength > 22) descFontSize = 12.5f;
+        descFontSize *= scale;
+
+        ComPtr<IDWriteTextFormat> weatherDescFormat;
+        if (dwriteFactory_) {
+            dwriteFactory_->CreateTextFormat(L"Segoe UI Variable Display", nullptr,
+                                             DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                                             DWRITE_FONT_STYLE_NORMAL,
+                                             DWRITE_FONT_STRETCH_NORMAL,
+                                             descFontSize, L"", &weatherDescFormat);
+        }
+        if (weatherDescFormat) {
+            weatherDescFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            weatherDescFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            weatherDescFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        }
+
+        target_->DrawTextW(desc.c_str(), static_cast<UINT32>(desc.length()),
+                           weatherDescFormat ? weatherDescFormat.Get() : textFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 120.0f * scale,
+                                       rect.left + 185.0f * scale, rect.bottom - 12.0f * scale),
                            mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
 
         ComPtr<ID2D1SolidColorBrush> divider;
         target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.12f * settingsOpacity_), &divider);
@@ -3856,7 +4069,7 @@ class Renderer {
                                            rect.left + 191.5f * scale, rect.bottom - 34.0f * scale),
                               0.5f * scale, 0.5f * scale), divider.Get());
 
-        std::wstring line3 = hasWeather ? L"Wind: " + state.weather.windSpeed + (settings.weatherFahrenheit ? L" mph " : L" km/h ") + state.weather.windDir : L"Updated recently";
+        std::wstring line3 = hasWeather ? L"Wind: " + state.weather.windSpeed + (settings.weatherFahrenheit ? L" mph " : L" km/h ") + WindDirToArrow(state.weather.windDir) : L"Updated recently";
         std::wstring line4 = hasWeather ? L"Feels Like: " + state.weather.feelsLike + L"\x00B0" : L"";
         std::wstring line5 = hasWeather ? L"Humidity: " + state.weather.humidity + L"%" : L"";
 
@@ -3904,57 +4117,71 @@ class Renderer {
 
         if (width / scale < 220.0f) {
             // Collapsed Mode
-            D2D1_RECT_F timeRect = D2D1::RectF(rect.left + 20.0f * scale, rect.top + 7.0f * scale,
-                                               rect.left + 80.0f * scale, rect.bottom - 7.0f * scale);
-            textBrush_->SetOpacity(0.96f);
-            target_->DrawTextW(timeBuf, static_cast<UINT32>(wcslen(timeBuf)), smallTextFormat_.Get(),
-                               timeRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-            
-            ComPtr<ID2D1SolidColorBrush> divider;
-            target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.12f * settingsOpacity_), &divider);
-            target_->FillRoundedRectangle(
-                D2D1::RoundedRect(D2D1::RectF(rect.left + 82.0f * scale, rect.top + 10.0f * scale,
-                                               rect.left + 83.5f * scale, rect.bottom - 10.0f * scale),
-                                  0.5f * scale, 0.5f * scale), divider.Get());
+            if (!settings.weather) {
+                D2D1_RECT_F timeRect = D2D1::RectF(rect.left, rect.top + 7.0f * scale,
+                                                   rect.right, rect.bottom - 7.0f * scale);
+                textBrush_->SetOpacity(0.96f);
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                target_->DrawTextW(timeBuf, static_cast<UINT32>(wcslen(timeBuf)), smallTextFormat_.Get(),
+                                   timeRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            } else {
+                D2D1_RECT_F timeRect = D2D1::RectF(rect.left + 20.0f * scale, rect.top + 7.0f * scale,
+                                                   rect.left + 80.0f * scale, rect.bottom - 7.0f * scale);
+                textBrush_->SetOpacity(0.96f);
+                target_->DrawTextW(timeBuf, static_cast<UINT32>(wcslen(timeBuf)), smallTextFormat_.Get(),
+                                   timeRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                
+                ComPtr<ID2D1SolidColorBrush> divider;
+                target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.12f * settingsOpacity_), &divider);
+                target_->FillRoundedRectangle(
+                    D2D1::RoundedRect(D2D1::RectF(rect.left + 82.0f * scale, rect.top + 10.0f * scale,
+                                                   rect.left + 83.5f * scale, rect.bottom - 10.0f * scale),
+                                      0.5f * scale, 0.5f * scale), divider.Get());
 
-            wchar_t weatherLabel[32] = {};
-            if (hasWeather) swprintf_s(weatherLabel, L"%s %.0f\x00B0", wIcon.c_str(), state.weather.temperature);
-            else wcscpy_s(weatherLabel, ARRAYSIZE(weatherLabel), L"🌡️ --\x00B0");
+                wchar_t weatherLabel[32] = {};
+                if (hasWeather) swprintf_s(weatherLabel, L"%s %.0f\x00B0", wIcon.c_str(), state.weather.temperature);
+                else wcscpy_s(weatherLabel, ARRAYSIZE(weatherLabel), L"🌡️ --\x00B0");
 
-            D2D1_RECT_F wRect = D2D1::RectF(rect.left + 94.0f * scale, rect.top + 7.0f * scale,
-                                            rect.right, rect.bottom - 7.0f * scale);
-            target_->DrawTextW(weatherLabel, static_cast<UINT32>(wcslen(weatherLabel)), smallTextFormat_.Get(),
-                               wRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                D2D1_RECT_F wRect = D2D1::RectF(rect.left + 94.0f * scale, rect.top + 7.0f * scale,
+                                                rect.right, rect.bottom - 7.0f * scale);
+                target_->DrawTextW(weatherLabel, static_cast<UINT32>(wcslen(weatherLabel)), smallTextFormat_.Get(),
+                                   wRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+            }
             textBrush_->SetOpacity(1.0f);
             target_->PopAxisAlignedClip();
+            g_idleTab = 0;
             return;
         }
 
         // Expanded Mode
-        int tab = g_idleTab % 2;
-        if (tab < 0) tab += 2;
+        int maxTabs = settings.weather ? 2 : 1;
+        int tab = g_idleTab % maxTabs;
+        if (tab < 0) tab += maxTabs;
 
         if (tab == 0) DrawCalendarDashboard(state, rect, settings, now, scale, local);
         else DrawWeatherDashboard(state, rect, settings, now, scale, hasWeather, wIcon, wText);
 
         // Pagination dots (Vertical on the right edge)
-        float shiftX = 0.0f;
-        if (state.system.micActive && state.system.cameraActive) {
-            shiftX = 30.0f * scale;
-        } else if (state.system.micActive || state.system.cameraActive) {
-            shiftX = 16.0f * scale;
-        }
-        const float dotX = rect.right - 10.0f * scale - shiftX;
-        const float dotY = (rect.top + rect.bottom) * 0.5f;
-        const float spacing = 8.0f * scale;
-        const float r = 2.5f * scale;
-        
-        ComPtr<ID2D1SolidColorBrush> activeDot, inactiveDot;
-        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.85f * settingsOpacity_), &activeDot);
-        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.25f * settingsOpacity_), &inactiveDot);
+        if (maxTabs > 1) {
+            float shiftX = 0.0f;
+            if (state.system.micActive && state.system.cameraActive) {
+                shiftX = 30.0f * scale;
+            } else if (state.system.micActive || state.system.cameraActive) {
+                shiftX = 16.0f * scale;
+            }
+            const float dotX = rect.right - 10.0f * scale - shiftX;
+            const float dotY = (rect.top + rect.bottom) * 0.5f;
+            const float spacing = 8.0f * scale;
+            const float r = 2.5f * scale;
+            
+            ComPtr<ID2D1SolidColorBrush> activeDot, inactiveDot;
+            target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.85f * settingsOpacity_), &activeDot);
+            target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.25f * settingsOpacity_), &inactiveDot);
 
-        target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, dotY - spacing * 0.5f), r, r), tab == 0 ? activeDot.Get() : inactiveDot.Get());
-        target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, dotY + spacing * 0.5f), r, r), tab == 1 ? activeDot.Get() : inactiveDot.Get());
+            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, dotY - spacing * 0.5f), r, r), tab == 0 ? activeDot.Get() : inactiveDot.Get());
+            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, dotY + spacing * 0.5f), r, r), tab == 1 ? activeDot.Get() : inactiveDot.Get());
+        }
 
         target_->PopAxisAlignedClip();
     }
@@ -4507,6 +4734,14 @@ class Renderer {
                                 artistRect, smallTextFormat_.Get(), mutedBrush_.Get(), now, 30.0f);
                 mutedBrush_->SetOpacity(0.50f);
 
+                if (!state.media.albumTitle.empty()) {
+                    D2D1_RECT_F albumRect = D2D1::RectF(textLeft, rect.top + 68.0f, textRight, rect.top + 84.0f);
+                    mutedBrush_->SetOpacity(0.40f);
+                    DrawMarqueeText(state.media.albumTitle, albumRect, smallTextFormat_.Get(),
+                                    mutedBrush_.Get(), now, 28.0f);
+                    mutedBrush_->SetOpacity(0.50f);
+                }
+
                 if (state.media.playing) {
                     DrawWaveform(state, waveRect);
                 } else {
@@ -4606,6 +4841,7 @@ class Renderer {
 
         // Collapsed UI
         if (collapsedAlpha > 0.01f && mask && layer) {
+            g_idleTab = 0;
             target_->PushLayer(D2D1::LayerParameters(rect, mask.Get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), collapsedAlpha, nullptr, D2D1_LAYER_OPTIONS_NONE), layer.Get());
             
             const float cy = (rect.top + rect.bottom) * 0.5f;
@@ -5500,7 +5736,7 @@ Activity ActivityForKind(IslandKind kind, const Settings& settings, const Shared
                 activity.width = 0.0f;
                 activity.height = 0.0f;
             } else {
-                activity.width = 170.0f;
+                activity.width = settings.weather ? 170.0f : 96.0f;
                 activity.height = 36.0f;
             }
             break;
@@ -5556,7 +5792,21 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         if (wParam == WM_KEYUP || wParam == WM_SYSKEYUP) {
             auto* kbd = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
             if (kbd->vkCode == VK_CAPITAL || kbd->vkCode == VK_NUMLOCK) {
-                PostMessageW(g_hwnd, WM_APP_CAPSLOCK, kbd->vkCode, 0);
+                bool capsOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
+                bool numOn = (GetKeyState(VK_NUMLOCK) & 0x0001) != 0;
+                {
+                    std::lock_guard lock(g_stateMutex);
+                    g_state.capsLock.active = true;
+                    g_state.capsLock.capsOn = capsOn;
+                    g_state.capsLock.numOn = numOn;
+                    g_state.capsLock.isNumEvent = (kbd->vkCode == VK_NUMLOCK);
+                    g_state.capsLock.expiresAt = NowSeconds() + 2.5;
+                }
+                HWND hwnd = g_hwnd;
+                if (hwnd) {
+                    LPARAM state = (capsOn ? 1 : 0) | (numOn ? 2 : 0);
+                    PostMessageW(hwnd, WM_APP_CAPSLOCK, kbd->vkCode, state);
+                }
             }
         }
     }
@@ -5564,6 +5814,9 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 }
 
 DWORD WINAPI KeyboardThreadProc(void*) {
+    while (!g_hwnd) {
+        Sleep(10);
+    }
     g_keyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, nullptr, 0);
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
@@ -5581,6 +5834,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     switch (msg) {
         case WM_CREATE:
             AddClipboardFormatListener(hwnd);
+            if (g_shellHookMessage == 0) g_shellHookMessage = RegisterWindowMessageW(L"SHELLHOOK");
+            if (g_taskbarCreatedMessage == 0) g_taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarCreated");
             RegisterShellHookWindow(hwnd);
             return 0;
 
@@ -5590,9 +5845,10 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
 
         case WM_APP_CAPSLOCK: {
+            if (!g_settings.capsLock) return 0;
             bool isNum = (wParam == VK_NUMLOCK);
-            bool capsOn = (GetKeyState(VK_CAPITAL) & 0x0001) != 0;
-            bool numOn = (GetKeyState(VK_NUMLOCK) & 0x0001) != 0;
+            bool capsOn = (lParam & 1) != 0;
+            bool numOn = (lParam & 2) != 0;
             {
                 std::lock_guard lock(g_stateMutex);
                 g_state.capsLock.active = true;
@@ -5639,6 +5895,20 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
         }
 
+        case WM_POWERBROADCAST: {
+            if (wParam == PBT_APMRESUMESUSPEND || wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMECRITICAL) {
+                if (g_settingsChangedEvent) {
+                    SetEvent(g_settingsChangedEvent);
+                }
+                {
+                    std::lock_guard lock(g_stateMutex);
+                    g_state.weather.lastUpdated = 0.0;
+                }
+                TriggerNudge();
+            }
+            return TRUE;
+        }
+
         case WM_CLIPBOARDUPDATE:
             if (g_settings.clipboard) {
                 CaptureClipboard(hwnd);
@@ -5674,9 +5944,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     
                     float unX = (xPos - cx) / totalScale;
                     float unY = (yPos - cy) / totalScale;
-                    float targetY = g_settings.notchStyle ? 34.0f : 56.0f;
 
-                    if (unY > targetY - 30.0f && unY < targetY + 30.0f) {
+                    if (unY > 56.0f - 30.0f && unY < 56.0f + 30.0f) {
                         int cmd = -1;
                         if (unX > -84.0f && unX < -44.0f) cmd = 0; // Prev
                         else if (unX > -24.0f && unX < 24.0f) cmd = 1; // Play/Pause
@@ -5704,13 +5973,6 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 int xPos = GET_X_LPARAM(lParam);
                 int yPos = GET_Y_LPARAM(lParam);
                 
-                bool expanded = Wh_GetIntValue(L"PinnedExpanded", 0) != 0 || g_clickExpanded.load();
-                if (!g_settings.expandOnHover && !expanded) {
-                    g_clickExpanded = true;
-                    g_layoutDirty = true;
-                    return 0; // consumed click to expand
-                }
-                
                 bool mediaActive = false;
                 std::vector<IslandKind> kinds;
                 {
@@ -5718,74 +5980,149 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     mediaActive = g_settings.media && g_state.media.available;
                     kinds = ChooseActivities(g_state, g_settings, NowSeconds());
                 }
+                const bool gameMetricsPresent =
+                    !kinds.empty() && kinds[0] == IslandKind::Idle &&
+                    (g_settings.gameOverlay || Wh_GetIntValue(L"GameOverlayPinned", 0) != 0);
+
+                bool expanded = Wh_GetIntValue(L"PinnedExpanded", 0) != 0 || g_clickExpanded.load();
+                if (!gameMetricsPresent && !g_settings.expandOnHover && !expanded) {
+                    g_clickExpanded = true;
+                    g_layoutDirty = true;
+                    return 0; // consumed click to expand
+                }
 
                 RECT clientRect;
                 GetClientRect(hwnd, &clientRect);
                 const float height = static_cast<float>(clientRect.bottom - clientRect.top);
                 const float width = static_cast<float>(clientRect.right - clientRect.left);
 
-                if (mediaActive && height > 60.0f && (g_idleTab % 3) == 0) {
-                    float totalScale = (GetDpiForWindow(hwnd) / 96.0f) * g_settings.sizeScale;
-                    float cx = width / 2.0f;
-                    float cy = height / 2.0f;
-                    
-                    float unX = (xPos - cx) / totalScale;
-                    float unY = (yPos - cy) / totalScale;
+                float totalScale = (GetDpiForWindow(hwnd) / 96.0f) * g_settings.sizeScale;
+                float cx = width / 2.0f;
+                float cy = height / 2.0f;
+                float unX = (xPos - cx) / totalScale;
+                float unY = (yPos - cy) / totalScale;
 
-                    if (unY > 56.0f - 30.0f && unY < 56.0f + 30.0f) {
-                        // Check button clicks in expanded media view
-                        int cmd = -1;
-                        if (unX > -84.0f && unX < -44.0f) cmd = 0; // Prev
-                        else if (unX > -24.0f && unX < 24.0f) cmd = 1; // Play/Pause
-                        else if (unX > 44.0f && unX < 84.0f) cmd = 2; // Next
+                bool clickedAlbumArt = false;
+                if (mediaActive) {
+                    if (height > 60.0f && (g_idleTab % 3) == 0) {
+                        // Check album art bounds in expanded media view
+                        if (unX >= -168.0f && unX <= -100.0f && unY >= -74.0f && unY <= -6.0f) {
+                            clickedAlbumArt = true;
+                        }
 
-                        if (cmd != -1) {
-                            std::thread([cmd]() {
-                                winrt::init_apartment(winrt::apartment_type::multi_threaded);
-                                try {
-                                    using Manager = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
-                                    auto manager = Manager::RequestAsync().get();
-                                    if (manager) {
-                                        auto sessions = manager.GetSessions();
-                                        std::wstring currentAumid;
-                                        {
-                                            std::lock_guard lock(g_stateMutex);
-                                            currentAumid = g_state.media.sourceAppUserModelId;
-                                        }
-                                        winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession session = nullptr;
-                                        for (auto const& s : sessions) {
-                                            if (s.SourceAppUserModelId().c_str() == currentAumid) {
-                                                session = s;
-                                                break;
+                        if (unY > 56.0f - 30.0f && unY < 56.0f + 30.0f) {
+                            // Check button clicks in expanded media view
+                            int cmd = -1;
+                            if (unX > -84.0f && unX < -44.0f) cmd = 0; // Prev
+                            else if (unX > -24.0f && unX < 24.0f) cmd = 1; // Play/Pause
+                            else if (unX > 44.0f && unX < 84.0f) cmd = 2; // Next
+
+                            if (cmd != -1) {
+                                std::thread([cmd]() {
+                                    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+                                    try {
+                                        using Manager = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+                                        auto manager = Manager::RequestAsync().get();
+                                        if (manager) {
+                                            auto sessions = manager.GetSessions();
+                                            std::wstring currentAumid;
+                                            {
+                                                std::lock_guard lock(g_stateMutex);
+                                                currentAumid = g_state.media.sourceAppUserModelId;
+                                            }
+                                            winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession session = nullptr;
+                                            for (auto const& s : sessions) {
+                                                if (s.SourceAppUserModelId().c_str() == currentAumid) {
+                                                    session = s;
+                                                    break;
+                                                }
+                                            }
+                                            if (!session) session = manager.GetCurrentSession();
+
+                                            if (session) {
+                                                if (cmd == 0) session.TrySkipPreviousAsync().get();
+                                                else if (cmd == 1) session.TryTogglePlayPauseAsync().get();
+                                                else if (cmd == 2) session.TrySkipNextAsync().get();
                                             }
                                         }
-                                        if (!session) session = manager.GetCurrentSession();
+                                    } catch (...) {}
+                                }).detach();
+                                return 0;
+                            }
+                        }
 
-                                        if (session) {
-                                            if (cmd == 0) session.TrySkipPreviousAsync().get();
-                                            else if (cmd == 1) session.TryTogglePlayPauseAsync().get();
-                                            else if (cmd == 2) session.TrySkipNextAsync().get();
+                        if (unY >= 8.0f && unY <= 36.0f && unX >= -136.0f && unX <= 134.0f) {
+                            // Clicked on the media progress bar (scrubber) to seek
+                            float fraction = (unX - (-130.0f)) / (128.0f - (-130.0f));
+                            fraction = std::clamp(fraction, 0.0f, 1.0f);
+                            int64_t endTicks = 0;
+                            {
+                                std::lock_guard lock(g_stateMutex);
+                                endTicks = g_state.media.endTicks;
+                            }
+                            if (endTicks > 0) {
+                                int64_t targetTicks = static_cast<int64_t>(fraction * endTicks);
+                                std::thread([targetTicks]() {
+                                    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+                                    try {
+                                        using Manager = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+                                        auto manager = Manager::RequestAsync().get();
+                                        if (manager) {
+                                            auto sessions = manager.GetSessions();
+                                            std::wstring currentAumid;
+                                            {
+                                                std::lock_guard lock(g_stateMutex);
+                                                currentAumid = g_state.media.sourceAppUserModelId;
+                                            }
+                                            winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession session = nullptr;
+                                            for (auto const& s : sessions) {
+                                                if (s.SourceAppUserModelId().c_str() == currentAumid) {
+                                                    session = s;
+                                                    break;
+                                                }
+                                            }
+                                            if (!session) session = manager.GetCurrentSession();
+
+                                            if (session) {
+                                                session.TryChangePlaybackPositionAsync(targetTicks).get();
+                                            }
                                         }
-                                    }
-                                } catch (...) {}
-                            }).detach();
+                                    } catch (...) {}
+                                }).detach();
+                                {
+                                    std::lock_guard lock(g_stateMutex);
+                                    g_state.media.positionTicks = targetTicks;
+                                    g_state.media.lastUpdatedTicks = GetTickCount64();
+                                }
+                                g_layoutDirty = true;
+                            }
                             return 0;
                         }
+                    } else if (height <= 60.0f) {
+                        float unW = (width - kRenderPadX * 2.0f) / totalScale;
+                        float unH = (height - kRenderPadY * 2.0f) / totalScale;
+                        float artSize = unH - 12.0f;
+                        float artLeft = -unW * 0.5f + 8.0f;
+                        if (unX >= artLeft - 4.0f && unX <= artLeft + artSize + 4.0f &&
+                            unY >= -artSize * 0.5f - 4.0f && unY <= artSize * 0.5f + 4.0f) {
+                            clickedAlbumArt = true;
+                        }
                     }
-                }
 
-                if (mediaActive) {
                     if (height > 45.0f && xPos > width - 30.0f) {
                         // Clicked on the right edge scroll area in Media
                         g_idleTab = (g_idleTab + 1) % 3;
                         g_layoutDirty = true;
-                    } else {
+                    } else if (clickedAlbumArt) {
                         OpenRelevantApp();
                     }
                 } else {
                     if (!kinds.empty() && kinds[0] == IslandKind::Idle && height > 45.0f) {
-                        if (xPos < width / 2.0f) g_idleTab = (g_idleTab - 1 + 2) % 2;
-                        else g_idleTab = (g_idleTab + 1) % 2;
+                        int maxTabs = g_settings.weather ? 2 : 1;
+                        if (maxTabs > 1) {
+                            if (xPos < width / 2.0f) g_idleTab = (g_idleTab - 1 + maxTabs) % maxTabs;
+                            else g_idleTab = (g_idleTab + 1) % maxTabs;
+                        }
                         g_layoutDirty = true;
                     } else {
                         HandleStatusClickAtPoint(hwnd, lParam);
@@ -5833,10 +6170,17 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
     }
 
-    if (msg == g_shellHookMessage) {
+    if (msg == g_shellHookMessage && g_shellHookMessage != 0) {
         if (wParam == HSHELL_WINDOWCREATED) {
             CaptureShellNotification(reinterpret_cast<HWND>(lParam));
         }
+        return 0;
+    }
+
+    if (msg == g_taskbarCreatedMessage && g_taskbarCreatedMessage != 0) {
+        Wh_Log(L"TaskbarCreated received; re-registering shell hook window.");
+        DeregisterShellHookWindow(hwnd);
+        RegisterShellHookWindow(hwnd);
         return 0;
     }
 
@@ -5868,7 +6212,27 @@ DWORD WINAPI RenderThreadProc(void*) {
     }
 
     g_hwnd = hwnd;
-    g_shellHookMessage = RegisterWindowMessageW(L"SHELLHOOK");
+    if (g_shellHookMessage == 0) g_shellHookMessage = RegisterWindowMessageW(L"SHELLHOOK");
+    if (g_taskbarCreatedMessage == 0) g_taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarCreated");
+    using ChangeWindowMessageFilterEx_t = BOOL(WINAPI*)(HWND, UINT, DWORD, PVOID);
+    static auto pChangeWindowMessageFilterEx = reinterpret_cast<ChangeWindowMessageFilterEx_t>(
+        GetProcAddress(GetModuleHandleW(L"user32.dll"), "ChangeWindowMessageFilterEx"));
+    if (pChangeWindowMessageFilterEx) {
+        if (g_shellHookMessage) pChangeWindowMessageFilterEx(hwnd, g_shellHookMessage, 1 /*MSGFLT_ALLOW*/, nullptr);
+        if (g_taskbarCreatedMessage) pChangeWindowMessageFilterEx(hwnd, g_taskbarCreatedMessage, 1 /*MSGFLT_ALLOW*/, nullptr);
+        pChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, 1 /*MSGFLT_ALLOW*/, nullptr);
+        pChangeWindowMessageFilterEx(hwnd, 0x0049 /*WM_COPYGLOBALDATA*/, 1 /*MSGFLT_ALLOW*/, nullptr);
+    } else {
+        using ChangeWindowMessageFilter_t = BOOL(WINAPI*)(UINT, DWORD);
+        static auto pChangeWindowMessageFilter = reinterpret_cast<ChangeWindowMessageFilter_t>(
+            GetProcAddress(GetModuleHandleW(L"user32.dll"), "ChangeWindowMessageFilter"));
+        if (pChangeWindowMessageFilter) {
+            if (g_shellHookMessage) pChangeWindowMessageFilter(g_shellHookMessage, 1 /*MSGFLT_ADD*/);
+            if (g_taskbarCreatedMessage) pChangeWindowMessageFilter(g_taskbarCreatedMessage, 1 /*MSGFLT_ADD*/);
+            pChangeWindowMessageFilter(WM_COPYDATA, 1 /*MSGFLT_ADD*/);
+            pChangeWindowMessageFilter(0x0049 /*WM_COPYGLOBALDATA*/, 1 /*MSGFLT_ADD*/);
+        }
+    }
     EnableBlurBehind(hwnd);
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 
@@ -5907,6 +6271,7 @@ DWORD WINAPI RenderThreadProc(void*) {
     double nextSystemPoll = 0.0;
     double nextPrivacyPoll = 0.0;
 
+    static double lastInteractionTime = NowSeconds();
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         MSG message = {};
         while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
@@ -5914,6 +6279,7 @@ DWORD WINAPI RenderThreadProc(void*) {
                 nudgeSpring.value = -6.0f;
                 nudgeSpring.velocity = 0.0f;
                 nudgeSpring.target = 0.0f;
+                lastInteractionTime = NowSeconds();
                 continue;
             }
             TranslateMessage(&message);
@@ -5977,10 +6343,13 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         const bool pinned = Wh_GetIntValue(L"PinnedExpanded", 0) != 0;
 
-        if (primary.kind != previousPrimary && primary.kind != IslandKind::Idle) {
-            nudgeSpring.value = -6.0f;
-            nudgeSpring.velocity = 0.0f;
-            nudgeSpring.target = 0.0f;
+        if (primary.kind != previousPrimary) {
+            if (primary.kind != IslandKind::Idle) {
+                nudgeSpring.value = -6.0f;
+                nudgeSpring.velocity = 0.0f;
+                nudgeSpring.target = 0.0f;
+            }
+            lastInteractionTime = now;
         }
         previousPrimary = primary.kind;
 
@@ -5996,24 +6365,37 @@ DWORD WINAPI RenderThreadProc(void*) {
             g_clickExpanded = false;
             needsRender = true;
         }
-        static double lastInteractionTime = NowSeconds();
+        bool isTransientAlert = (primary.kind == IslandKind::Clipboard ||
+                                 primary.kind == IslandKind::Notification ||
+                                 primary.kind == IslandKind::Volume ||
+                                 primary.kind == IslandKind::BatteryLow ||
+                                 primary.kind == IslandKind::CapsLock ||
+                                 primary.kind == IslandKind::Device ||
+                                 (primary.kind == IslandKind::Media &&
+                                  (now - g_state.media.artChangedAt < 4.0)));
+
         bool currentlyHidden = false;
-        if (g_settings.autoHideIdleSeconds == -1) {
+        if (g_settings.autoHideIdleSeconds == -1 && !isTransientAlert && !pinned) {
             currentlyHidden = true;
         } else if (g_settings.autoHideIdleSeconds > 0) {
             currentlyHidden = (now - lastInteractionTime > g_settings.autoHideIdleSeconds);
         }
 
         bool isHoverExpanded = g_settings.expandOnHover ? hover : (hover && g_clickExpanded.load());
-        
-        if (currentlyHidden && !g_settings.unhideOnHover && primary.kind == IslandKind::Idle) {
+        const bool gameMetricsPresent = primary.kind == IslandKind::Idle &&
+            (g_settings.gameOverlay || Wh_GetIntValue(L"GameOverlayPinned", 0) != 0);
+        if (gameMetricsPresent) {
             isHoverExpanded = false;
-        } else if (isHoverExpanded || pinned || primary.kind != IslandKind::Idle) {
+        }
+        
+        if (currentlyHidden && !g_settings.unhideOnHover) {
+            isHoverExpanded = false;
+        } else if (isHoverExpanded || pinned || isTransientAlert) {
             lastInteractionTime = now;
         }
         
         bool isHidden = false;
-        if (g_settings.autoHideIdleSeconds == -1) {
+        if (g_settings.autoHideIdleSeconds == -1 && !isTransientAlert && !isHoverExpanded && !pinned) {
             isHidden = true;
         } else if (g_settings.autoHideIdleSeconds > 0) {
             isHidden = (now - lastInteractionTime > g_settings.autoHideIdleSeconds);
@@ -6024,9 +6406,6 @@ DWORD WINAPI RenderThreadProc(void*) {
             if (pinned || isHoverExpanded) {
                 primary.width = 380.0f * g_settings.sizeScale;
                 primary.height = 184.0f * g_settings.sizeScale;
-            } else if (isHidden && !privacyActive) {
-                primary.width = 0.0f;
-                primary.height = 0.0f;
             }
         }
         if (primary.kind == IslandKind::Idle &&
@@ -6040,6 +6419,12 @@ DWORD WINAPI RenderThreadProc(void*) {
                 primary.width = 380.0f * g_settings.sizeScale;
                 primary.height = 184.0f * g_settings.sizeScale;
             }
+        }
+
+        if (isHidden && !privacyActive && !pinned && !isHoverExpanded && !isTransientAlert) {
+            primary.width = 0.0f;
+            primary.height = 0.0f;
+            secondary.reset();
         }
 
         float targetWidth = primary.width;
