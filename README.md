@@ -32,7 +32,7 @@ A smooth, interactive overlay for your desktop, inspired by Apple's Dynamic Isla
 - 🔒 **Key Alerts:** Get quick visual popups when you hit Caps Lock or Num Lock.
 - 🔋 **Battery & Power:** Fluid animations when you plug in, unplug, or hit low battery.
 - 🔌 **Device Status:** Alerts when you plug in a USB drive or connect a Bluetooth device.
-- 🎢 **Bouncy Animations:** Enjoy satisfying spring physics that pop open and smoothly glide back.
+- 🎢 **360Hz+ Fluid Animations:** Ultra-smooth spring physics with support for high refresh rate monitors (up to 360Hz/500Hz+) with zero idle CPU drain.
 - 🖥️ **Windows 11 Style:** Swap to a modern Fluent design with sleek borders and acrylic backgrounds.
 - 📊 **Game Overlay:** Real-time FPS, CPU, GPU, and RAM stats built right in.
 - 📋 **Clipboard & Notifications:** Instantly preview what you just copied or see your latest Windows notifications.
@@ -47,7 +47,7 @@ Tweak the mod easily from the **Windhawk settings panel**:
 - **Scale:** Shrink or enlarge it to fit your screen perfectly.
 - **Style:** Choose the classic iPhone Pill look or the modern Windows 11 Fluent flyout.
 - **Colors:** Match it to your album art automatically, use system colors, or pick your own.
-- **Speed:** Set animations to Slow, Normal, or Fast.
+- **Refresh Rate & Animations:** Dynamically match your active monitor refresh rate (up to 360Hz/500Hz+), pick your animation style (Smooth, Default, Bouncy, or Snappy), and fine-tune animation speed across 6 granular levels.
 - **Modules:** Turn on or off the parts you want (Media, Clipboard, Battery, etc.).
 - **Process Inclusion (for Notifications):** To use the notification module, you must add `explorer.exe` to the process inclusion list under the **Advanced** tab of the mod settings in Windhawk, then restart the mod.
 
@@ -68,7 +68,7 @@ Found a bug? Have a cool feature idea? We want to hear from you! Please drop an 
 ## 🛠️ Nerd Stuff
 
 Built with C++23 and deeply integrated with Windows for maximum performance:
-- **Direct2D:** Hardware-accelerated rendering for buttery 60 FPS animations.
+- **Direct2D & High Refresh Rate Pacing:** Hardware-accelerated rendering with intelligent 1ms timer resolution and zero-spin frame pacing for buttery smooth animations up to 360Hz/500Hz+.
 - **Zero Lag:** Rate-limited polling and efficient system hooks mean it uses almost 0% CPU in the background.
 
 ---

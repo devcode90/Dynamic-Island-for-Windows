@@ -3,3 +3,4 @@ temp-windhawk/
 
 # Local validation/utility scripts
 pr_validation.py
+desktop-live-overlay.wh.cpp
