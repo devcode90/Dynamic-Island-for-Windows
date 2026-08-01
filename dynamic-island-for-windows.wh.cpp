@@ -65,6 +65,12 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **[ciizerr @GitHub](https://github.com/ciizerr)**: Improved the UI by refining layout alignment, fixing dashboard scaling, and enhancing calendar and weather module integration.
 - **[ChrisSch-dev @GitHub](https://github.com/ChrisSch-dev)**: Added album title support, word wrapping for weather descriptions, sleep resume fixes, and various performance/movement stability improvements.
 
+### 🤝 Contributing
+We love community contributions! To ensure high-quality updates, please follow these rules:
+1. **Fork & Branch:** Fork the repository and apply your feature or fix.
+2. **Respect Existing Features:** Do not outright remove or break other people's features unless fully explained why in your PR. You are highly encouraged to refine and improve existing features!
+3. **Credit Yourself:** After completing your feature, add your name and a short summary of your contribution to the **Credits** section in both the Mod UI here and the GitHub `README.md`!
+
 */
 // ==/WindhawkModReadme==
 

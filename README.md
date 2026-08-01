@@ -66,6 +66,17 @@ Found a bug? Have a cool feature idea? We want to hear from you! Please drop an 
 
 ---
 
+## 🤝 Contributing
+
+We love community contributions! If you want to add a feature or fix a bug, please follow these strict rules to ensure high-quality updates:
+
+1. **Fork & Branch:** Fork the repository and create your feature branch.
+2. **Respect Existing Features:** Do not outright remove or break other people's features unless you have a critical, fully explained reason in your PR. You are highly encouraged to *refine* and *improve* existing features, but destructive changes without discussion will not be accepted.
+3. **Credit Yourself:** After completing your feature, add your name and a short summary of your contribution to the **Credits** section in both `README.md` and the top comment block of `dynamic-island-for-windows.wh.cpp`!
+4. **Submit a PR:** Push to your fork and submit a Pull Request.
+
+---
+
 ## 🛠️ Nerd Stuff
 
 Built with C++23 and deeply integrated with Windows for maximum performance:
