@@ -13,10 +13,10 @@ All notable changes, enhancements, and bug fixes for **Dynamic Island for Window
 * **Notification Thread Loop:** Fixed a severe bug where the notification listener would enter an infinite, 0-millisecond tight loop on unsupported versions of Windows, causing high CPU usage and log spam. Additionally, a strict 30-second initialization delay has been added when injecting into `explorer.exe` on boot. This ensures the Windows Notification Service is fully loaded *before* the island connects to it, preventing the connection from becoming permanently corrupted until a manual restart!
 * **Media Artwork Caching:** Fixed a major CPU sink where the background media thread was blindly downloading and re-decoding album artwork raw bytes unconditionally every 1.5 seconds. The thread now implements strict caching and validation logic, reusing the parsed image data unless the song title or artist actually changes. This drastically reduces background CPU usage and correctly allows the island to auto-hide as expected while playing music.
 
-
-#### 🎵 VLC Media Title Fallback Fix (User Feedback / Bug Fix)
+#### 🎵 VLC & Browser Media Focus Fixes (User Feedback / Bug Fixes #51 & #53)
+* **Media Auto-Expand Toggle:** Added a new `Auto-expand on track change` toggle under the Mod Settings. Turning this off prevents the island from constantly popping open when you are rapidly scrolling through short videos (like Instagram Reels or YouTube Shorts), completely eliminating the frustration of constant popups while still keeping the background media state accurate!
+* **Browser Window Focus:** Fixed an annoying bug where clicking the media pill to focus a playing browser (like Vivaldi, Chrome, or Edge) would launch a brand new empty window if you had switched tabs. The island will now smartly search for the existing window belonging to the browser process and bring it to the foreground instead of launching a new instance!
 * **Missing Media Data:** Some versions of VLC fail to correctly pass the current media title to the Windows Media Transport Controls. The island will now automatically detect this missing data and fallback to safely extracting the playing video/song title directly from VLC's window title, ensuring media controls remain useful!
-
 
 #### 📐 Shape Style Settings Consolidation (User Feedback / Refactor)
 * **Combined Shape Settings:** The `Native Windows 11 style` and `macOS Notch style` settings have been combined into a single, clean `Island Shape Style` dropdown menu. This prevents mutually exclusive toggles from being active at the same time and makes customizing the island's shape much more intuitive.
@@ -25,13 +25,16 @@ All notable changes, enhancements, and bug fixes for **Dynamic Island for Window
 #### ⛅ Weather Module Toggle (User Feedback / Feature Request)
 * **Disable/Hide Weather Widget:** Added a `Weather module` master toggle under the Mod Settings. When disabled, the inactive Dynamic Island pill will perfectly shrink and center only the digital clock for a minimal setup. It also hides the weather widget completely from the expanded view (leaving only the calendar) and pauses all background network fetches to `wttr.in`, improving performance.
 
+#### 👆 Touch Swipe Gestures (User Feedback / Feature Request #54)
+* **Touch-Friendly Navigation:** For users on Surface Pro or other Windows tablets without a mouse wheel, the dynamic island is now fully touch-friendly! You can now physically swipe left or right on the island to effortlessly cycle between background apps (like swiping between Weather, the Clock, and active Media controls) just like on a smartphone.
+
 
 #### ⌨️ Caps Lock Toggle & Wind Direction Arrows (User Feedback / Feature Request ramensoftware#4352)
 * **Caps Lock Indicator Toggle:** Added a `Caps Lock module` toggle under the mod's Modules settings, allowing users to disable the Caps Lock / Num Lock island indicator completely if they find it distracting.
 * **Wind Direction Arrows:** The weather dashboard now translates wind direction abbreviations (e.g., N, WSW, NE) into clear Unicode arrows (e.g., ↓, ↗, ↙) reflecting the actual meteorological wind flow direction for a cleaner visual layout.
 
 
-#### ⏭️ Media Progress Bar Seeking & Consistent Album Art App Launching (User Feedback / Feature Request)
+#### ⏭️ Media Progress Bar Seeking & Consistent Album Art App Launching (User Feedback / Feature Request ramensoftware#4738)
 * **Problem / Request:** Users suggested allowing clicks on the media progress bar to seek playback position (`TryChangePlaybackPositionAsync`), and noted that clicking anywhere on the media module (e.g. title text or background) opened the underlying media application, which was inconsistent and prone to accidental app launches.
 * **Fix & Features Added:**
   * **Interactive Scrubber Seeking:** Clicking anywhere along the horizontal media progress bar in expanded media mode now instantly computes the track fraction and sends `session.TryChangePlaybackPositionAsync(targetTicks)` to the active WinRT media session. The local position state updates immediately (`positionTicks = targetTicks`) so the progress bar scrubber visually jumps right to the clicked location without delay.

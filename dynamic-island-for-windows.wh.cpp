@@ -199,6 +199,9 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - Media: true
     $name: Media module
     $description: Shows album art, song info, and playback controls when music is playing.
+  - MediaAutoExpand: true
+    $name: Auto-expand on track change
+    $description: Turn off to stop the island from popping open every time a new song or video starts playing (useful if you rapidly scroll through shorts/reels).
   - Clipboard: true
     $name: Clipboard module
     $description: Shows a quick preview of the text or images you just copied.
@@ -390,6 +393,7 @@ struct Settings {
     AnimationStyle animationStyle = AnimationStyle::Default;
     float animationSpeed = 1.0f;
     bool media = true;
+    bool mediaAutoExpand = true;
     bool clipboard = true;
     ClipboardIconBgStyle clipboardIconBgStyle = ClipboardIconBgStyle::Default;
     D2D1_COLOR_F clipboardIconBgHex = D2D1::ColorF(0.18f, 0.18f, 0.22f, 1.0f); // #2E2E38
@@ -807,6 +811,7 @@ void LoadSettings() {
     }
 
     next.media = Wh_GetIntSetting(L"Modules.Media") != 0;
+    next.mediaAutoExpand = Wh_GetIntSetting(L"Modules.MediaAutoExpand") != 0;
     next.clipboard = Wh_GetIntSetting(L"Modules.Clipboard") != 0;
 
     const std::wstring clipBgStr = GetStringSettingCopy(L"Modules.ClipboardIconBgStyle");
@@ -1790,7 +1795,7 @@ DWORD WINAPI MediaThreadProc(void*) {
             }
 
             g_state.media = std::move(next);
-            if (wasDifferent && g_state.media.available) {
+            if (wasDifferent && g_state.media.available && g_settings.mediaAutoExpand) {
                 TriggerNudge();
             }
         }
@@ -3000,7 +3005,9 @@ void ToggleEndpointMute() {
 
 struct WindowSearch {
     std::wstring targetTitle;
+    std::wstring targetApp;
     HWND foundHwnd = nullptr;
+    HWND fallbackHwnd = nullptr;
 };
 
 BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam) {
@@ -3008,9 +3015,10 @@ BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam) {
         return TRUE;
     }
 
+    auto* search = reinterpret_cast<WindowSearch*>(lParam);
+
     wchar_t title[512];
     if (GetWindowTextW(hwnd, title, ARRAYSIZE(title)) > 0) {
-        auto* search = reinterpret_cast<WindowSearch*>(lParam);
         std::wstring wTitle(title);
         // Case-insensitive check if window title contains currently playing media title
         auto it = std::search(
@@ -3021,9 +3029,41 @@ BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam) {
 
         if (it != wTitle.end()) {
             search->foundHwnd = hwnd;
-            return FALSE; // found, stop enumerating
+            return FALSE; // found exact title, stop enumerating
         }
     }
+
+    // Fallback: check if the window belongs to the target app (by process executable name)
+    if (!search->fallbackHwnd && !search->targetApp.empty()) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(hwnd, &pid);
+        if (pid != 0) {
+            std::wstring exePath;
+            if (ProcessImageNameForPid(pid, &exePath)) {
+                std::wstring targetLower = ToLowerCopy(search->targetApp);
+                std::wstring exeLower = ToLowerCopy(exePath);
+                
+                // Remove quotes from target AppUserModelId if any
+                if (targetLower.size() >= 2 && targetLower.front() == L'"' && targetLower.back() == L'"') {
+                    targetLower = targetLower.substr(1, targetLower.size() - 2);
+                }
+
+                if (exeLower == targetLower) {
+                    search->fallbackHwnd = hwnd;
+                } else {
+                    std::wstring exeName = exeLower;
+                    size_t slashPos = exeName.find_last_of(L"\\/");
+                    if (slashPos != std::wstring::npos) {
+                        exeName = exeName.substr(slashPos + 1);
+                    }
+                    if (exeName == targetLower || exeName == targetLower + L".exe") {
+                        search->fallbackHwnd = hwnd;
+                    }
+                }
+            }
+        }
+    }
+
     return TRUE;
 }
 
@@ -3037,16 +3077,19 @@ void OpenRelevantApp() {
     }
 
     // Try to find and focus window containing track title (ideal for browser playing YouTube/Spotify)
-    if (!title.empty()) {
+    if (!title.empty() || !app.empty()) {
         WindowSearch search;
         search.targetTitle = title;
+        search.targetApp = app;
         EnumWindows(EnumWindowsProc, reinterpret_cast<LPARAM>(&search));
 
-        if (search.foundHwnd) {
-            if (IsIconic(search.foundHwnd)) {
-                ShowWindow(search.foundHwnd, SW_RESTORE);
+        HWND hwndToFocus = search.foundHwnd ? search.foundHwnd : search.fallbackHwnd;
+
+        if (hwndToFocus) {
+            if (IsIconic(hwndToFocus)) {
+                ShowWindow(hwndToFocus, SW_RESTORE);
             }
-            SetForegroundWindow(search.foundHwnd);
+            SetForegroundWindow(hwndToFocus);
             return;
         }
     }
@@ -5831,6 +5874,8 @@ DWORD WINAPI KeyboardThreadProc(void*) {
 }
 
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    static POINT s_touchStart = {0, 0};
+    static ULONGLONG s_touchStartTime = 0;
     switch (msg) {
         case WM_CREATE:
             AddClipboardFormatListener(hwnd);
@@ -5926,6 +5971,10 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 int xPos = GET_X_LPARAM(lParam);
                 int yPos = GET_Y_LPARAM(lParam);
                 
+                s_touchStart.x = xPos;
+                s_touchStart.y = yPos;
+                s_touchStartTime = GetTickCount64();
+                
                 bool mediaActive = false;
                 {
                     std::lock_guard lock(g_stateMutex);
@@ -5972,6 +6021,30 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
                 int xPos = GET_X_LPARAM(lParam);
                 int yPos = GET_Y_LPARAM(lParam);
+                
+                ULONGLONG now = GetTickCount64();
+                if (s_touchStartTime > 0 && (now - s_touchStartTime) < 500) {
+                    int dx = xPos - s_touchStart.x;
+                    if (abs(dx) > 40) { // Horizontal swipe threshold
+                        bool mediaActive = false;
+                        {
+                            std::lock_guard lock(g_stateMutex);
+                            mediaActive = g_settings.media && g_state.media.available;
+                        }
+                        int maxTabs = mediaActive ? 3 : (g_settings.weather ? 2 : 1);
+                        if (maxTabs > 1) {
+                            if (dx > 0) { // Swipe right -> previous tab
+                                g_idleTab = (g_idleTab - 1 + maxTabs) % maxTabs;
+                            } else { // Swipe left -> next tab
+                                g_idleTab = (g_idleTab + 1) % maxTabs;
+                            }
+                            g_layoutDirty = true;
+                        }
+                        s_touchStartTime = 0;
+                        return 0; // Consume swipe gesture
+                    }
+                }
+                s_touchStartTime = 0;
                 
                 bool mediaActive = false;
                 std::vector<IslandKind> kinds;
@@ -6414,7 +6487,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             primary.height = 64.0f * g_settings.sizeScale;
         }
         if (primary.kind == IslandKind::Media) {
-            bool recentArtChange = (NowSeconds() - g_state.media.artChangedAt) < 4.0;
+            bool recentArtChange = g_settings.mediaAutoExpand && (NowSeconds() - g_state.media.artChangedAt) < 4.0;
             if (isHoverExpanded || pinned || recentArtChange) {
                 primary.width = 380.0f * g_settings.sizeScale;
                 primary.height = 184.0f * g_settings.sizeScale;
