@@ -251,9 +251,6 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
   - HardwareMonitorModule: true
     $name: Include Hardware Monitor in scroll loop
     $description: Add CPU, GPU, RAM, FPS and Network stats card to mouse-wheel scroll loop.
-  - BluetoothModule: true
-    $name: Include Bluetooth card in scroll loop
-    $description: Add Bluetooth devices & battery status card to mouse-wheel scroll loop.
   - GameOverlay: false
     $name: Enable game overlay mode
     $description: Replaces the clock with live stats like FPS, CPU, and RAM usage.
@@ -320,15 +317,12 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 #include <mmdeviceapi.h>
 #include <mmreg.h>
 #include <mmsystem.h>
-#pragma comment(lib, "winmm.lib")
 #include <objbase.h>
 #include <wrl/client.h>
 #include <uiautomation.h>
 #include <winhttp.h>
-#pragma comment(lib, "winhttp.lib")
 #include <pdh.h>
 #include <pdhmsg.h>
-#pragma comment(lib, "pdh.lib")
 
 #include <algorithm>
 #include <array>
@@ -346,7 +340,6 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 #include <utility>
 #include <vector>
 #include <set>
-
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Foundation.Collections.h>
@@ -464,6 +457,7 @@ struct Settings {
     bool privacyDotPulsing = true;
     D2D1_COLOR_F micDotColor = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f); // #FF9500
     D2D1_COLOR_F camDotColor = D2D1::ColorF(0.204f, 0.780f, 0.349f, 1.0f); // #34C759
+    bool hardwareMonitorModule = true;
 };
 
 struct BitmapPixels {
@@ -559,9 +553,13 @@ struct SystemSnapshot {
     bool volumeMuted = false;
     int cpuPercent = 0;
     int memoryPercent = 0;
+    float memoryUsedGB = 0.0f;
+    float memoryTotalGB = 0.0f;
     int diskFreePercent = 0;
     int renderFps = 0;
     int gpuPercent = -1;
+    float netUpMbps = 0.0f;
+    float netDownMbps = 0.0f;
     bool charging = false;
     bool micActive = false;      // orange dot: microphone in use
     bool cameraActive = false;   // green dot: camera in use
@@ -739,16 +737,22 @@ bool IsForegroundFullscreen(HWND targetHwnd) {
         return false;
     }
 
-    RECT appRect = {};
-    if (!GetWindowRect(fg, &appRect)) return false;
+    RECT clientRect = {};
+    if (!GetClientRect(fg, &clientRect)) return false;
+    POINT pt = {0, 0};
+    ClientToScreen(fg, &pt);
+    clientRect.left += pt.x;
+    clientRect.right += pt.x;
+    clientRect.top += pt.y;
+    clientRect.bottom += pt.y;
 
     HMONITOR hMon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi = { sizeof(MONITORINFO) };
     if (GetMonitorInfoW(hMon, &mi)) {
-        if (appRect.left <= mi.rcMonitor.left &&
-            appRect.top <= mi.rcMonitor.top &&
-            appRect.right >= mi.rcMonitor.right &&
-            appRect.bottom >= mi.rcMonitor.bottom) {
+        if (clientRect.left <= mi.rcMonitor.left &&
+            clientRect.top <= mi.rcMonitor.top &&
+            clientRect.right >= mi.rcMonitor.right &&
+            clientRect.bottom >= mi.rcMonitor.bottom) {
             return true;
         }
     }
@@ -972,7 +976,6 @@ void LoadSettings() {
     next.borderMergedMode = Wh_GetIntSetting(L"Appearance.BorderMergedMode") != 0;
     next.autoHideFullscreen = Wh_GetIntSetting(L"Appearance.AutoHideFullscreen") != 0;
     next.hardwareMonitorModule = Wh_GetIntSetting(L"Modules.HardwareMonitorModule") != 0;
-    next.bluetoothModule = Wh_GetIntSetting(L"Modules.BluetoothModule") != 0;
     next.contourBorderEnabled = Wh_GetIntSetting(L"Themes.ContourBorderEnabled") != 0;
     next.contourBorderColor = ColorFromHex(GetStringSettingCopy(L"Themes.ContourBorderHex"), D2D1::ColorF(0.200f, 0.200f, 0.220f, 1.0f));
     next.privacyDotsEnabled = Wh_GetIntSetting(L"Indicators.PrivacyDotsEnabled") != 0;
@@ -1038,7 +1041,6 @@ RECT GetAnchorWorkRect() {
 
 void PositionOverlayWindow(HWND hwnd, int width, int height) {
     RECT work = GetAnchorWorkRect();
-    const int topMargin = g_settings.borderMergedMode ? 0 : 8;
     int x = work.left + (work.right - work.left - width) / 2;
     int y = g_settings.notchStyle ? work.top : (work.top + 8);
 
@@ -2559,6 +2561,54 @@ static int GetGpuUsage() {
     return 0;
 }
 
+static PDH_HQUERY g_netQuery = NULL;
+static PDH_HCOUNTER g_netUpCounter = NULL;
+static PDH_HCOUNTER g_netDownCounter = NULL;
+
+static void InitNetQuery() {
+    if (g_netQuery == NULL) {
+        if (PdhOpenQueryW(NULL, 0, &g_netQuery) == ERROR_SUCCESS) {
+            PdhAddEnglishCounterW(g_netQuery, L"\\Network Interface(*)\\Bytes Sent/sec", 0, &g_netUpCounter);
+            PdhAddEnglishCounterW(g_netQuery, L"\\Network Interface(*)\\Bytes Received/sec", 0, &g_netDownCounter);
+            PdhCollectQueryData(g_netQuery);
+        }
+    }
+}
+
+static void GetNetworkUsage(float& outUpMbps, float& outDownMbps) {
+    outUpMbps = 0.0f;
+    outDownMbps = 0.0f;
+    InitNetQuery();
+    if (!g_netQuery || !g_netUpCounter || !g_netDownCounter) return;
+
+    PdhCollectQueryData(g_netQuery);
+
+    auto getSum = [](PDH_HCOUNTER counter) -> double {
+        DWORD bufferSize = 0;
+        DWORD itemCount = 0;
+        PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, NULL);
+        if (bufferSize > 0) {
+            std::vector<BYTE> buffer(bufferSize);
+            PDH_FMT_COUNTERVALUE_ITEM_W* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
+            if (PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &bufferSize, &itemCount, items) == ERROR_SUCCESS) {
+                double total = 0;
+                for (DWORD i = 0; i < itemCount; i++) {
+                    if (items[i].szName) {
+                        if (wcsstr(items[i].szName, L"Loopback") == nullptr) {
+                            total += items[i].FmtValue.doubleValue;
+                        }
+                    }
+                }
+                return total;
+            }
+        }
+        return 0.0;
+    };
+
+    // Bytes to Mbps
+    outUpMbps = static_cast<float>(getSum(g_netUpCounter) * 8.0 / 1000000.0);
+    outDownMbps = static_cast<float>(getSum(g_netDownCounter) * 8.0 / 1000000.0);
+}
 
 void UpdateSystemSnapshot() {
     SystemSnapshot next;
@@ -2569,11 +2619,14 @@ void UpdateSystemSnapshot() {
     }
 
     next.gpuPercent = GetGpuUsage();
+    GetNetworkUsage(next.netUpMbps, next.netDownMbps);
 
     MEMORYSTATUSEX memory = {};
     memory.dwLength = sizeof(memory);
     if (GlobalMemoryStatusEx(&memory)) {
         next.memoryPercent = static_cast<int>(memory.dwMemoryLoad);
+        next.memoryTotalGB = static_cast<float>(memory.ullTotalPhys) / (1024.0f * 1024.0f * 1024.0f);
+        next.memoryUsedGB = next.memoryTotalGB - static_cast<float>(memory.ullAvailPhys) / (1024.0f * 1024.0f * 1024.0f);
     }
 
     ULARGE_INTEGER freeBytesAvailable = {};
@@ -3014,51 +3067,8 @@ void SetClickThrough(HWND hwnd, bool clickThrough) {
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle);
 }
 
-void SendVirtualKey(WORD vk) {
-    INPUT inputs[2] = {};
-    inputs[0].type = INPUT_KEYBOARD;
-    inputs[0].ki.wVk = vk;
-    inputs[1].type = INPUT_KEYBOARD;
-    inputs[1].ki.wVk = vk;
-    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(2, inputs, sizeof(INPUT));
-}
-
 void OpenRelevantApp();
 
-void SendMediaCommandAtPoint(HWND hwnd, LPARAM lParam) {
-    RECT rc = {};
-    GetClientRect(hwnd, &rc);
-    const int x = GET_X_LPARAM(lParam);
-    const int y = GET_Y_LPARAM(lParam);
-
-    // Media controls are drawn in the right side of the media pill. Hit-test
-    // using client coordinates so this stays independent of monitor position.
-    // Hit-test positions must match DrawMedia control layout:
-    // cx = rect.right - 42, prev = cx-26, play = cx, next = cx+26
-    // rect.right = rc.right - kRenderPadX, so offset from rc.right:
-    const int centerY = (rc.bottom + rc.top) / 2;
-    const int prevX = rc.right - static_cast<int>(kRenderPadX) - 68;
-    const int playX = rc.right - static_cast<int>(kRenderPadX) - 42;
-    const int nextX = rc.right - static_cast<int>(kRenderPadX) - 16;
-    const int radius = 15;
-
-    auto hit = [&](int cx) {
-        const int dx = x - cx;
-        const int dy = y - centerY;
-        return dx * dx + dy * dy <= radius * radius;
-    };
-
-    if (hit(prevX)) {
-        SendVirtualKey(VK_MEDIA_PREV_TRACK);
-    } else if (hit(playX)) {
-        SendVirtualKey(VK_MEDIA_PLAY_PAUSE);
-    } else if (hit(nextX)) {
-        SendVirtualKey(VK_MEDIA_NEXT_TRACK);
-    } else {
-        OpenRelevantApp();
-    }
-}
 
 void ToggleEndpointMute();
 
@@ -4220,53 +4230,73 @@ class Renderer {
 
     void DrawHardwareMonitorDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, float scale) {
         textBrush_->SetOpacity(0.96f);
-        target_->DrawTextW(L"Hardware & Performance", 22, boldTextFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 30.0f * scale, rect.right - 25.0f * scale, rect.top + 55.0f * scale),
+        target_->DrawTextW(L"Hardware Monitor", 16, boldTextFormat_.Get(),
+                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 20.0f * scale, rect.right - 25.0f * scale, rect.top + 45.0f * scale),
                            textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 
-        wchar_t line1[128] = {};
-        swprintf_s(line1, L"CPU: %d%%   \u2022   RAM: %d%%",
-                   state.system.cpuPercent, state.system.memoryPercent);
+        // Separator Line
+        ComPtr<ID2D1SolidColorBrush> sepBrush;
+        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.15f * settingsOpacity_), &sepBrush);
+        float midX = (rect.left + rect.right) * 0.5f;
+        target_->DrawLine(D2D1::Point2F(midX, rect.top + 50.0f * scale),
+                          D2D1::Point2F(midX, rect.bottom - 20.0f * scale),
+                          sepBrush.Get(), 1.0f * scale);
 
-        wchar_t line2[128] = {};
+        // Hardware Data Column (Left)
+        float leftX = rect.left + 30.0f * scale;
+        float rightX = midX + 24.0f * scale;
+        float startY = rect.top + 50.0f * scale;
+        float rowSpacing = 38.0f * scale;
+
+        // Colors
+        ComPtr<ID2D1SolidColorBrush> cpuBrush, ramBrush, gpuBrush, upBrush, downBrush, ssdBrush;
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.90f, 0.50f, 1.0f), &cpuBrush); // Green
+        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.23f, 0.18f, 1.0f), &ramBrush); // Red
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.82f, 1.0f, 1.0f), &gpuBrush);  // Cyan
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.90f, 0.50f, 1.0f), &upBrush);   // Green
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.82f, 1.0f, 1.0f), &downBrush);  // Cyan
+        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.60f, 0.0f, 1.0f), &ssdBrush);   // Orange
+
+        auto drawRow = [&](float x, float y, int iconKind, ID2D1SolidColorBrush* iconColor, const wchar_t* label, const wchar_t* value) {
+            // Draw Icon
+            iconColor->SetOpacity(settingsOpacity_);
+            DrawGameIcon(D2D1::Point2F(x + 10.0f * scale, y + 10.0f * scale), 8.0f * scale, iconKind, iconColor, scale);
+            iconColor->SetOpacity(1.0f);
+            
+            // Draw Label
+            mutedBrush_->SetOpacity(0.60f * settingsOpacity_);
+            target_->DrawTextW(label, static_cast<UINT32>(wcslen(label)), smallTextFormat_.Get(),
+                               D2D1::RectF(x + 28.0f * scale, y + 2.0f * scale, x + 100.0f * scale, y + 20.0f * scale),
+                               mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+
+            // Draw Value
+            textBrush_->SetOpacity(0.96f * settingsOpacity_);
+            target_->DrawTextW(value, static_cast<UINT32>(wcslen(value)), textFormat_.Get(),
+                               D2D1::RectF(x + 28.0f * scale, y + 16.0f * scale, x + 200.0f * scale, y + 40.0f * scale),
+                               textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        };
+
+        wchar_t buf1[32], buf2[32], buf3[32], buf4[32], buf5[32], buf6[32];
+        
+        swprintf_s(buf1, L"%d%%", state.system.cpuPercent);
+        swprintf_s(buf2, L"%.1f / %.1f GB", state.system.memoryUsedGB, state.system.memoryTotalGB);
         if (state.system.gpuPercent >= 0) {
-            swprintf_s(line2, L"GPU: %d%%   \u2022   FPS: %d",
-                       state.system.gpuPercent, state.system.renderFps);
+            swprintf_s(buf3, L"%d%%", state.system.gpuPercent);
         } else {
-            swprintf_s(line2, L"FPS: %d   \u2022   Disk Free: %d%%",
-                       state.system.renderFps, state.system.diskFreePercent);
+            wcscpy_s(buf3, L"--");
         }
 
-        mutedBrush_->SetOpacity(0.85f);
-        target_->DrawTextW(line1, static_cast<UINT32>(wcslen(line1)), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 65.0f * scale, rect.right - 25.0f * scale, rect.top + 95.0f * scale),
-                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        swprintf_s(buf4, L"%.1f Mbps", state.system.netUpMbps);
+        swprintf_s(buf5, L"%.1f Mbps", state.system.netDownMbps);
+        swprintf_s(buf6, L"%d%%", 100 - state.system.diskFreePercent);
 
-        target_->DrawTextW(line2, static_cast<UINT32>(wcslen(line2)), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 95.0f * scale, rect.right - 25.0f * scale, rect.top + 125.0f * scale),
-                           mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-    }
+        drawRow(leftX, startY, 1, cpuBrush.Get(), L"CPU", buf1);
+        drawRow(leftX, startY + rowSpacing, 2, ramBrush.Get(), L"RAM", buf2);
+        drawRow(leftX, startY + rowSpacing * 2.0f, 3, gpuBrush.Get(), L"GPU", buf3);
 
-    void DrawBluetoothDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, float scale) {
-        textBrush_->SetOpacity(0.96f);
-        target_->DrawTextW(L"Bluetooth Devices", 17, boldTextFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 30.0f * scale, rect.right - 25.0f * scale, rect.top + 55.0f * scale),
-                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-
-        std::wstring status = L"🎧 Headphones Connected";
-        std::wstring batt = L"Status: Connected \u2022 Battery: 85%";
-        if (!state.device.deviceName.empty() && state.device.isBluetoothLike) {
-            status = L"🔗 " + state.device.deviceName;
-        }
-
-        mutedBrush_->SetOpacity(0.85f);
-        target_->DrawTextW(status.c_str(), static_cast<UINT32>(status.length()), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 65.0f * scale, rect.right - 25.0f * scale, rect.top + 95.0f * scale),
-                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-
-        target_->DrawTextW(batt.c_str(), static_cast<UINT32>(batt.length()), textFormat_.Get(),
-                           D2D1::RectF(rect.left + 35.0f * scale, rect.top + 95.0f * scale, rect.right - 25.0f * scale, rect.top + 125.0f * scale),
-                           mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        drawRow(rightX, startY, 0, upBrush.Get(), L"NET UP", buf4);
+        drawRow(rightX, startY + rowSpacing, 0, downBrush.Get(), L"NET DOWN", buf5);
+        drawRow(rightX, startY + rowSpacing * 2.0f, 4, ssdBrush.Get(), L"SSD", buf6);
     }
 
     void DrawIdleDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings,
@@ -4277,7 +4307,6 @@ class Renderer {
         }
         target_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         
-        bool privacyActive = (state.system.micActive || state.system.cameraActive) && settings.privacyDotsEnabled;
         if (!clockFormat_) return;
 
         SYSTEMTIME local = {};
@@ -4336,12 +4365,19 @@ class Renderer {
         }
 
         // Expanded Mode
-        int maxTabs = settings.weather ? 2 : 1;
-        int tab = g_idleTab % maxTabs;
-        if (tab < 0) tab += maxTabs;
+        std::vector<int> activeTabs;
+        activeTabs.push_back(0); // Calendar
+        if (settings.weather) activeTabs.push_back(1);
+        if (settings.hardwareMonitorModule) activeTabs.push_back(2);
 
-        if (tab == 0) DrawCalendarDashboard(state, rect, settings, now, scale, local);
-        else DrawWeatherDashboard(state, rect, settings, now, scale, hasWeather, wIcon, wText);
+        int maxTabs = activeTabs.size();
+        int tabIdx = g_idleTab % maxTabs;
+        if (tabIdx < 0) tabIdx += maxTabs;
+        int activeTabId = activeTabs[tabIdx];
+
+        if (activeTabId == 0) DrawCalendarDashboard(state, rect, settings, now, scale, local);
+        else if (activeTabId == 1) DrawWeatherDashboard(state, rect, settings, now, scale, hasWeather, wIcon, wText);
+        else if (activeTabId == 2) DrawHardwareMonitorDashboard(state, rect, settings, scale);
 
         // Pagination dots (Vertical on the right edge)
         if (maxTabs > 1) {
@@ -4360,8 +4396,13 @@ class Renderer {
             target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.85f * settingsOpacity_), &activeDot);
             target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.25f * settingsOpacity_), &inactiveDot);
 
-            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, dotY - spacing * 0.5f), r, r), tab == 0 ? activeDot.Get() : inactiveDot.Get());
-            target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, dotY + spacing * 0.5f), r, r), tab == 1 ? activeDot.Get() : inactiveDot.Get());
+            float startY = dotY - (spacing * (maxTabs - 1)) * 0.5f;
+            for (int i = 0; i < maxTabs; ++i) {
+                target_->FillEllipse(
+                    D2D1::Ellipse(D2D1::Point2F(dotX, startY + spacing * i), r, r),
+                    (i == tabIdx) ? activeDot.Get() : inactiveDot.Get()
+                );
+            }
         }
 
         target_->PopAxisAlignedClip();
@@ -6104,6 +6145,59 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             g_layoutDirty = true;
             return 0;
 
+        case WM_SETCURSOR:
+            if (LOWORD(lParam) == HTCLIENT) {
+                POINT pt;
+                GetCursorPos(&pt);
+                ScreenToClient(hwnd, &pt);
+
+                bool mediaActive = false;
+                {
+                    std::lock_guard lock(g_stateMutex);
+                    mediaActive = g_settings.media && g_state.media.available;
+                }
+
+                if (mediaActive) {
+                    RECT clientRect;
+                    GetClientRect(hwnd, &clientRect);
+                    const float height = static_cast<float>(clientRect.bottom - clientRect.top);
+                    const float width = static_cast<float>(clientRect.right - clientRect.left);
+
+                    if (height > 60.0f && (g_idleTab % 3) == 0) {
+                        float totalScale = (GetDpiForWindow(hwnd) / 96.0f) * g_settings.sizeScale;
+                        float cx = width / 2.0f;
+                        float cy = height / 2.0f;
+                        float unX = (pt.x - cx) / totalScale;
+                        float unY = (pt.y - cy) / totalScale;
+
+                        bool hoverClickable = false;
+
+                        // Check album art bounds
+                        if (unX >= -168.0f && unX <= -100.0f && unY >= -74.0f && unY <= -6.0f) {
+                            hoverClickable = true;
+                        }
+
+                        // Check media buttons bounds
+                        if (unY > 56.0f - 30.0f && unY < 56.0f + 30.0f) {
+                            if (unX > -84.0f && unX < -44.0f) hoverClickable = true; // Prev
+                            else if (unX > -24.0f && unX < 24.0f) hoverClickable = true; // Play/Pause
+                            else if (unX > 44.0f && unX < 84.0f) hoverClickable = true; // Next
+                        }
+
+                        // Check music progress bar bounds
+                        if (unY >= 8.0f && unY <= 36.0f && unX >= -136.0f && unX <= 134.0f) {
+                            hoverClickable = true;
+                        }
+
+                        if (hoverClickable) {
+                            SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                            return TRUE;
+                        }
+                    }
+                }
+            }
+            break;
+
         case WM_LBUTTONDOWN:
             {
                 int xPos = GET_X_LPARAM(lParam);
@@ -6165,11 +6259,15 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     int dx = xPos - s_touchStart.x;
                     if (abs(dx) > 40) { // Horizontal swipe threshold
                         bool mediaActive = false;
+                        bool hwMonActive = false;
+                        bool weatherActive = false;
                         {
                             std::lock_guard lock(g_stateMutex);
                             mediaActive = g_settings.media && g_state.media.available;
+                            hwMonActive = g_settings.hardwareMonitorModule;
+                            weatherActive = g_settings.weather;
                         }
-                        int maxTabs = mediaActive ? 3 : (g_settings.weather ? 2 : 1);
+                        int maxTabs = mediaActive ? 3 : (1 + (weatherActive ? 1 : 0) + (hwMonActive ? 1 : 0));
                         if (maxTabs > 1) {
                             if (dx > 0) { // Swipe right -> previous tab
                                 g_idleTab = (g_idleTab - 1 + maxTabs) % maxTabs;
@@ -6358,17 +6456,19 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
             bool mediaActive = false;
             bool hwMonActive = false;
+            bool weatherActive = false;
             {
                 std::lock_guard lock(g_stateMutex);
                 mediaActive = g_settings.media && g_state.media.available;
                 hwMonActive = g_settings.hardwareMonitorModule;
+                weatherActive = g_settings.weather;
             }
-            int tabCount = (mediaActive ? 1 : 0) + 2 + (hwMonActive ? 1 : 0);
+            int maxTabs = mediaActive ? 3 : (1 + (weatherActive ? 1 : 0) + (hwMonActive ? 1 : 0));
             int delta = GET_WHEEL_DELTA_WPARAM(wParam);
             if (delta > 0) {
                 if (g_idleTab > 0) g_idleTab--;
             } else if (delta < 0) {
-                if (g_idleTab < tabCount - 1) g_idleTab++;
+                if (g_idleTab < maxTabs - 1) g_idleTab++;
             }
             
             g_layoutDirty = true;
@@ -6614,6 +6714,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             isHidden = (now - lastInteractionTime > g_settings.autoHideIdleSeconds);
         }
 
+        bool isFullscreen = g_settings.autoHideFullscreen && IsForegroundFullscreen(hwnd);
         bool privacyActive = (snapshot.system.micActive || snapshot.system.cameraActive) && g_settings.privacyDotsEnabled;
         if (primary.kind == IslandKind::Idle) {
             if (!isFullscreen && (pinned || isHoverExpanded)) {

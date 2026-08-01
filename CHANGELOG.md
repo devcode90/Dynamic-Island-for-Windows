@@ -8,6 +8,14 @@ All notable changes, enhancements, and bug fixes for **Dynamic Island for Window
 
 ### ✨ Fixes & Enhancements
 
+#### ⚙️ Hardware Monitor Redesign #42
+* **Complete Overhaul:** The Hardware Monitor module was completely redesigned to feature a sleek 2-column grid layout utilizing Segoe Fluent Icons.
+* **New Metrics:** Real-time metrics for Network Up/Down speeds (Mbps) and total absolute RAM usage (GB) were implemented using native PDH queries and `GlobalMemoryStatusEx`, giving much deeper insights right from the island!
+
+#### ⚙️ Idle Dashboards (User Feedback)
+* **Dynamic Tab Pagination:** The Idle dashboard tabs (Calendar, Weather, Hardware Monitor) now dynamically adapt to your enabled settings. You can seamlessly swipe or mouse-wheel scroll through all active dashboard combinations!
+* **Fullscreen Auto-Hide Fix:** Fixed a bug where normal maximized windows (like a regular browser window) would falsely trigger the "Hide on full screen" logic and prevent the island from expanding on hover. The detector now correctly inspects the exact window client area, meaning true full-screen videos hide the island, but standard maximized windows allow it to function perfectly!
+
 #### 🚀 Performance & Stability (Bug Fixes #40)
 * **Notification System Rewrite:** Completely rewrote the internal notification tracking logic! Previously, the island tracked the "last seen ID", which caused it to randomly drop and miss new notifications if Windows happened to sort them unexpectedly (e.g. newest-first). It now uses an ultra-reliable memory set (`std::set`) to instantly detect and display any genuinely new notification, ignoring Windows' internal sort order. It also now cleanly skips blasting you with old notifications when starting up!
 * **Notification Thread Loop:** Fixed a severe bug where the notification listener would enter an infinite, 0-millisecond tight loop on unsupported versions of Windows, causing high CPU usage and log spam. Additionally, a strict 30-second initialization delay has been added when injecting into `explorer.exe` on boot. This ensures the Windows Notification Service is fully loaded *before* the island connects to it, preventing the connection from becoming permanently corrupted until a manual restart!
