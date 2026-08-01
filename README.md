@@ -62,6 +62,7 @@ Found a bug? Have a cool feature idea? We want to hear from you! Please drop an 
 ## 🙌 Shoutouts
 
 - **[ciizerr](https://github.com/ciizerr)**: Massive thanks for fixing UI alignments, smoothing out the dashboard sizing, and polishing the calendar and weather tabs.
+- **[ChrisSch-dev @GitHub](https://github.com/ChrisSch-dev)**: Added album title support, word wrapping for weather descriptions, sleep resume fixes, and various performance/movement stability improvements.
 
 ---
 
