@@ -28,7 +28,7 @@ A smooth, interactive overlay for your desktop, inspired by Apple's Dynamic Isla
 
 **🚀 New Features (Added in Latest Update):**
 - 📺 **Full-Screen Autohide:** Smart autohide ensures the island stays completely out of your way during full-screen apps, videos, and gaming. 
-- 🙈 **Instant Hide/Unhide:** Toggle the island visibility instantly with a customizable shortcut (Default: `Ctrl+Alt+D`). It consumes absolutely 0% CPU while hidden!
+- 🙈 **Instant Hide/Unhide:** Toggle the island visibility instantly with a customizable shortcut (Default: `Ctrl+Alt+D`). It consumes almost no CPU while hidden!
 - 🕒 **Expandable Hover Clock:** Hover over the island to instantly expand a sleek clock displaying the current time and date.
 - ⏱️ **Built-in Focus Timer:** Stay productive by launching a focus timer anytime simply by right-clicking the island.
 - 📶 **Bluetooth Integration:** Get rich notifications showing the connected device's name, battery level, and logo whenever a Bluetooth device connects or disconnects.
