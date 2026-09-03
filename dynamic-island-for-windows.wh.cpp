@@ -302,7 +302,19 @@ We love community contributions! To ensure high-quality updates, please follow t
     $description: Reads battery level over BLE GATT when the device supports it. Not all classic Bluetooth devices report battery this way — when unavailable, only a Connected/Disconnected label is shown.
   - TimerModule: true
     $name: Focus Timer module
-    $description: Enables a Pomodoro-style focus/break timer, startable from the island's right-click menu.  
+    $description: Enables a Pomodoro-style focus/break timer, startable from the island's right-click menu.
+  - IdleEmojiEnabled: true
+    $name: Show Emoji / Interactive Face on Idle
+    $description: Display interactive mouse-tracking blinking eyes or a custom emoji during idle state while visible.
+  - IdleEmojiStyle: interactive
+    $name: Idle Emoji Style
+    $description: Choose between Interactive Eyes (cursor-tracking & auto-blinking) or a Custom Unicode Emoji.
+    $options:
+      - interactive: Interactive Eyes (Cursor Tracking & Auto-Blink)
+      - unicode: Custom Unicode Emoji
+  - IdleEmoji: "🙂"
+    $name: Custom Idle Emoji
+    $description: The emoji character to display when Idle Emoji Style is set to Custom Unicode Emoji.
   $name: Modules & Features
 - Shortcuts:
   - HideShowHotkeyEnabled: true
@@ -545,6 +557,9 @@ struct Settings {
     D2D1_COLOR_F micDotColor = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f); // #FF9500
     D2D1_COLOR_F camDotColor = D2D1::ColorF(0.204f, 0.780f, 0.349f, 1.0f); // #34C759
     bool hardwareMonitorModule = true;
+    bool idleEmojiEnabled = true;
+    std::wstring idleEmojiStyle = L"interactive";
+    std::wstring idleEmoji = L"🙂";
 };
 
 struct BitmapPixels {
@@ -773,6 +788,12 @@ std::atomic<bool> g_autoHiddenParked = false;          // true while OS-hidden d
 std::atomic<bool> g_fullscreenOverrideVisible = false; // user forced the island visible via hotkey while fullscreen
 std::atomic<bool> g_isFullscreen = false;              // cached fullscreen state, shared with the hotkey handler
 FILETIME g_prevIdleTime = {};
+
+// --- Interactive Eyes auto-blink animation state ---
+static double g_lastEyeBlinkStart = 0.0;
+static double g_nextEyeBlinkInterval = 4.0;
+constexpr double kEyeBlinkDuration = 0.16; // 160ms blink duration
+
 FILETIME g_prevKernelTime = {};
 FILETIME g_prevUserTime = {};
 UINT g_shellHookMessage = 0;
@@ -1044,6 +1065,15 @@ void LoadSettings() {
     next.privacyDotsCamHex = ColorFromHex(GetStringSettingCopy(L"Modules.PrivacyDotsCamHex"), D2D1::ColorF(0.133f, 0.776f, 0.239f, 1.0f));
     next.capsLock = Wh_GetIntSetting(L"Modules.CapsLock") != 0;
     next.timerEnabled = Wh_GetIntSetting(L"Modules.TimerModule") != 0;
+    next.idleEmojiEnabled = Wh_GetIntSetting(L"Modules.IdleEmojiEnabled") != 0;
+    const std::wstring emojiStyleStr = GetStringSettingCopy(L"Modules.IdleEmojiStyle");
+    if (!emojiStyleStr.empty()) {
+        next.idleEmojiStyle = emojiStyleStr;
+    }
+    const std::wstring emojiValStr = GetStringSettingCopy(L"Modules.IdleEmoji");
+    if (!emojiValStr.empty()) {
+        next.idleEmoji = emojiValStr;
+    }
 
     next.hideShowHotkeyEnabled = Wh_GetIntSetting(L"Shortcuts.HideShowHotkeyEnabled") != 0;
 
@@ -4766,8 +4796,50 @@ class Renderer {
         UNREFERENCED_PARAMETER(radius);
     }
 
-    // Apple Dynamic Island privacy dots.
-    // Placed inside the pill near the top-right edge — pulsing glow like iPhone.
+    void DrawCameraIcon(D2D1_POINT_2F center, float size, ID2D1SolidColorBrush* brush, float scale = 1.0f) {
+        const float w = size * 0.85f;
+        const float h = size * 0.60f;
+        D2D1_RECT_F body = D2D1::RectF(center.x - w, center.y - h * 0.5f + 0.8f * scale,
+                                       center.x + w, center.y + h * 0.85f);
+        target_->DrawRoundedRectangle(D2D1::RoundedRect(body, 2.0f * scale, 2.0f * scale), brush, 1.3f * scale);
+        
+        target_->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(center.x, body.top + (body.bottom - body.top) * 0.5f), size * 0.32f, size * 0.32f), brush, 1.2f * scale);
+        
+        D2D1_RECT_F bump = D2D1::RectF(center.x - w * 0.45f, body.top - 1.8f * scale,
+                                       center.x + w * 0.10f, body.top);
+        target_->FillRoundedRectangle(D2D1::RoundedRect(bump, 0.8f * scale, 0.8f * scale), brush);
+    }
+
+    void DrawMicIcon(D2D1_POINT_2F center, float size, ID2D1SolidColorBrush* brush, float scale = 1.0f) {
+        const float capW = size * 0.36f;
+        const float capH = size * 0.60f;
+        D2D1_RECT_F capsule = D2D1::RectF(center.x - capW, center.y - capH,
+                                          center.x + capW, center.y + capH * 0.2f);
+        target_->FillRoundedRectangle(D2D1::RoundedRect(capsule, capW, capW), brush);
+
+        const float arcR = size * 0.60f;
+        ComPtr<ID2D1PathGeometry> uGeom;
+        d2dFactory_->CreatePathGeometry(&uGeom);
+        ComPtr<ID2D1GeometrySink> sink;
+        if (SUCCEEDED(uGeom->Open(&sink))) {
+            sink->BeginFigure(D2D1::Point2F(center.x - arcR, center.y - size * 0.15f), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddBezier(D2D1::BezierSegment(
+                D2D1::Point2F(center.x - arcR, center.y + arcR * 0.95f),
+                D2D1::Point2F(center.x + arcR, center.y + arcR * 0.95f),
+                D2D1::Point2F(center.x + arcR, center.y - size * 0.15f)
+            ));
+            sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            sink->Close();
+            target_->DrawGeometry(uGeom.Get(), brush, 1.3f * scale);
+        }
+
+        const float stemTop = center.y + arcR * 0.68f;
+        const float stemBot = stemTop + 2.8f * scale;
+        target_->DrawLine(D2D1::Point2F(center.x, stemTop), D2D1::Point2F(center.x, stemBot), brush, 1.4f * scale);
+        target_->DrawLine(D2D1::Point2F(center.x - size * 0.42f, stemBot), D2D1::Point2F(center.x + size * 0.42f, stemBot), brush, 1.4f * scale);
+    }
+
+    // Apple Dynamic Island privacy access indicators (camera & microphone icons).
     void DrawPrivacyDots(const SharedState& state, const Settings& settings, D2D1_RECT_F rect, double now) {
         const bool mic = state.system.micActive && settings.privacyDots && settings.privacyDotsMic;
         const bool cam = state.system.cameraActive && settings.privacyDots && settings.privacyDotsCam;
@@ -4777,12 +4849,10 @@ class Renderer {
             ? (0.72f + 0.28f * std::sin(static_cast<float>(now * 2.0 * 3.14159265 * 0.75)))
             : 1.0f;
 
-        const float dotR   = 4.5f;
-        const float gap    = 5.5f;
-        const float margin = 10.0f;
+        const float margin = 14.0f * g_settings.sizeScale;
         const float dotY   = rect.top + (rect.bottom - rect.top) * 0.5f;
 
-        float x = rect.right - margin - dotR;
+        float x = rect.right - margin;
 
         if (cam) {
             D2D1_COLOR_F camColor = settings.privacyDotsCamHex;
@@ -4791,17 +4861,18 @@ class Renderer {
             else camDotBrush_->SetColor(camColor);
 
             D2D1_COLOR_F glowColor = camColor;
-            glowColor.a = 0.18f * pulse * settingsOpacity_;
+            glowColor.a = 0.22f * pulse * settingsOpacity_;
             if (!camGlowBrush_) target_->CreateSolidColorBrush(glowColor, &camGlowBrush_);
             else camGlowBrush_->SetColor(glowColor);
 
-            if (camDotBrush_) {
-                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY), dotR, dotR), camDotBrush_.Get());
-            }
+            const D2D1_POINT_2F center = D2D1::Point2F(x - 6.0f * g_settings.sizeScale, dotY);
             if (camGlowBrush_) {
-                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY), dotR * 2.2f, dotR * 2.2f), camGlowBrush_.Get());
+                target_->FillEllipse(D2D1::Ellipse(center, 10.0f * g_settings.sizeScale, 10.0f * g_settings.sizeScale), camGlowBrush_.Get());
             }
-            x -= (dotR * 2.0f + gap);
+            if (camDotBrush_) {
+                DrawCameraIcon(center, 5.5f * g_settings.sizeScale, camDotBrush_.Get(), g_settings.sizeScale);
+            }
+            x -= 20.0f * g_settings.sizeScale;
         }
 
         if (mic) {
@@ -4811,15 +4882,16 @@ class Renderer {
             else micDotBrush_->SetColor(micColor);
 
             D2D1_COLOR_F glowColor = micColor;
-            glowColor.a = 0.18f * pulse * settingsOpacity_;
+            glowColor.a = 0.22f * pulse * settingsOpacity_;
             if (!micGlowBrush_) target_->CreateSolidColorBrush(glowColor, &micGlowBrush_);
             else micGlowBrush_->SetColor(glowColor);
 
-            if (micDotBrush_) {
-                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY), dotR, dotR), micDotBrush_.Get());
-            }
+            const D2D1_POINT_2F center = D2D1::Point2F(x - 6.0f * g_settings.sizeScale, dotY);
             if (micGlowBrush_) {
-                target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(x, dotY), dotR * 2.2f, dotR * 2.2f), micGlowBrush_.Get());
+                target_->FillEllipse(D2D1::Ellipse(center, 10.0f * g_settings.sizeScale, 10.0f * g_settings.sizeScale), micGlowBrush_.Get());
+            }
+            if (micDotBrush_) {
+                DrawMicIcon(center, 5.5f * g_settings.sizeScale, micDotBrush_.Get(), g_settings.sizeScale);
             }
         }
     }
@@ -5309,6 +5381,126 @@ class Renderer {
         mutedBrush_->SetOpacity(0.58f);
     }
 
+    void DrawInteractiveEyes(D2D1_RECT_F rect, double now) {
+        const float cx = (rect.left + rect.right) * 0.5f;
+        const float cy = (rect.top + rect.bottom) * 0.5f;
+
+        // Calculate cursor position relative to window center for smooth eye tracking
+        POINT ptMouse = {};
+        GetCursorPos(&ptMouse);
+
+        RECT winRect = {};
+        if (hwnd_) {
+            GetWindowRect(hwnd_, &winRect);
+        }
+        const float islandCenterX = (winRect.left + winRect.right) * 0.5f;
+        const float islandCenterY = (winRect.top + winRect.bottom) * 0.5f;
+
+        float screenW = static_cast<float>(GetSystemMetrics(SM_CXSCREEN));
+        float screenH = static_cast<float>(GetSystemMetrics(SM_CYSCREEN));
+        if (screenW <= 1.0f) screenW = 1920.0f;
+        if (screenH <= 1.0f) screenH = 1080.0f;
+
+        float dx = (static_cast<float>(ptMouse.x) - islandCenterX) / (screenW * 0.45f);
+        float dy = (static_cast<float>(ptMouse.y) - islandCenterY) / (screenH * 0.45f);
+
+        dx = Clamp(dx, -1.0f, 1.0f);
+        dy = Clamp(dy, -1.0f, 1.0f);
+
+        // Periodic auto-blinking animation state (blinks every 3.5s - 5.5s)
+        if (now - g_lastEyeBlinkStart > g_nextEyeBlinkInterval + kEyeBlinkDuration) {
+            g_lastEyeBlinkStart = now;
+            // Next blink in 3.5s to 5.5s
+            g_nextEyeBlinkInterval = 3.5 + static_cast<double>(rand() % 2000) / 1000.0;
+        }
+
+        const double blinkProgress = now - g_lastEyeBlinkStart;
+        const bool isBlinking = (blinkProgress >= 0.0 && blinkProgress < kEyeBlinkDuration);
+
+        float blinkFactor = 1.0f;
+        if (isBlinking) {
+            float phase = static_cast<float>(blinkProgress / kEyeBlinkDuration);
+            blinkFactor = 0.5f * (1.0f + std::cos(phase * 6.28318530718f));
+            blinkFactor = Clamp(blinkFactor, 0.05f, 1.0f);
+        }
+
+        // Geometry dimensions for eyes and pupils
+        const float eyeSpacing = 11.0f * g_settings.sizeScale;
+        const float eyeRadiusX = 4.2f * g_settings.sizeScale;
+        const float eyeRadiusY = 5.2f * g_settings.sizeScale * blinkFactor;
+        const float maxShiftX = 2.2f * g_settings.sizeScale;
+        const float maxShiftY = 2.4f * g_settings.sizeScale * blinkFactor;
+        const float pupilRadius = 2.1f * g_settings.sizeScale * std::max(0.3f, blinkFactor);
+
+        const D2D1_POINT_2F leftEyeCenter = D2D1::Point2F(cx - eyeSpacing, cy - 1.0f * g_settings.sizeScale);
+        const D2D1_POINT_2F rightEyeCenter = D2D1::Point2F(cx + eyeSpacing, cy - 1.0f * g_settings.sizeScale);
+
+        ComPtr<ID2D1SolidColorBrush> scleraBrush;
+        ComPtr<ID2D1SolidColorBrush> pupilBrush;
+        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f * settingsOpacity_), &scleraBrush);
+        target_->CreateSolidColorBrush(D2D1::ColorF(0.08f, 0.08f, 0.10f, 0.98f * settingsOpacity_), &pupilBrush);
+
+        if (isBlinking && blinkFactor < 0.25f) {
+            // Closed happy smiling eyes arc representation: ◠ ◠
+            ComPtr<ID2D1SolidColorBrush> arcBrush;
+            target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.95f * settingsOpacity_), &arcBrush);
+            const float arcW = eyeRadiusX * 1.25f;
+            const float arcH = 3.0f * g_settings.sizeScale;
+
+            auto DrawEyeArc = [&](D2D1_POINT_2F eyeCenter) {
+                ComPtr<ID2D1PathGeometry> arcGeom;
+                d2dFactory_->CreatePathGeometry(&arcGeom);
+                ComPtr<ID2D1GeometrySink> sink;
+                if (SUCCEEDED(arcGeom->Open(&sink))) {
+                    sink->BeginFigure(D2D1::Point2F(eyeCenter.x - arcW, eyeCenter.y + 1.0f * g_settings.sizeScale), D2D1_FIGURE_BEGIN_HOLLOW);
+                    sink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
+                        D2D1::Point2F(eyeCenter.x, eyeCenter.y - arcH),
+                        D2D1::Point2F(eyeCenter.x + arcW, eyeCenter.y + 1.0f * g_settings.sizeScale)
+                    ));
+                    sink->EndFigure(D2D1_FIGURE_END_OPEN);
+                    sink->Close();
+                    target_->DrawGeometry(arcGeom.Get(), arcBrush.Get(), 2.2f * g_settings.sizeScale);
+                }
+            };
+
+            DrawEyeArc(leftEyeCenter);
+            DrawEyeArc(rightEyeCenter);
+        } else {
+            // White eye scleras
+            target_->FillEllipse(D2D1::Ellipse(leftEyeCenter, eyeRadiusX, eyeRadiusY), scleraBrush.Get());
+            target_->FillEllipse(D2D1::Ellipse(rightEyeCenter, eyeRadiusX, eyeRadiusY), scleraBrush.Get());
+
+            // Cursor-tracking pupils
+            const D2D1_POINT_2F leftPupil = D2D1::Point2F(leftEyeCenter.x + dx * maxShiftX, leftEyeCenter.y + dy * maxShiftY);
+            const D2D1_POINT_2F rightPupil = D2D1::Point2F(rightEyeCenter.x + dx * maxShiftX, rightEyeCenter.y + dy * maxShiftY);
+
+            target_->FillEllipse(D2D1::Ellipse(leftPupil, pupilRadius, pupilRadius * blinkFactor), pupilBrush.Get());
+            target_->FillEllipse(D2D1::Ellipse(rightPupil, pupilRadius, pupilRadius * blinkFactor), pupilBrush.Get());
+        }
+
+        // Happy smile curve below eyes ‿ (deepens and widens while blinking)
+        ComPtr<ID2D1SolidColorBrush> mouthBrush;
+        target_->CreateSolidColorBrush(D2D1::ColorF(1.0f, 1.0f, 1.0f, (0.75f + (1.0f - blinkFactor) * 0.20f) * settingsOpacity_), &mouthBrush);
+
+        const float mouthW = (4.2f + (1.0f - blinkFactor) * 1.6f) * g_settings.sizeScale;
+        const float mouthH = (2.6f + (1.0f - blinkFactor) * 2.2f) * g_settings.sizeScale;
+        const float mouthY = cy + 6.0f * g_settings.sizeScale;
+
+        ComPtr<ID2D1PathGeometry> smileGeom;
+        d2dFactory_->CreatePathGeometry(&smileGeom);
+        ComPtr<ID2D1GeometrySink> smileSink;
+        if (SUCCEEDED(smileGeom->Open(&smileSink))) {
+            smileSink->BeginFigure(D2D1::Point2F(cx - mouthW, mouthY), D2D1_FIGURE_BEGIN_HOLLOW);
+            smileSink->AddQuadraticBezier(D2D1::QuadraticBezierSegment(
+                D2D1::Point2F(cx, mouthY + mouthH),
+                D2D1::Point2F(cx + mouthW, mouthY)
+            ));
+            smileSink->EndFigure(D2D1_FIGURE_END_OPEN);
+            smileSink->Close();
+            target_->DrawGeometry(smileGeom.Get(), mouthBrush.Get(), 1.8f * g_settings.sizeScale);
+        }
+    }
+
     void DrawIdleDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings,
                            double now) {
         if (settings.gameOverlay || Wh_GetIntValue(L"GameOverlayPinned", 0) != 0) {
@@ -5381,11 +5573,37 @@ class Renderer {
                                    dashFadeLayer.Get());
             }
 
-            // Collapsed Mode (Apple Dynamic Island Status Bar — centered slots)
             const float cy = (rect.top + rect.bottom) * 0.5f;
             const float cx = (rect.left + rect.right) * 0.5f;
 
-            if (!settings.weather) {
+            if (settings.idleEmojiEnabled) {
+                const bool mic = state.system.micActive && settings.privacyDots && settings.privacyDotsMic;
+                const bool cam = state.system.cameraActive && settings.privacyDots && settings.privacyDotsCam;
+
+                D2D1_RECT_F emojiRect = D2D1::RectF(rect.left, rect.top, rect.right, rect.bottom);
+                if (mic || cam) {
+                    const float shiftLeft = (mic && cam) ? 26.0f * scale : 15.0f * scale;
+                    emojiRect.left -= shiftLeft;
+                    emojiRect.right -= shiftLeft;
+                }
+
+                if (settings.idleEmojiStyle == L"unicode") {
+                    if (clockFormat_) {
+                        clockFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                        clockFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                        textBrush_->SetOpacity(0.96f);
+                        target_->DrawTextW(settings.idleEmoji.c_str(),
+                                           static_cast<UINT32>(settings.idleEmoji.length()),
+                                           clockFormat_.Get(),
+                                           emojiRect,
+                                           textBrush_.Get(),
+                                           D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+                        textBrush_->SetOpacity(1.0f);
+                    }
+                } else {
+                    DrawInteractiveEyes(emojiRect, now);
+                }
+            } else if (!settings.weather) {
                 D2D1_RECT_F timeRect = D2D1::RectF(rect.left, rect.top + 7.0f * scale,
                                                    rect.right, rect.bottom - 7.0f * scale);
                 textBrush_->SetOpacity(0.96f);
@@ -7442,6 +7660,17 @@ Activity ActivityForKind(IslandKind kind, const Settings& settings, const Shared
             if (settings.autoHideIdleSeconds == -1 && !state.system.micActive && !state.system.cameraActive) {
                 activity.width = 0.0f;
                 activity.height = 0.0f;
+            } else if (settings.idleEmojiEnabled) {
+                const bool mic = state.system.micActive && settings.privacyDots && settings.privacyDotsMic;
+                const bool cam = state.system.cameraActive && settings.privacyDots && settings.privacyDotsCam;
+                if (mic && cam) {
+                    activity.width = 116.0f;
+                } else if (mic || cam) {
+                    activity.width = 92.0f;
+                } else {
+                    activity.width = 60.0f;
+                }
+                activity.height = 36.0f;
             } else {
                 activity.width = settings.weather ? 170.0f : 96.0f;
                 activity.height = 36.0f;
@@ -8649,6 +8878,32 @@ DWORD WINAPI RenderThreadProc(void*) {
             if (local.wMinute != prevTime.wMinute) {
                 needsRender = true;
                 prevTime = local;
+            }
+
+            // Interactive Eyes auto-blink & cursor-tracking frame triggers
+            if (g_settings.idleEmojiEnabled && g_settings.idleEmojiStyle == L"interactive") {
+                if (now - g_lastEyeBlinkStart > g_nextEyeBlinkInterval + kEyeBlinkDuration) {
+                    g_lastEyeBlinkStart = now;
+                    g_nextEyeBlinkInterval = 3.5 + static_cast<double>(rand() % 2000) / 1000.0;
+                }
+
+                const double blinkProgress = now - g_lastEyeBlinkStart;
+                const bool isBlinking = (blinkProgress >= 0.0 && blinkProgress < kEyeBlinkDuration);
+
+                static POINT s_lastEyeMousePos = {};
+                POINT curMousePos = {};
+                GetCursorPos(&curMousePos);
+                const bool mouseMoved = (curMousePos.x != s_lastEyeMousePos.x || curMousePos.y != s_lastEyeMousePos.y);
+
+                if (isBlinking || mouseMoved) {
+                    static double s_lastEyeRenderTime = 0.0;
+                    constexpr double kEyeRenderIntervalSec = 1.0 / 60.0;
+                    if (now - s_lastEyeRenderTime >= kEyeRenderIntervalSec) {
+                        needsRender = true;
+                        s_lastEyeRenderTime = now;
+                        s_lastEyeMousePos = curMousePos;
+                    }
+                }
             }
         }
 
