@@ -8436,10 +8436,23 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
             g_lastMouseWakeCheckMs.store(nowMs, std::memory_order_relaxed);
             auto* info = reinterpret_cast<MSLLHOOKSTRUCT*>(lParam);
             HWND hwnd = g_hwnd;
-            RECT dockRect = GetIslandDockRect();
-            if (hwnd && PtInRect(&dockRect, info->pt)) {
-                g_autoHiddenParked = false;
-                PostMessageW(hwnd, WM_APP_MOUSE_WAKE, 0, 0);
+            if (hwnd) {
+                RECT windowRect = {};
+                GetWindowRect(hwnd, &windowRect);
+                const float scale = g_settings.sizeScale;
+                const float idleW = (g_settings.weather ? 170.0f : 96.0f) * scale;
+                const float idleH = 36.0f * scale;
+                const float topPad = (g_settings.notchStyle || g_settings.borderMergedMode) ? 0.0f : kRenderPadY;
+                RECT pillRect = {
+                    windowRect.left + static_cast<int>(std::round(kRenderPadX)),
+                    windowRect.top + static_cast<int>(std::round(topPad)),
+                    windowRect.left + static_cast<int>(std::round(kRenderPadX + idleW)),
+                    windowRect.top + static_cast<int>(std::round(topPad + idleH))
+                };
+                if (PtInRect(&pillRect, info->pt)) {
+                    g_autoHiddenParked = false;
+                    PostMessageW(hwnd, WM_APP_MOUSE_WAKE, 0, 0);
+                }
             }
         }
     }
@@ -9350,25 +9363,38 @@ DWORD WINAPI RenderThreadProc(void*) {
         POINT cursor = {};
         GetCursorPos(&cursor);
 
+        static bool wasHidden = false;
+
         bool hover = false;
-        if (widthSpring.value > 1.0f && heightSpring.value > 1.0f) {
+        if (widthSpring.value > 1.0f || widthSpring.target > 1.0f) {
             const float topPad = (g_settings.notchStyle || g_settings.borderMergedMode) ? 0.0f : kRenderPadY;
+            const float hitW = std::max(widthSpring.value, widthSpring.target);
+            const float hitH = std::max(heightSpring.value, heightSpring.target);
             RECT pillRect = {
                 windowRect.left + static_cast<int>(std::round(kRenderPadX)),
                 windowRect.top + static_cast<int>(std::round(topPad + nudgeSpring.value)),
-                windowRect.left + static_cast<int>(std::round(kRenderPadX + widthSpring.value)),
-                windowRect.top + static_cast<int>(std::round(topPad + nudgeSpring.value + heightSpring.value))
+                windowRect.left + static_cast<int>(std::round(kRenderPadX + hitW)),
+                windowRect.top + static_cast<int>(std::round(topPad + nudgeSpring.value + hitH))
             };
             hover = PtInRect(&pillRect, cursor) != FALSE;
-        } else if (g_settings.unhideOnHover) {
-            RECT dockRect = GetIslandDockRect();
-            hover = PtInRect(&dockRect, cursor) != FALSE;
+        } else if (g_settings.unhideOnHover && wasHidden) {
+            const float idleW = (g_settings.weather ? 170.0f : 96.0f) * g_settings.sizeScale;
+            const float idleH = 36.0f * g_settings.sizeScale;
+            const float topPad = (g_settings.notchStyle || g_settings.borderMergedMode) ? 0.0f : kRenderPadY;
+            RECT pillRect = {
+                windowRect.left + static_cast<int>(std::round(kRenderPadX)),
+                windowRect.top + static_cast<int>(std::round(topPad)),
+                windowRect.left + static_cast<int>(std::round(kRenderPadX + idleW)),
+                windowRect.top + static_cast<int>(std::round(topPad + idleH))
+            };
+            hover = PtInRect(&pillRect, cursor) != FALSE;
         }
 
         bool needsRender = false;
 
         if (!hover && g_clickExpanded.load()) {
             g_clickExpanded = false;
+            lastInteractionTime = now;
             needsRender = true;
         }
         if (!hover && g_hoveredMediaButton.load() != -1) {
@@ -9414,6 +9440,12 @@ DWORD WINAPI RenderThreadProc(void*) {
         if (gameMetricsPresent) {
             isHoverExpanded = false;
         }
+
+        static bool prevHoverForTimer = false;
+        if (prevHoverForTimer && !hover) {
+            lastInteractionTime = now;
+        }
+        prevHoverForTimer = hover;
 
         if (currentlyHidden && !g_settings.unhideOnHover) {
             isHoverExpanded = false;
@@ -9496,12 +9528,13 @@ DWORD WINAPI RenderThreadProc(void*) {
         }
 
         const bool fullscreenSuppressed =
-            isFullscreen && !g_fullscreenOverrideVisible.load(std::memory_order_relaxed);
+            isFullscreen && !g_fullscreenOverrideVisible.load(std::memory_order_relaxed) && !hoverUnhides;
         if ((isHidden || fullscreenSuppressed) && !privacyActive && !pinned && !isHoverExpanded && !isTransientAlert) {
             primary.width = 0.0f;
             primary.height = 0.0f;
             secondary.reset();
         }
+        wasHidden = (isHidden || fullscreenSuppressed) && !privacyActive && !pinned && !isHoverExpanded && !isTransientAlert;
 
         const bool mediaWaveformVisible =
             g_settings.media && snapshot.media.playing &&
@@ -9519,7 +9552,11 @@ DWORD WINAPI RenderThreadProc(void*) {
         widthSpring.target = targetWidth;
         heightSpring.target = targetHeight;
 
-        if (justUnhidden || (unhideGraceActive && widthSpring.value < 0.5f && targetWidth > 1.0f)) {
+        if (justUnhidden) {
+            widthSpring.velocity = 0.0f;
+            heightSpring.velocity = 0.0f;
+            nudgeSpring.Reset(0.0f);
+        } else if (unhideGraceActive && widthSpring.value < 0.5f && targetWidth > 1.0f) {
             widthSpring.Reset(targetWidth);
             heightSpring.Reset(targetHeight);
             nudgeSpring.Reset(0.0f);
