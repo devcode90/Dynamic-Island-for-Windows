@@ -2616,6 +2616,8 @@ typedef NTSTATUS(NTAPI* PFN_NtQueryWnfStateData)(
 
 constexpr ULONG64 kWnfQuietHoursActiveProfileChanged = 0xD83063EA3BF1C75ULL;
 
+static std::atomic<int> s_dndSeq = 0;
+
 NTSTATUS NTAPI WnfDndCallback(
     ULONG64 stateName,
     ULONG changeStamp,
@@ -2637,15 +2639,18 @@ NTSTATUS NTAPI WnfDndCallback(
     }
 
     const bool prev = g_isDnDActive.exchange(active);
-    if (prev != active && g_settings.doNotDisturbIndicator) {
-        {
-            std::lock_guard lock(g_stateMutex);
-            g_state.doNotDisturb.active = true;
-            g_state.doNotDisturb.enabled = active;
-            g_state.doNotDisturb.expiresAt = NowSeconds() + 3.0;
-        }
+    if (prev == active || !g_settings.doNotDisturbIndicator) return 0;
+
+    const int seq = ++s_dndSeq;
+    std::thread([active, seq]() {
+        Sleep(1000);
+        if (s_dndSeq.load() != seq) return;
+        std::lock_guard lock(g_stateMutex);
+        g_state.doNotDisturb.active = true;
+        g_state.doNotDisturb.enabled = active;
+        g_state.doNotDisturb.expiresAt = NowSeconds() + 3.0;
         TriggerNudge();
-    }
+    }).detach();
     return 0;
 }
 
