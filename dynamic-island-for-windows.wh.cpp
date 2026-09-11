@@ -329,6 +329,9 @@ We love community contributions! To ensure high-quality updates, please follow t
   - WeatherFahrenheit: false
     $name: Use Fahrenheit
     $description: Display weather temperature and wind speed in imperial units.
+  - WeatherHideOffline: false
+    $name: Hide weather when offline
+    $description: Hides the weather slot and shrinks the pill to clock-only when no internet connection is available.
   $name: Modules & Features
 - Shortcuts:
   - HideShowHotkeyEnabled: true
@@ -568,6 +571,8 @@ struct Settings {
     bool weather = true;
     std::wstring weatherCity;
     bool weatherFahrenheit = false;
+    bool weatherHideOffline = false;
+    bool weatherUserEnabled = true;
     int autoHideIdleSeconds = 0;
     bool autoHideFullscreen = true;
     bool borderMergedMode = false;
@@ -1297,8 +1302,10 @@ void LoadSettings() {
     next.gameOverlay = Wh_GetIntSetting(L"Modules.GameOverlay") != 0;
     next.showMetricText = Wh_GetIntSetting(L"Modules.ShowMetricText") != 0;
     next.weather = Wh_GetIntSetting(L"Modules.Weather") != 0;
+    next.weatherUserEnabled = next.weather;
     next.weatherCity = GetStringSettingWithFallback(L"Modules.WeatherCity", L"Weather.WeatherCity", L"CalendarWeather.WeatherCity");
     next.weatherFahrenheit = GetIntSettingWithFallback(L"Modules.WeatherFahrenheit", L"Weather.WeatherFahrenheit", L"CalendarWeather.WeatherFahrenheit", 0) != 0;
+    next.weatherHideOffline = Wh_GetIntSetting(L"Modules.WeatherHideOffline") != 0;
     const std::wstring hideSec = GetStringSettingWithFallback(L"Behavior.AutoHideIdleSeconds", L"Appearance.AutoHideIdleSeconds");
     next.autoHideIdleSeconds = hideSec.empty() ? 0 : _wtoi(hideSec.c_str());
     next.unhideOnHover = GetIntSettingWithFallback(L"Behavior.UnhideOnHover", L"Appearance.UnhideOnHover", 1) != 0;
@@ -3463,15 +3470,17 @@ DWORD WINAPI WeatherThreadProc(void*) {
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         std::wstring cityOverride;
         bool isFahrenheit = false;
-        bool weatherEnabled = true;
+        bool userEnabled = true;
+        bool hideOffline = false;
         {
             std::lock_guard lock(g_stateMutex);
-            weatherEnabled = g_settings.weather;
+            userEnabled = g_settings.weatherUserEnabled;
             cityOverride = g_settings.weatherCity;
             isFahrenheit = g_settings.weatherFahrenheit;
+            hideOffline = g_settings.weatherHideOffline;
         }
 
-        if (!weatherEnabled) {
+        if (!userEnabled) {
             WaitForSingleObject(g_stopEvent, 2000);
             continue;
         }
@@ -3493,6 +3502,8 @@ DWORD WINAPI WeatherThreadProc(void*) {
             Wh_Log(L"Weather: HTTPS request failed, retrying over plain HTTP...");
             wRes = HttpGet(L"wttr.in", url.c_str(), false);
         }
+
+        DWORD nextWaitMs = 15 * 60 * 1000;
 
         if (!wRes.empty()) {
             Wh_Log(L"Weather: Received response from wttr.in (size: %zu bytes)", wRes.size());
@@ -3603,12 +3614,22 @@ DWORD WINAPI WeatherThreadProc(void*) {
                 g_state.weather.feelsLike = feelsLike;
                 g_state.weather.lastUpdated = NowSeconds();
             }
+
+            if (hideOffline && !g_settings.weather) {
+                g_settings.weather = true;
+                g_layoutDirty = true;
+            }
         } else {
             Wh_Log(L"Weather: HttpGet returned empty response.");
+            if (hideOffline && g_settings.weather) {
+                g_settings.weather = false;
+                g_layoutDirty = true;
+            }
+            nextWaitMs = 30 * 1000;
         }
 
         HANDLE events[] = {g_stopEvent, g_settingsChangedEvent};
-        DWORD waitResult = WaitForMultipleObjects(2, events, FALSE, 15 * 60 * 1000);
+        DWORD waitResult = WaitForMultipleObjects(2, events, FALSE, nextWaitMs);
         if (waitResult == WAIT_OBJECT_0) {
             break;
         }
