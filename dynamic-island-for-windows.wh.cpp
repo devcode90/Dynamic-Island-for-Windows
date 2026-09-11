@@ -265,6 +265,16 @@ We love community contributions! To ensure high-quality updates, please follow t
   - Media: true
     $name: Media module
     $description: Shows album art, song info, and playback controls when music is playing.
+  - MediaPausedTimeout: '5'
+    $name: Revert to clock when paused
+    $description: How long the island remains in the paused media state before smoothly reverting to the clock and weather. Set to 0 to keep the paused media state indefinitely.
+    $options:
+      - '0': Never (Keep paused media indefinitely)
+      - '3': Revert after 3 seconds
+      - '5': Revert after 5 seconds (Default)
+      - '10': Revert after 10 seconds
+      - '15': Revert after 15 seconds
+      - '30': Revert after 30 seconds
   - MediaAutoExpand: false
     $name: Auto-expand on track change
     $description: Automatically expand the island when a new song or video starts playing. If disabled, album art updates smoothly in the collapsed pill without unprompted expansion.
@@ -530,6 +540,7 @@ struct Settings {
     AnimationStyle animationStyle = AnimationStyle::Default;
     float animationSpeed = 1.0f;
     bool media = true;
+    int mediaPausedTimeout = 5;
     bool mediaAutoExpand = false;
     bool clipboard = true;
     bool statusCountdownProgress = false;
@@ -607,6 +618,7 @@ struct MediaSnapshot {
     uint64_t sourceIconGeneration = 0;
     double artChangedAt = 0.0;
     double titleChangedAt = 0.0;
+    double pausedAt = 0.0;
     int64_t positionTicks = 0;
     int64_t endTicks = 0;
     int64_t lastUpdatedTicks = 0;
@@ -1230,6 +1242,9 @@ void LoadSettings() {
     }
 
     next.media = Wh_GetIntSetting(L"Modules.Media") != 0;
+    const std::wstring mediaPausedTimeoutStr = GetStringSettingWithFallback(L"Modules.MediaPausedTimeout", L"Media.MediaPausedTimeout");
+    next.mediaPausedTimeout = mediaPausedTimeoutStr.empty() ? 5 : _wtoi(mediaPausedTimeoutStr.c_str());
+    if (next.mediaPausedTimeout < 0) next.mediaPausedTimeout = 0;
     next.mediaAutoExpand = Wh_GetIntSetting(L"Modules.MediaAutoExpand") != 0;
     next.volume = Wh_GetIntSetting(L"Modules.Volume") != 0;
     if (!next.volume) {
@@ -2425,6 +2440,7 @@ DWORD WINAPI MediaThreadProc(void*) {
                     uint64_t prevArtGeneration = 0;
                     double prevArtChangedAt = 0.0;
                     double prevTitleChangedAt = 0.0;
+                    double prevPausedAt = 0.0;
 
                     bool prevPlaying = false;
                     {
@@ -2441,7 +2457,16 @@ DWORD WINAPI MediaThreadProc(void*) {
                         prevArtGeneration = g_state.media.artGeneration;
                         prevArtChangedAt = g_state.media.artChangedAt;
                         prevTitleChangedAt = g_state.media.titleChangedAt;
+                        prevPausedAt = g_state.media.pausedAt;
                         prevPlaying = g_state.media.playing;
+                    }
+
+                    if (next.playing) {
+                        next.pausedAt = 0.0;
+                    } else if (prevPlaying && !next.playing) {
+                        next.pausedAt = NowSeconds();
+                    } else {
+                        next.pausedAt = prevPausedAt;
                     }
 
                     if (next.sourceAppUserModelId == prevSourceAppUserModelId) {
@@ -2509,6 +2534,7 @@ DWORD WINAPI MediaThreadProc(void*) {
         }
 
         bool trackJustChanged = false;
+        bool playStateChanged = false;
         {
             std::lock_guard lock(g_stateMutex);
             const bool isDifferentTrack = (!next.title.empty() && next.playing) &&
@@ -2518,6 +2544,10 @@ DWORD WINAPI MediaThreadProc(void*) {
                 next.titleChangedAt = NowSeconds();
                 trackJustChanged = true;
                 g_idleTab = 0;
+            }
+
+            if (next.playing != g_state.media.playing) {
+                playStateChanged = true;
             }
 
             if (!g_state.media.art.bgra.empty() &&
@@ -2536,9 +2566,9 @@ DWORD WINAPI MediaThreadProc(void*) {
             g_state.media = std::move(next);
         }
 
-        if (trackJustChanged) {
+        if (trackJustChanged || playStateChanged) {
             g_layoutDirty = true;
-            if (g_settings.mediaAutoExpand) {
+            if (trackJustChanged && g_settings.mediaAutoExpand) {
                 TriggerNudge();
             }
         }
@@ -8324,7 +8354,12 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
          state.timer.active)) {
         activities.push_back(IslandKind::Timer);
     }
-    if (settings.media && state.media.available) {
+    const bool isMediaActive = state.media.available &&
+        (state.media.playing ||
+         (settings.mediaPausedTimeout == 0) ||
+         (state.media.pausedAt > 0.0 && (now - state.media.pausedAt < static_cast<double>(settings.mediaPausedTimeout))));
+
+    if (settings.media && isMediaActive) {
         activities.push_back(IslandKind::Media);
     }
 
@@ -8560,7 +8595,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 bool mediaActive = false;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available;
+                    auto kinds = ChooseActivities(g_state, g_settings, NowSeconds());
+                    mediaActive = !kinds.empty() && kinds[0] == IslandKind::Media;
                 }
 
                 if (mediaActive) {
@@ -8621,7 +8657,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 bool mediaActive = false;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available;
+                    auto kinds = ChooseActivities(g_state, g_settings, NowSeconds());
+                    mediaActive = !kinds.empty() && kinds[0] == IslandKind::Media;
                 }
 
                 RECT clientRect;
@@ -8724,7 +8761,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             bool mediaActive = false;
             {
                 std::lock_guard lock(g_stateMutex);
-                mediaActive = g_settings.media && g_state.media.available;
+                auto kinds = ChooseActivities(g_state, g_settings, NowSeconds());
+                mediaActive = !kinds.empty() && kinds[0] == IslandKind::Media;
             }
             const int maxTabs = 2 + (g_settings.weather ? 1 : 0) + (g_settings.hardwareMonitorModule ? 1 : 0);
             const int currentTab = (g_idleTab % maxTabs + maxTabs) % maxTabs;
@@ -8825,8 +8863,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 std::vector<IslandKind> kinds;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available;
                     kinds = ChooseActivities(g_state, g_settings, NowSeconds());
+                    mediaActive = !kinds.empty() && kinds[0] == IslandKind::Media;
                 }
                 const bool gameMetricsPresent =
                     !kinds.empty() && kinds[0] == IslandKind::Idle &&
@@ -8862,6 +8900,17 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         else if (unX > 44.0f && unX < 84.0f) cmd = 2; // Next
 
                         if (cmd != -1) {
+                            if (cmd == 1) {
+                                std::lock_guard lock(g_stateMutex);
+                                if (g_state.media.playing) {
+                                    g_state.media.playing = false;
+                                    g_state.media.pausedAt = NowSeconds();
+                                } else {
+                                    g_state.media.playing = true;
+                                    g_state.media.pausedAt = 0.0;
+                                }
+                                g_layoutDirty = true;
+                            }
                             std::thread([cmd]() {
                                 winrt::init_apartment(winrt::apartment_type::multi_threaded);
                                 try {
@@ -9269,8 +9318,18 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         const std::vector<IslandKind> kinds = ChooseActivities(snapshot, g_settings, now);
         Activity primary = ActivityForKind(kinds[0], g_settings, snapshot);
+        const bool isPrimaryTransient =
+            (primary.kind == IslandKind::Clipboard ||
+             primary.kind == IslandKind::Notification ||
+             primary.kind == IslandKind::Volume ||
+             primary.kind == IslandKind::BatteryLow ||
+             primary.kind == IslandKind::CapsLock ||
+             primary.kind == IslandKind::Device ||
+             primary.kind == IslandKind::Bluetooth ||
+             primary.kind == IslandKind::DoNotDisturb);
+
         std::optional<Activity> secondary;
-        if (kinds.size() >= 2) {
+        if (kinds.size() >= 2 && !isPrimaryTransient) {
             secondary = ActivityForKind(kinds[1], g_settings, snapshot);
         }
 
@@ -9315,6 +9374,11 @@ DWORD WINAPI RenderThreadProc(void*) {
         if (!hover && g_hoveredMediaButton.load() != -1) {
             g_hoveredMediaButton = -1;
             needsRender = true;
+        }
+
+        if (primary.kind == IslandKind::Media && (hover || pinned) && !snapshot.media.playing) {
+            std::lock_guard lock(g_stateMutex);
+            g_state.media.pausedAt = now;
         }
         const bool recentTrackChange = g_settings.mediaAutoExpand &&
                                        primary.kind == IslandKind::Media &&

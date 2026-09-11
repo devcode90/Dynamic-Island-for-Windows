@@ -8,6 +8,15 @@ All notable changes, enhancements, and bug fixes for **Dynamic Island for Window
 
 ### ✨ Fixes & Enhancements
 
+#### ⏸️ Paused Media Auto-Revert to Clock & Weather (User Feedback)
+* **Smooth Reversion After Pausing:** When media playback is paused, the Dynamic Island now displays the paused state for 5 seconds before smoothly shrinking and cross-fading back to the default Time & Weather idle view.
+* **Configurable Timeout Setting:** Added a new `Revert to clock when paused` (`MediaPausedTimeout`) setting under the **Modules** settings block with selectable durations (0 / Never, 3s, 5s [Default], 10s, 15s, 30s) so users can customize the pause duration or keep the paused media state indefinitely.
+* **Smart Interaction & Instant Resume:** Hovering over or pinning the expanded media player while paused keeps the media dashboard active; the countdown only begins once you unhover. As soon as media playback resumes, the island immediately transitions back into the active media player pill.
+
+#### 🔔 Single-Pill Expansion for Status Alerts (User Feedback)
+* **Authentic Single-Pill Expansion:** System status updates and notifications (Volume adjustments, Clipboard previews, Windows notifications, Caps Lock, Bluetooth alerts, Battery warnings, and Do Not Disturb) now expand the existing central pill as a single cohesive unit, instead of creating an unnatural secondary side-by-side pill when media is playing.
+* **Fluid Collapse Restoration:** When the status alert card finishes/expires, the single pill smoothly shrinks and cross-fades directly back to the active media player or idle dashboard.
+
 #### ⚙️ Hardware Monitor Redesign #42
 * **Complete Overhaul:** The Hardware Monitor module was completely redesigned to feature a sleek 2-column grid layout utilizing Segoe Fluent Icons.
 * **New Metrics:** Real-time metrics for Network Up/Down speeds (Mbps) and total absolute RAM usage (GB) were implemented using native PDH queries and `GlobalMemoryStatusEx`, giving much deeper insights right from the island!
