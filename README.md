@@ -89,6 +89,13 @@ Tweak the mod easily from the **Windhawk settings panel**:
 - **Process Inclusion (for Notifications):** To use the notification module, you must add `explorer.exe` to the process inclusion list under the **Advanced** tab of the mod settings in Windhawk, then restart the mod.
 - **Notification Permission (for Notifications):** Windows must also allow apps to read your notifications. Turn on **Settings → Privacy & security → Notifications → "Let apps access your notifications"**. If this is off, Windows denies the listener and no notification will reach the island no matter how the mod is configured. When notifications still don't show, check the mod's log in Windhawk for a "permission not granted" line.
 
+> [!IMPORTANT]
+> **The right-click menu is per-session, not persistent configuration.**
+>
+> **Theme**, **shape style** (Pill / Notch / Windows 11) and **pin open** are re-applied from your Windhawk settings every time the mod restarts, so a reboot, a mod update, or disabling and re-enabling the mod will discard whatever you picked from the menu. Set anything you want to keep in the **Mod Settings** tab instead.
+>
+> Transparency and Expand-on-hover chosen from the menu do survive a restart, but the settings tab remains the reliable place to configure them.
+
 ---
 
 ## 💬 Let's Chat!
