@@ -11,14 +11,14 @@ A smooth, interactive overlay for your desktop, inspired by Apple's Dynamic Isla
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/Full-preview.png?v=2" alt="Dynamic Island surfaces" width="760" style="border-radius: 8px; margin: 10px;"/>
+  <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/Full-preview-v2.png" alt="Dynamic Island surfaces" width="760" style="border-radius: 8px; margin: 10px;"/>
 </p>
 
 ### Dashboards
 
 | Media Player | Calendar | Weather | Game Overlay | Idle View |
 | :---: | :---: | :---: | :---: | :---: |
-| <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/media.png?v=2" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/calendar.png?v=2" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/weather.png?v=2" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/gamebar.png?v=2" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/idle.png?v=2" width="200" /> |
+| <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/media-v2.png" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/calendar.png?v=2" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/weather-v2.png" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/gamebar-v2.png" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/idle-v2.png" width="200" /> |
 
 ### Hardware Monitor
 
@@ -36,7 +36,7 @@ A smooth, interactive overlay for your desktop, inspired by Apple's Dynamic Isla
 
 | Camera Detected | Microphone Detected |
 | :---: | :---: |
-| <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/camera-detected.png?v=2" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/mic-detected.png?v=2" width="200" /> |
+| <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/camera-detected-v2.png" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/mic-detected-v2.png" width="200" /> |
 
 ---
 
