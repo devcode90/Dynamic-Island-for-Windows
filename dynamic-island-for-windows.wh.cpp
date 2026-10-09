@@ -79,6 +79,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **[ChrisSch-dev @GitHub](https://github.com/ChrisSch-dev)**: Added album title support, word wrapping for weather descriptions, sleep resume fixes, and various performance/movement stability improvements.
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color sampling, reorganized settings, and addressed various UI/media edge cases.
 - **[David Ravelo (DavidRaveloU) @GitHub](https://github.com/DavidRaveloU)**: Added selectable audio spectrum styles with a live frequency analyzer, new progress bar styles, optional track-change animations for the title, cover flip, playback controls and pill cover spin, an optional clock in the collapsed media pill, and a brightness slider flyout.
+- **[Retr0dev-jpg @GitHub](https://github.com/Retr0dev-jpg)**: Event-driven volume flyout with animated bar and default device switching, plus a calendar that follows the Windows locale for weekday initials and first day of the week (with a Monday/Sunday override).
 
 ### 🤝 Contributing
 We love community contributions! To ensure high-quality updates, please follow these rules:
@@ -286,9 +287,9 @@ We love community contributions! To ensure high-quality updates, please follow t
     $description: The hex color to use when the accent mode is set to Custom.
   - CalendarAccent: red
     $name: Calendar accent color
-    $description: Accent color used in the calendar view for month name, weekends, and today's date highlight.
+    $description: Accent color for the calendar's month name and today's marker. Default uses the island's accent color mode; System always uses the Windows accent.
     $options:
-      - red: Default Red
+      - red: Default (Island accent)
       - system: System (Device Accent)
   - ClockAccentGlow: true
     $name: Show clock background circle/glow
@@ -430,6 +431,13 @@ We love community contributions! To ensure high-quality updates, please follow t
   - DateFirst: false
     $name: Show date above the time
     $description: Swap the idle dashboard so the date is the headline and the time sits beneath it.
+  - FirstDayOfWeek: auto
+    $name: First day of the week
+    $description: Which weekday the calendar grid starts on. Auto follows your Windows regional format.
+    $options:
+      - auto: Auto (Follow Windows)
+      - monday: Monday
+      - sunday: Sunday
   - FileTrayModule: false
     $name: File Tray (drag & drop shelf)
     $description: Adds a File Tray card to the scroll loop. Drag files onto the island to park them there, then click to open one, or use the right-click menu to clear the shelf. Files are only referenced, never copied or moved.
@@ -850,7 +858,7 @@ enum class SpectrumStyle {
 constexpr int kSpectrumBands = 24;  // log-spaced bands from SpectrumAnalyzer, stored in SharedState::bands
 
 enum class CalendarAccentMode {
-    Red,
+    Accent,  // persisted as "red", from when it was a hardcoded red
     System,
 };
 
@@ -980,7 +988,7 @@ struct Settings {
     bool progress = true;
     bool volume = true;
     bool brightness = true;
-    CalendarAccentMode calendarAccent = CalendarAccentMode::Red;
+    CalendarAccentMode calendarAccent = CalendarAccentMode::Accent;
     bool privacyDots = true;
     bool privacyDotsMic = true;
     bool privacyDotsCam = true;
@@ -1051,6 +1059,7 @@ struct Settings {
     bool clockFollowSystem = true;
     std::wstring dateFormat;        // empty = locale default
     bool dateFirst = false;         // show date before time in the idle strip
+    int firstDayOfWeek = -1;        // 0 = Sunday .. 6 = Saturday, -1 = follow Windows
     bool mediaPillClock = false;    // show the clock inside the collapsed media pill
 
     // ── Localization (#35) ───────────────────────────────────────────────────
@@ -1139,6 +1148,7 @@ struct VolumeSnapshot {
     bool muted = false;
     std::wstring deviceName;
     double expiresAt = 0.0;
+    float displayPercent = 0.0f;  // animated bar level, set only on the render loop's snapshot copy
 };
 
 struct BrightnessSnapshot {
@@ -1357,7 +1367,6 @@ FILETIME g_prevKernelTime = {};
 FILETIME g_prevUserTime = {};
 UINT g_shellHookMessage = 0;
 UINT g_taskbarCreatedMessage = 0;
-bool g_volumeInitialized = false;
 bool g_brightnessInitialized = false;
 int g_lastBrightness = -1;
 BYTE g_brightnessPowerSource = 255;  // ACLineStatus of the previous sample
@@ -2115,7 +2124,7 @@ void LoadSettings() {
     if (EqualsNoCase(calAccent, L"system")) {
         next.calendarAccent = CalendarAccentMode::System;
     } else {
-        next.calendarAccent = CalendarAccentMode::Red;
+        next.calendarAccent = CalendarAccentMode::Accent;
     }
 
     const std::wstring fpsStr = GetStringSettingWithFallback(L"Animations.TargetFPS", L"Appearance.TargetFPS");
@@ -2254,6 +2263,14 @@ void LoadSettings() {
     next.use24HourClock = EqualsNoCase(clockMode, L"24h");
     next.dateFormat = GetStringSettingCopy(L"Modules.DateFormat");
     next.dateFirst = Wh_GetIntSetting(L"Modules.DateFirst") != 0;
+    const std::wstring firstDay = GetStringSettingCopy(L"Modules.FirstDayOfWeek");
+    if (EqualsNoCase(firstDay, L"monday")) {
+        next.firstDayOfWeek = 1;
+    } else if (EqualsNoCase(firstDay, L"sunday")) {
+        next.firstDayOfWeek = 0;
+    } else {
+        next.firstDayOfWeek = -1;
+    }
     next.mediaPillClock = Wh_GetIntSetting(L"Modules.MediaPillClock") != 0;
 
     // ── Localization (#35) ───────────────────────────────────────────────────
@@ -5653,6 +5670,159 @@ static void GetNetworkUsage(float& outUpMbps, float& outDownMbps) {
     outDownMbps = static_cast<float>(getSum(g_netDownCounter) * 8.0 / 1000000.0);
 }
 
+// ---- Endpoint volume notifications ----
+// Event-driven rather than polled: a 1s poll turned a held volume key into
+// one visible step per second.
+void ApplyVolumeReading(float level, bool muted, bool canSurface) {
+    const int percent = ClampInt(static_cast<int>(level * 100.0f + 0.5f), 0, 100);
+    bool flyoutEnabled = false;
+    {
+        std::lock_guard settingsLock(g_settingsMutex);
+        flyoutEnabled = g_settings.volume;
+    }
+    bool surfaced = false;
+    {
+        std::lock_guard lock(g_stateMutex);
+        const bool changed = percent != g_state.system.volumePercent ||
+                             muted != g_state.system.volumeMuted;
+        g_state.system.volumePercent = percent;
+        g_state.system.volumeMuted = muted;
+        g_state.muted = muted;
+        if (canSurface && changed && flyoutEnabled) {
+            surfaced = !g_state.volume.active;
+            g_state.volume.active = true;
+            g_state.volume.percent = percent;
+            g_state.volume.muted = muted;
+            g_state.volume.deviceName = L"System audio";
+            g_state.volume.expiresAt = NowSeconds() + 1.8;
+        }
+    }
+    // Only the first step nudges; nudging on every step made the pill bounce.
+    if (surfaced) {
+        TriggerNudge();
+    }
+}
+
+std::atomic<bool> g_volumeEndpointStale = true;
+
+// Called on audio service threads, not the render thread.
+class VolumeNotifyClient final : public IAudioEndpointVolumeCallback, public IMMNotificationClient {
+public:
+    ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&refs_); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const ULONG refs = InterlockedDecrement(&refs_);
+        if (refs == 0) {
+            delete this;
+        }
+        return refs;
+    }
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+        if (!ppv) {
+            return E_POINTER;
+        }
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IAudioEndpointVolumeCallback)) {
+            *ppv = static_cast<IAudioEndpointVolumeCallback*>(this);
+        } else if (riid == __uuidof(IMMNotificationClient)) {
+            *ppv = static_cast<IMMNotificationClient*>(this);
+        } else {
+            *ppv = nullptr;
+            return E_NOINTERFACE;
+        }
+        AddRef();
+        return S_OK;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA data) override {
+        if (data) {
+            ApplyVolumeReading(data->fMasterVolume, data->bMuted != FALSE, true);
+        }
+        return S_OK;
+    }
+
+    // MMDevice API calls are not allowed from inside these callbacks, so the
+    // render thread rebinds; the posted message wakes it even while parked.
+    HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR) override {
+        if (flow == eRender && role == eConsole) {
+            g_volumeEndpointStale = true;
+            if (HWND hwnd = g_hwnd) {
+                PostMessageW(hwnd, WM_NULL, 0, 0);
+            }
+        }
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR, DWORD) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) override { return S_OK; }
+    HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY) override { return S_OK; }
+
+private:
+    LONG refs_ = 1;
+};
+
+// Owned by the render thread.
+ComPtr<IMMDeviceEnumerator> g_volumeEnumerator;
+ComPtr<IAudioEndpointVolume> g_endpointVolume;
+VolumeNotifyClient* g_volumeNotifyClient = nullptr;
+
+void BindVolumeEndpoint() {
+    if (!g_volumeEndpointStale.exchange(false)) {
+        return;
+    }
+    if (!g_volumeNotifyClient) {
+        g_volumeNotifyClient = new VolumeNotifyClient();
+    }
+    if (!g_volumeEnumerator) {
+        if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                    IID_PPV_ARGS(&g_volumeEnumerator)))) {
+            g_volumeEnumerator.Reset();
+            return;
+        }
+        g_volumeEnumerator->RegisterEndpointNotificationCallback(g_volumeNotifyClient);
+    }
+    if (g_endpointVolume) {
+        g_endpointVolume->UnregisterControlChangeNotify(g_volumeNotifyClient);
+        g_endpointVolume.Reset();
+    }
+
+    ComPtr<IMMDevice> device;
+    HRESULT hr = g_volumeEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+    if (SUCCEEDED(hr)) {
+        hr = device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+                              reinterpret_cast<void**>(g_endpointVolume.GetAddressOf()));
+    }
+    if (SUCCEEDED(hr)) {
+        hr = g_endpointVolume->RegisterControlChangeNotify(g_volumeNotifyClient);
+    }
+    float level = 0.0f;
+    BOOL muted = FALSE;
+    if (SUCCEEDED(hr) && SUCCEEDED(g_endpointVolume->GetMasterVolumeLevelScalar(&level)) &&
+        SUCCEEDED(g_endpointVolume->GetMute(&muted))) {
+        // Baseline only: switching device must not pop the flyout.
+        ApplyVolumeReading(level, muted != FALSE, false);
+    } else if (g_endpointVolume) {
+        g_endpointVolume->UnregisterControlChangeNotify(g_volumeNotifyClient);
+        g_endpointVolume.Reset();
+    }
+}
+
+void UnbindVolumeEndpoint() {
+    if (g_volumeNotifyClient) {
+        if (g_endpointVolume) {
+            g_endpointVolume->UnregisterControlChangeNotify(g_volumeNotifyClient);
+        }
+        if (g_volumeEnumerator) {
+            g_volumeEnumerator->UnregisterEndpointNotificationCallback(g_volumeNotifyClient);
+        }
+    }
+    g_endpointVolume.Reset();
+    g_volumeEnumerator.Reset();
+    if (g_volumeNotifyClient) {
+        g_volumeNotifyClient->Release();
+        g_volumeNotifyClient = nullptr;
+    }
+    g_volumeEndpointStale = true;
+}
+
 void UpdateSystemSnapshot(bool includeGpuStats, bool includeNetStats) {
     SystemSnapshot next;
     {
@@ -5728,46 +5898,11 @@ void UpdateSystemSnapshot(bool includeGpuStats, bool includeNetStats) {
         g_prevUserTime = user;
     }
 
-    static ComPtr<IAudioEndpointVolume> s_volume;
-    if (!s_volume) {
-        ComPtr<IMMDeviceEnumerator> enumerator;
-        ComPtr<IMMDevice> device;
-        HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
-        if (SUCCEEDED(hr)) {
-            hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
-        }
-        if (SUCCEEDED(hr)) {
-            hr = device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(s_volume.GetAddressOf()));
-        }
-    }
-
-    if (s_volume) {
-        float level = 0.0f;
-        BOOL muted = FALSE;
-        if (SUCCEEDED(s_volume->GetMasterVolumeLevelScalar(&level)) && SUCCEEDED(s_volume->GetMute(&muted))) {
-            next.volumePercent = ClampInt(static_cast<int>(level * 100.0f + 0.5f), 0, 100);
-            next.volumeMuted = muted != FALSE;
-        } else {
-            s_volume.Reset(); // Retry next time
-        }
-    }
-
     std::lock_guard lock(g_stateMutex);
-    const bool volumeChanged =
-        g_volumeInitialized &&
-        (std::abs(next.volumePercent - g_state.system.volumePercent) >= 2 ||
-         next.volumeMuted != g_state.system.volumeMuted);
+    // Volume is owned by ApplyVolumeReading and may have moved since `next` was copied.
+    next.volumePercent = g_state.system.volumePercent;
+    next.volumeMuted = g_state.system.volumeMuted;
     g_state.system = next;
-    g_state.muted = next.volumeMuted;
-    if (volumeChanged && g_settings.volume) {
-        g_state.volume.active = true;
-        g_state.volume.percent = next.volumePercent;
-        g_state.volume.muted = next.volumeMuted;
-        g_state.volume.deviceName = L"System audio";
-        g_state.volume.expiresAt = NowSeconds() + 1.8;
-        TriggerNudge();
-    }
-    g_volumeInitialized = true;
 }
 
 // Built-in panel brightness (0-100), or -1 when there is no such panel (desktops)
@@ -8286,7 +8421,8 @@ class Renderer {
         target_->CreateSolidColorBrush(accentColor, &accent);
 
         if (calendarCachedDate_.wYear != local.wYear || calendarCachedDate_.wMonth != local.wMonth ||
-            calendarCachedDate_.wDay != local.wDay) {
+            calendarCachedDate_.wDay != local.wDay ||
+            calendarCachedFirstDaySetting_ != settings.firstDayOfWeek) {
             wchar_t monthNameBuf[32] = {};
             GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &local, L"MMMM", monthNameBuf, ARRAYSIZE(monthNameBuf), nullptr);
             // No longer uppercased. towupper is per-character and locale-blind:
@@ -8298,6 +8434,32 @@ class Renderer {
             GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, 0, &local, L"dddd", weekdayNameBuf, ARRAYSIZE(weekdayNameBuf), nullptr);
             calendarCachedWeekdayName_ = weekdayNameBuf;
 
+            calendarCachedFirstDay_ = settings.firstDayOfWeek;
+            if (calendarCachedFirstDay_ < 0) {
+                DWORD localeFirstDay = 0;  // locale counts 0 = Monday
+                calendarCachedFirstDay_ =
+                    GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_IFIRSTDAYOFWEEK | LOCALE_RETURN_NUMBER,
+                                    reinterpret_cast<LPWSTR>(&localeFirstDay),
+                                    sizeof(localeFirstDay) / sizeof(wchar_t)) > 0
+                        ? static_cast<int>((localeFirstDay + 1) % 7)
+                        : 0;
+            }
+
+            // Same locale as the month and weekday names above, so the grid
+            // headers can't end up in a different language from the hero.
+            static const wchar_t* const kFallbackInitials[] = {L"S", L"M", L"T", L"W", L"T", L"F", L"S"};
+            for (int weekday = 0; weekday < 7; ++weekday) {
+                wchar_t initialBuf[16] = {};
+                // CAL_SSHORTESTDAYNAME1 is Monday; weekday 0 here is Sunday.
+                const CALTYPE calType = CAL_SSHORTESTDAYNAME1 + static_cast<CALTYPE>((weekday + 6) % 7);
+                calendarCachedInitials_[weekday] =
+                    GetCalendarInfoEx(LOCALE_NAME_USER_DEFAULT, CAL_GREGORIAN, nullptr, calType,
+                                      initialBuf, ARRAYSIZE(initialBuf), nullptr) > 0
+                        ? initialBuf
+                        : kFallbackInitials[weekday];
+            }
+
+            calendarCachedFirstDaySetting_ = settings.firstDayOfWeek;
             calendarCachedDate_ = local;
         }
 
@@ -8352,9 +8514,9 @@ class Renderer {
         const float gridTop = rect.top + 16.0f * scale;
         const float colW = 28.0f * scale;
         const float headerH = 18.0f * scale;
-        const wchar_t* days[] = {L"S", L"M", L"T", L"W", L"T", L"F", L"S"};
+        const int firstDay = calendarCachedFirstDay_;
 
-        const int startDayIdx = GetDayOfWeek(local.wYear, local.wMonth, 1);
+        const int startDayIdx = (GetDayOfWeek(local.wYear, local.wMonth, 1) - firstDay + 7) % 7;
         const int monthDays = GetDaysInMonth(local.wYear, local.wMonth);
         const int rowCount = (startDayIdx + monthDays + 6) / 7;  // 5 or 6
 
@@ -8375,7 +8537,9 @@ class Renderer {
         for (int i = 0; i < 7; ++i) {
             const D2D1_RECT_F cell = D2D1::RectF(gridStart + i * colW, gridTop,
                                                  gridStart + (i + 1) * colW, gridTop + headerH);
-            target_->DrawTextW(days[i], 1, gridFmt, cell, mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            const std::wstring& initial = calendarCachedInitials_[(firstDay + i) % 7];
+            target_->DrawTextW(initial.c_str(), static_cast<UINT32>(initial.size()), gridFmt, cell,
+                               mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
         }
 
         // Hairline under the weekday headers.
@@ -8399,6 +8563,7 @@ class Renderer {
             const D2D1_RECT_F cell = D2D1::RectF(gridStart + col * colW, datesTop + row * rowH,
                                                  gridStart + (col + 1) * colW, datesTop + (row + 1) * rowH);
             const std::wstring dayText = std::to_wstring(d);
+            const int weekday = (firstDay + col) % 7;
 
             if (d == local.wDay) {
                 target_->FillEllipse(
@@ -8411,7 +8576,7 @@ class Renderer {
                 textBrush_->SetOpacity(1.0f);
                 target_->DrawTextW(dayText.c_str(), static_cast<UINT32>(dayText.size()), gridFmt,
                                    cell, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-            } else if (col == 0 || col == 6) {
+            } else if (weekday == 0 || weekday == 6) {
                 // Weekends recede instead of taking the accent, leaving today as
                 // the only accented thing in the grid.
                 mutedBrush_->SetOpacity(0.62f);
@@ -12163,7 +12328,7 @@ class Renderer {
             swprintf_s(value, L"%d%%", state.volume.percent);
         }
         DrawLevelBanner(rect, glyph, deviceLabel, value,
-                        Clamp(state.volume.percent / 100.0f, 0.0f, 1.0f), muted);
+                        Clamp(state.volume.displayPercent / 100.0f, 0.0f, 1.0f), muted);
     }
 
     void DrawBrightness(const SharedState& state, D2D1_RECT_F rect) {
@@ -12750,6 +12915,9 @@ class Renderer {
     SYSTEMTIME calendarCachedDate_{};
     std::wstring calendarCachedMonthName_;
     std::wstring calendarCachedWeekdayName_;
+    std::array<std::wstring, 7> calendarCachedInitials_;  // indexed 0 = Sunday
+    int calendarCachedFirstDay_ = 0;                       // resolved, 0 = Sunday
+    int calendarCachedFirstDaySetting_ = -2;               // -2 forces the first fill
     ComPtr<IDWriteTextFormat> weatherDescFormat_;
     float weatherDescFormatSize_ = -1.0f;
     uint64_t notificationIconGeneration_ = 0;
@@ -13875,6 +14043,7 @@ DWORD WINAPI RenderThreadProc(void*) {
     SpringValue widthSpring;
     SpringValue heightSpring;
     SpringValue nudgeSpring;
+    SpringValue volumeBarSpring;
     widthSpring.Reset((g_settings.autoHideIdleSeconds == -1 ? 0.0f : 120.0f) * g_settings.sizeScale);
     heightSpring.Reset((g_settings.autoHideIdleSeconds == -1 ? 0.0f : 36.0f) * g_settings.sizeScale);
     nudgeSpring.Reset(0.0f);
@@ -13905,6 +14074,8 @@ DWORD WINAPI RenderThreadProc(void*) {
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+
+        BindVolumeEndpoint();
 
         bool justUnhidden = false;
 
@@ -14230,6 +14401,9 @@ DWORD WINAPI RenderThreadProc(void*) {
             const bool needNetStats = hwMonitorVisible;  // net is only ever drawn in the HW dashboard
 
             UpdateSystemSnapshot(needGpuStats, needNetStats);
+            if (!g_endpointVolume) {
+                g_volumeEndpointStale = true;  // no audio device yet, or binding failed
+            }
             nextSystemPoll = now + 1.0;
         }
 
@@ -14360,6 +14534,16 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         nudgeSpring.Step(dt * speed, 280.0f * styleStiffnessMult, 24.0f * styleDampingMult);
 
+        // Tracks the live level while the flyout is closed, so opening it doesn't sweep from a stale value.
+        if (snapshot.volume.active) {
+            volumeBarSpring.target = static_cast<float>(snapshot.volume.percent);
+        } else {
+            volumeBarSpring.Reset(static_cast<float>(snapshot.system.volumePercent));
+        }
+        // Fixed, overdamped constants: the animation style must not make the bar overshoot.
+        volumeBarSpring.Step(dt * speed, 520.0f, 46.0f);
+        snapshot.volume.displayPercent = volumeBarSpring.value;
+
         {
             std::lock_guard lock(g_stateMutex);
             g_state.system.renderFps = ClampInt(static_cast<int>(1.0f / std::max(dt, 0.001f) + 0.5f), 0, 1000);
@@ -14378,7 +14562,8 @@ DWORD WINAPI RenderThreadProc(void*) {
         // Check if animating structurally
         if (std::abs(widthSpring.velocity) > 0.01f || std::abs(widthSpring.target - widthSpring.value) > 0.01f ||
             std::abs(heightSpring.velocity) > 0.01f || std::abs(heightSpring.target - heightSpring.value) > 0.01f ||
-            std::abs(nudgeSpring.velocity) > 0.01f || std::abs(nudgeSpring.target - nudgeSpring.value) > 0.01f) {
+            std::abs(nudgeSpring.velocity) > 0.01f || std::abs(nudgeSpring.target - nudgeSpring.value) > 0.01f ||
+            std::abs(volumeBarSpring.velocity) > 0.01f || std::abs(volumeBarSpring.target - volumeBarSpring.value) > 0.01f) {
             needsRender = true;
         }
 
@@ -14643,7 +14828,9 @@ DWORD WINAPI RenderThreadProc(void*) {
             std::fabs(widthSpring.velocity) > 0.5f ||
             std::fabs(heightSpring.velocity) > 0.5f ||
             std::fabs(nudgeSpring.value) > 0.5f ||
-            std::fabs(nudgeSpring.velocity) > 0.5f;
+            std::fabs(nudgeSpring.velocity) > 0.5f ||
+            std::fabs(volumeBarSpring.value - volumeBarSpring.target) > 0.5f ||
+            std::fabs(volumeBarSpring.velocity) > 0.5f;
 
         if (continuousAnimation && !springsAnimating) {
             constexpr double kContinuousFrameMs = 1000.0 / 60.0;
@@ -14703,6 +14890,7 @@ DWORD WINAPI RenderThreadProc(void*) {
     // Balances whichever state the loop exited in; a no-op if already released.
     setHighResTimer(false);
 
+    UnbindVolumeEndpoint();
     renderer.Shutdown();
     DestroyWindow(hwnd);
     g_hwnd = nullptr;
