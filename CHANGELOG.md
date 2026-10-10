@@ -4,9 +4,148 @@ All notable changes, enhancements, and bug fixes for **Dynamic Island for Window
 
 ---
 
-## [Unreleased / Latest Updates]
+## [1.3.0] — 2026-09-24
+
+### ✅ Resolved Issues
+
+Every reported issue addressed in this release, and where to find the change.
+Issue numbers without a prefix are on this repository; `ramensoftware#NNNN`
+refers to the [windhawk-mods](https://github.com/ramensoftware/windhawk-mods)
+tracker the published mod is submitted through.
+
+| Issue | Reported | Addressed by |
+| --- | --- | --- |
+| [#83](../../issues/83) | Separate Offset Y for collapsed vs expanded | Separate Offset Y For Collapsed And Expanded |
+| [#82](../../issues/82) | Weather text not vertically centred | Weather Accuracy & Layout |
+| [#81](../../issues/81) | Action Center notifications don't work | Notification Setup Clarified, Notification Listener Resiliency |
+| [#79](../../issues/79) | Should disappear when nothing is playing | Auto-Hide Island Across All States |
+| [#76](../../issues/76) | Want to disable the volume flyout | `Modules.Volume` toggle — Weather/Volume module toggles |
+| [#74](../../issues/74) | Skip forward/back doesn't work | Media Controls Now Actually Respond |
+| [#73](../../issues/73) | Shouldn't sit on top and block app tabs | `AlwaysOnTop` off, click-through, fullscreen auto-hide |
+| [#72](../../issues/72) | Bottom-left / bottom-right positions | Position & Z-Order |
+| [#71](../../issues/71) | 60 FPS not smooth on 144 Hz+ | High Refresh Rate (360Hz+) Support |
+| [#70](../../issues/70) | Media buttons unresponsive | Media Controls Now Actually Respond |
+| [#69](../../issues/69) | Auto-hide when something is fullscreen | `AutoHideFullscreen` — Auto-Hide Island Across All States |
+| [#67](../../issues/67) | More background colour control | Custom Colours & Transparency, Eight New Themes |
+| [#66](../../issues/66) | Album art clipping | Album Art Clipping |
+| [#65](../../issues/65) | Disable mic/camera privacy lights | Privacy Indicator Customization & Toggles |
+| [#64](../../issues/64) | FPS options, 60 FPS laggy on 360 Hz | High Refresh Rate (360Hz+) Support |
+| [#63](../../issues/63) | Weather not working | Weather Accuracy & Layout |
+| [#62](../../issues/62) | Expands constantly on short-form video | Media Auto-Expand Exclusions |
+| [#61](../../issues/61) | Clock and date presentation | Typography & Clock Control |
+| [#60](../../issues/60) | Doesn't disappear despite hide setting | Auto-Hide Island Across All States |
+| [#59](../../issues/59) | Translucency and more customization | Real Blur & Acrylic Backdrop |
+| [#57](../../issues/57) | Hide when untouched | Auto-Hide Island Across All States |
+| [#49](../../issues/49) | Privacy dot stays on | Privacy Indicator No Longer Sticks On |
+| [#45](../../issues/45) | VLC playback not detected | VLC Detection |
+| [#44](../../issues/44) | Game overlay missing, idle-hide broken, wants an expand toggle | Game Overlay Options, Auto-Hide, `MediaAutoExpand` |
+| [#41](../../issues/41) | Font face and size for clock/weather | Typography & Clock Control |
+| [#35](../../issues/35) | Localization | Multi-Language Support |
+| [#33](../../issues/33) | Border-merged mode, Bluetooth view, file tray | File Tray, Border-Merged Mode, Bluetooth View |
+| [#31](../../issues/31) | PowerToys bar z-order conflict | Position & Z-Order |
+| [#25](../../issues/25) | More game mode options | Game Overlay Options, Game Overlay Rebuilt |
+| ramensoftware#4352 | Caps Lock toggle, wind arrows | Caps Lock Toggle & Wind Direction Arrows |
+| ramensoftware#4738 | Media pins the island open | Auto-Hide Island Across All States |
+| ramensoftware#5086 | Island wastes space, date formatting | Collapsed strip sized to content, Typography & Clock Control |
+
+**Still open, deliberately.** [#27](../../issues/27) asks for local speech-to-text;
+that needs a bundled ASR model, which is not something a Windhawk mod can
+reasonably ship. [#20](../../issues/20) asks for Fahrenheit, which the
+**Weather in Fahrenheit** setting already does — it switches the temperature,
+wind speed and feels-like values together.
+
+### 🎨 Visual Redesign
+
+The island is no longer a flat coloured shape. It is now built as a layered material, and every surface shares one design language.
+
+* **Real Depth:** A soft drop shadow now lifts the island off the desktop — previously the shadow routine was an empty stub, so there was none at all. Above it sits a single downward depth gradient: neutral at the top, gradually deeper toward the bottom.
+* **No Edge Lighting:** Nothing traces a bright line along an edge any more. Three separate treatments used to: a specular hairline along the top arc, a second full highlight ring just inside the contour, and a white sheen opening the depth gradient. Together they read as a lit rim around the whole island. Inner cards lost their hairline outlines too — six of those side by side in the hardware grid turned into a mesh of bright edges competing with the content — and their fill was raised to carry the separation instead.
+* **Live Accent Bloom:** A wide, very soft wash of your album art's accent colour bleeds in from the top of the island. Strongest on the media surface, a whisper elsewhere, so the whole UI feels connected to what is playing. Adjustable from 0 to 200%, or off.
+* **One Design Language:** Introduced a small token set (surface, raised, hairline, three text tiers, accent) that every panel, chip, badge, divider and separator now draws from. Twenty-six hardcoded white fills were routed through it, so they all respond to the theme — and to background luminance, meaning a light background now gets dark separators instead of washed-out white ones.
+* **Unified Progress:** The media scrubber, volume bar and other progress indicators now share one gradient accent track, so "progress" looks identical everywhere. The scrubber thumb became a white dot with an accent ring, which reads far more precisely against busy album art, and the bar thickens while you drag it.
+* **Consistent Panels:** A shared card primitive backs every dashboard panel, giving matched corner radii and fills across the media, calendar, weather, hardware, game and File Tray surfaces.
+* **Accent Stays Legible:** The accent is now contrast-checked against the island's own background. The check previously only ever brightened a colour, which silently assumed a dark island — on a light background it drove the accent toward white until it disappeared. It now moves away from the background in whichever direction actually helps, which is what makes the new light theme usable.
+
+#### 🎨 Eight New Themes
+* **Retired The Old Four:** OLED Black, Fluent, Midnight Blue and Deep Purple were tuned for a material that lit every edge. With the edge lighting gone a palette has to carry the look on flat fills alone, so the set was replaced: **Obsidian** (true black, OLED friendly), **Graphite** (neutral Windows 11 dark), **Slate** (cool blue-grey), **Nord**, **Evergreen**, **Espresso**, **Plum**, and **Porcelain** — a light theme, which the old set had none of. Secondary text holds roughly 4.5:1 against its own background in every one.
+* **Theme Submenu:** Nine entries would have swamped the right-click menu, so themes moved into their own submenu. Menu labels, the settings dropdown and the resolved colours all come from one table now instead of three lists that had to be kept in step.
+* **Migrated, Not Reset:** The active theme is stored as an index, and the new set renumbered those indexes. Your selection is migrated across once (Deep Purple lands on Plum, Fluent on Graphite, and so on), and a previously saved custom colour is still recognised as custom rather than being reinterpreted as whichever palette now sits at that number. Custom hex fields you never edited are still treated as untouched even though their defaults moved.
+
+#### 🎮 Game Overlay Rebuilt
+* **Frame Rate As The Hero:** FPS is the number you actually watch mid-game, so it gets a wider card and the 18px clock face while the percentages stay at the shared 13.5px.
+* **Semantic Load Colour:** The per-metric rainbow is gone (cyan CPU, magenta RAM, green GPU, orange disk) — it encoded nothing and fought the album-art accent. Colour now means load: accent while comfortable, amber from 75%, red from 90%. Cards also lost a hairline border *and* a metric-coloured ring stacked on top of it.
+* **One Icon Family:** The overlay had its own icon set drawn at different weights and proportions, so the same CPU appeared as two different symbols depending on the surface. Every card now draws from the shared glyph family, and a new gauge glyph backs FPS — which previously resolved to nothing and drew no icon at all.
+* **Sizing Can't Drift:** The strip's animated width and its contents each kept their own copy of the card width and padding, so widening a card in one place left the other sizing the island for the old value and the last card fell off the "ran out of room" check. Both read one layout table now.
+
+#### 📅 Calendar Rebuilt
+* **Six-Row Months Fit:** Row height was fixed at 26px, so a month starting late in the week ran past the island's bottom edge and the last row was silently clipped. Row height is now derived from the space actually available.
+* **Accent, Not Red:** Unless the accent mode was set to System the calendar fell back to a hardcoded red that answered to nothing and clashed with the accent on every other surface. It uses the real accent now.
+* **Today Is The Only Marker:** Weekend columns were painted in the same accent as today, putting three competing marks in the grid and making the weekday headers look selected. Weekends now recede, leaving today as the single accented element, and its marker is sized from its cell instead of a fixed 12px disc that swallowed the digits.
+* **Month Names Left Alone:** The month was uppercased character by character, which turns Turkish "i" into "I" rather than "İ" and does nothing at all for CJK.
+
+#### 📐 Separate Offset Y For Collapsed And Expanded #83
+* **Two Heights, No Compromise:** A single Offset Y had to serve both states, so a value that tucks the idle pill up near the screen edge left the expanded dashboard awkward to reach. Turning on the separate expanded offset makes Offset Y the collapsed value and adds a second one for expanded. The island eases between them in step with the expansion rather than snapping at a threshold.
+
+#### 🪟 Real Blur & Acrylic Backdrop #59
+* **Windows Translucency:** The island can now sit on genuine Windows blur or frosted acrylic instead of a solid fill, using the same composition path the shell uses for its own surfaces. Because that blur covers the window's full rectangle and ignores per-pixel alpha, the window is also shaped to a rounded region while a backdrop is active — otherwise a blurred rectangle would appear in the transparent padding around the island. The drop shadow steps aside in that mode, since the region would clip it anyway.
+* **Graceful Degradation:** The entry point is resolved at runtime, so on builds without it the island simply stays opaque rather than failing to load.
+* **Also Covered By Existing Settings:** The same report asked for a way to switch off the copy/clipboard flyout and the multi-second popup on every new song. Both already exist — the **Clipboard module** toggle and **Auto-expand on track change** — and the new media blocklist above gives finer control over the latter.
+
+### ✨ New Features
+
+#### 🌍 Multi-Language Support #35
+* **12 Languages:** English, French, Spanish, German, Portuguese, Italian, Russian, Turkish, Hindi, Simplified Chinese, Japanese and Korean. Defaults to following your Windows display language, and regional tags resolve correctly (`pt-BR` uses Portuguese, `zh-Hans-CN` uses Chinese). Untranslated text falls back to readable English rather than a blank or an identifier.
+
+#### 📎 File Tray #33
+* **Drag & Drop Shelf:** Drag any file or folder onto the island to park it. The island jumps to the shelf to confirm the drop, shows each item's real Explorer icon, name and size, newest first, and highlights the row under your cursor. Click to open, right-click the island to clear. Re-dropping a file promotes it rather than duplicating it. Capacity is configurable from 1 to 25. Nothing is ever copied or moved — the shelf only holds references.
+
+#### 🔠 Typography & Clock Control #41 #61
+* **Independent Text Size:** Scale all island text from 70% to 160% without changing the island's dimensions. Previously the only option was the overall Size scale, which grew the whole island.
+* **Clock Format:** Choose 12-hour, 24-hour, or follow your Windows locale. Optionally show seconds.
+* **Custom Date Patterns:** Set your own date format, including CJK forms such as `yyyy年MM月dd日`. Any unrecognised character is printed literally, so patterns work as typed.
+* **Date-First Layout:** Promote the date to the headline with the time beneath it, for people who care about the date more than the clock.
+
+#### 🚫 Media Auto-Expand Exclusions #62
+* **Per-App Blocklist:** Short-form video feeds change "track" every few seconds, which turned auto-expand into a constant popup. Name the offenders (for example `tiktok, youtube`) and the island updates quietly in the collapsed pill instead of expanding. Matched loosely against the app and the title, so one entry catches both a desktop app and a browser tab.
+
+#### 🎮 Game Overlay Options #25
+* **Choose Your Metrics:** FPS, CPU, GPU, RAM and disk can each be toggled individually. The strip now lays itself out from whichever metrics are enabled and resizes to match, so turning some off closes the gap instead of leaving a hole.
+* **Compact Mode:** Narrows the overlay to fit neatly in the taskbar area.
+
+### 🔧 Internal
+
+* **Tab Loop Consolidated:** The dashboard tab arithmetic was copy-pasted in seven places, which is how the renderer and the input handlers drifted out of sync. It now comes from one source of truth, and the expensive GPU/network counters correctly track the Hardware Monitor card's real position rather than assuming it is the last tab.
 
 ### ✨ Fixes & Enhancements
+
+#### 🎯 Media Controls Now Actually Respond #74 #70
+* **Skip Buttons Fixed:** Clicking previous/next opened the source app instead of changing track. The buttons were drawn relative to the pill, but hit-tested as though the pill were centred in the overlay window — which it is not in macOS Notch or Border-Merged mode (22px offset), while hover-scaled, or whenever a second pill is showing alongside. Every missed click fell straight through to "focus the app". The renderer now publishes the exact rectangle it painted into and all hit-testing is derived from it, so the buttons, the scrubber and the album art can no longer drift away from their targets at any size scale, shape or layout.
+
+#### 🌤️ Weather Accuracy & Layout #82 #63
+* **No More Confident Wrong Readings:** A rate-limited or unrecognised-location response from wttr.in was committed as real data, so the island happily displayed "0°" with an empty description. Readings are now only accepted when the response actually parses, and the previous reading is kept otherwise.
+* **City Names With Spaces & Accents:** Only spaces were escaped when building the request, so cities containing commas, accents or any non-ASCII character produced a malformed URL and silently failed. The city is now fully percent-encoded as UTF-8.
+* **Failure Backoff:** A failed fetch now retries after 60s, then backs off (2m, 5m, 15m) instead of waiting a full refresh interval, without hammering a service that rate-limits.
+* **Vertical Centring:** The weather dashboard's city, icon and temperature were pinned to the top of their layout boxes because the bold and huge text formats were the only centred formats missing a paragraph alignment. They are now centred inside explicit bands, which also reclaims the dead space under the dashboard.
+
+#### 🎨 Custom Colours & Transparency #67
+* **Background Colour Now Applies:** Editing the pill background hex did nothing unless the Theme preset also happened to be switched to Custom. Any colour field changed from its default now overrides the selected preset; restoring the default hands control back to the preset.
+* **Translucent Backgrounds:** The hex parser rejected anything that was not exactly six digits, so an alpha channel was impossible, and the alpha was then discarded twice on the way to the screen. `#RGB`, `#RGBA`, `#RRGGBB` and `#RRGGBBAA` are all accepted now, so a translucent island can be requested while text and icons stay fully opaque.
+
+#### 🔒 Privacy Indicator No Longer Sticks On #49 #65
+* **Stuck Orange Dot:** The microphone dot could stay lit permanently, even with the mic unplugged and Windows itself reporting nothing in use. An entry was treated as "in use" whenever its stop timestamp was zero, which is also true of entries that had never been used at all. Both the start and stop timestamps are now required to agree, and the registry values are type- and size-checked. This also unblocks auto-hide, which deliberately refuses to hide the island while a privacy indicator is lit.
+
+#### 🖼️ Album Art Clipping #66
+* **Cropped Corner At Large Sizes:** The island's corner radius was scaled twice for the content mask, so from roughly 2× Size scale upwards the rounded corner cut across the album art. Visible mainly at 2.5× in the iPhone Pill shape.
+
+#### 🎵 VLC Detection #45
+* **VLC Playing But Island Silent:** Only the session Windows considered "current" was read, so a genuinely playing VLC was ignored whenever a stale or paused session from another app held that slot. A session that is actually playing is now preferred. The window-title fallback also tolerates skins and fullscreen, while still verifying the window really belongs to VLC.
+
+#### 🪟 Position & Z-Order #31 #72
+* **Bottom Left / Bottom Right:** Added both positions, completing the set.
+* **Reclaiming The Top:** The island stayed buried when another always-on-top window (such as PowerToys' bar) was raised over it, because the z-order was only asserted on a resize. It now reclaims its place once a second — deliberately ignoring Windows' own shell surfaces, so the Start menu, notification centre, OSDs, menus and tooltips still correctly appear in front.
+
+#### 🔔 Notification Setup Clarified #81
+* **Missing Prerequisite Documented:** Adding `explorer.exe` to the process inclusion list is not sufficient on its own — Windows must also allow apps to read notifications. Both readmes now say so, and a denied permission is logged with the exact setting to change instead of a bare status code.
 
 #### ⚙️ Hardware Monitor Redesign #42
 * **Complete Overhaul:** The Hardware Monitor module was completely redesigned to feature a sleek 2-column grid layout utilizing Segoe Fluent Icons.

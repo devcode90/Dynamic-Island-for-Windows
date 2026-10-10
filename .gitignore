@@ -4,3 +4,6 @@ temp-windhawk/
 # Local validation/utility scripts
 pr_validation.py
 desktop-live-overlay.wh.cpp
+
+# Local clang compile-check harness (scripts + build artifacts)
+.kiro-build/
