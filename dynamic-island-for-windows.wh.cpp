@@ -50,6 +50,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **Translucent Backgrounds:** Hex colors accept an alpha channel (`#RRGGBBAA`), so you can make the island see-through while keeping text and icons perfectly crisp.
 - **Your Language:** The island's own labels follow your Windows display language across 12 languages, or you can pick one explicitly.
 - **File Tray:** Drag any file onto the island to park it on a shelf, then click to open it. Files are only referenced, never copied or moved.
+- **Todoist, Mail & Claude tabs:** Three optional cards in the scroll loop. Todoist lists today's tasks (click the circle to complete one). Mail counts new mail notifications from the apps you choose and lists the latest senders. Claude shows the state and task progress of your current Claude Code session, fed by a small hook script, and pops a pill when Claude finishes or needs you.
 - **Typography & Clock Control:** Scale all island text independently of the island's size, choose 12- or 24-hour time, show seconds, and set a custom date pattern — including CJK forms like `yyyy年MM月dd日`.
 
 ---
@@ -57,6 +58,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 ## ⚙️ Usage & Settings
 
 - **Hover & Scroll:** Hover over the island to seamlessly expand it. Use your mouse scroll wheel to swipe between the Media, Calendar, Weather, Hardware Monitor, and File Tray tabs.
+- **Todoist / Mail / Claude:** Enable them under Modules & Features. Todoist needs your API token. Mail relies on Windows notifications, so the same "Let apps access your notifications" permission as below is required. Claude needs the island-hook.ps1 hook registered in your Claude Code settings.json (the claude-hook folder of the GitHub repository has a one-line installer).
 - **File Tray:** Enable the File Tray module, then drag files onto the island. It jumps to the shelf to confirm the drop. Click a row to open that file; right-click the island to clear the shelf.
 - **Right-Click Menu:** Right-click the island to access Theme presets, Transparency settings, and to pin the island open.
 - **⚠️ Right-click choices are per-session:** The right-click menu is a quick way to try things out, not a place to configure the mod. **Theme**, **shape style** (Pill / Notch / Windows 11) and **pin open** are all re-applied from your Windhawk settings whenever the mod restarts — so a reboot, a mod update, or toggling the mod off and on will discard them. Anything you want to keep, set in the **Mod Settings** tab instead. (Transparency and Expand-on-hover do persist, but the settings tab is still the reliable place for them.)
@@ -80,6 +82,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color sampling, reorganized settings, and addressed various UI/media edge cases.
 - **[David Ravelo (DavidRaveloU) @GitHub](https://github.com/DavidRaveloU)**: Added selectable audio spectrum styles with a live frequency analyzer, new progress bar styles, optional track-change animations for the title, cover flip, playback controls and pill cover spin, an optional clock in the collapsed media pill, and a brightness slider flyout.
 - **[Retr0dev-jpg @GitHub](https://github.com/Retr0dev-jpg)**: Event-driven volume flyout with animated bar and default device switching, plus a calendar that follows the Windows locale for weekday initials and first day of the week (with a Monday/Sunday override).
+- **[Aksel7 @GitHub](https://github.com/Aksel7)**: Added Todoist, Mail and Claude dashboard tabs: today's Todoist tasks with click-to-complete and wheel scrolling, a mail counter fed by Windows notifications, and live Claude Code task progress through a hook script.
 
 ### 🤝 Contributing
 We love community contributions! To ensure high-quality updates, please follow these rules:
@@ -447,6 +450,30 @@ We love community contributions! To ensure high-quality updates, please follow t
   - MediaExpandBlocklist: ""
     $name: Never auto-expand for these apps
     $description: 'Comma-separated list of app or site names that should never make the island expand on a track change, while still updating quietly in the collapsed pill. Matched loosely against the media source and title, for example: chrome, tiktok, youtube.'
+  - TodoistModule: false
+    $name: Todoist tab
+    $description: Adds a Todoist card to the scroll loop listing today's tasks. Click the circle on a row to complete the task, click the text to open it in Todoist. Needs the API token below.
+  - TodoistToken: ""
+    $name: Todoist API token
+    $description: 'Todoist > Settings > Integrations > Developer > API token. Stored in your Windhawk settings in plain text.'
+  - TodoistFilter: "today | overdue"
+    $name: Todoist filter
+    $description: 'Any Todoist filter query, for example: today, today | overdue, #Work & today. Refreshed every 2 minutes and right after you complete a task.'
+  - MailModule: false
+    $name: Mail tab
+    $description: Adds a Mail card that counts new mail notifications since you last opened it and lists the latest senders and subjects. Uses Windows notifications, so no account login is needed.
+  - MailApps: "outlook, mail, gmail, courrier, thunderbird"
+    $name: Mail apps
+    $description: Comma-separated, matched against the app name of each Windows notification. Gmail in a browser only shows up as "Gmail" if installed as an app (Chrome or Edge menu > Install Gmail).
+  - MailOpenTarget: "https://mail.google.com"
+    $name: Mail tab click opens
+    $description: URL or program opened when you click the Mail card. Clicking also resets the counter.
+  - ClaudeModule: false
+    $name: Claude tab
+    $description: Adds a Claude card showing the state and progress of your current Claude Code task, fed by the island-hook.ps1 hook. Also pops a pill when a task finishes or Claude is waiting for you.
+  - ClaudeStatusFile: "%USERPROFILE%\\.claude\\island-status.json"
+    $name: Claude status file
+    $description: JSON file written by the Claude Code hook. Environment variables are expanded.
   - GameOverlayShowFps: true
     $name: Game overlay - show FPS
     $description: Include the frame rate in the game overlay strip.
@@ -1072,6 +1099,16 @@ struct Settings {
     // ── Media auto-expand exclusions (#62) ───────────────────────────────────
     std::vector<std::wstring> mediaExpandBlocklist;
 
+    // ── Integrations: Todoist / Mail / Claude ────────────────────────────────
+    bool todoistModule = false;
+    std::wstring todoistToken;
+    std::wstring todoistFilter = L"today | overdue";
+    bool mailModule = false;
+    std::vector<std::wstring> mailApps;  // lowercase
+    std::wstring mailOpenTarget;
+    bool claudeModule = false;
+    std::wstring claudeStatusFile;       // environment variables already expanded
+
     // ── Game overlay options (#25) ───────────────────────────────────────────
     bool gameOverlayShowFps = true;
     bool gameOverlayShowCpu = true;
@@ -1253,6 +1290,48 @@ struct FileTrayItem {
     BitmapPixels icon;
 };
 
+// ── Integrations: Todoist / Mail / Claude ─────────────────────────────────────
+struct TodoistTask {
+    std::string id;           // kept as the raw API string
+    std::wstring content;
+    std::wstring dueLabel;    // "14:30" for timed tasks, otherwise empty
+    int priority = 1;         // API scale: 4 = p1 (urgent) ... 1 = p4 (none)
+    bool overdue = false;
+    bool completing = false;  // optimistic state while the close request runs
+};
+
+struct TodoistSnapshot {
+    bool configured = false;  // a token is set
+    bool loaded = false;      // at least one successful fetch
+    std::wstring error;
+    std::vector<TodoistTask> tasks;
+    double lastUpdated = 0.0;
+};
+
+struct MailItem {
+    std::wstring app;
+    std::wstring sender;
+    std::wstring subject;
+    SYSTEMTIME receivedAt{};
+};
+
+struct MailSnapshot {
+    int unread = 0;               // new mail since the card was last clicked
+    std::vector<MailItem> recent; // oldest first, capped
+};
+
+struct ClaudeStatusSnapshot {
+    bool available = false;   // the status file exists and parsed
+    std::wstring state;       // running | waiting | done | error | idle
+    std::wstring title;
+    std::wstring detail;
+    std::wstring project;
+    int done = 0;
+    int total = 0;
+    int64_t started = 0;      // unix seconds
+    int64_t updated = 0;      // unix seconds
+};
+
 struct SharedState {
     MediaSnapshot media;
     ClipboardSnapshot clipboard;
@@ -1273,6 +1352,9 @@ struct SharedState {
     std::array<float, kSpectrumBands> bands{};  // smoothed 0..1 magnitude per band (low -> high)
     bool muted = false;
     std::vector<FileTrayItem> fileTrayItems;
+    TodoistSnapshot todoist;
+    MailSnapshot mail;
+    ClaudeStatusSnapshot claude;
 };
 
 struct SpringValue {
@@ -1348,6 +1430,7 @@ std::atomic<int> g_hoveredMediaButton = -1;
 std::atomic<unsigned> g_skipTriggerPrev{0};  // bumped on click, the render thread plays the prev button's animation
 std::atomic<unsigned> g_skipTriggerNext{0};  // same for the next button
 std::atomic<int> g_hoveredFileTrayRow = -1;  // row index under the cursor on the File Tray card
+std::atomic<int> g_todoistScroll = 0;        // first task shown in the Todoist list (wheel-scrollable)
 std::atomic<bool> g_scrubbing = false;           // true while press-dragging the media timeline scrubber
 std::atomic<float> g_scrubDragFraction = 0.0f;   // live 0..1 drag position while g_scrubbing is true
 std::atomic<double> g_lastLiveSeekTime = 0.0;    // throttle gate for live seeks while dragging
@@ -1413,6 +1496,9 @@ int ActiveTabCount(const Settings& settings) {
     if (settings.weather) ++count;
     if (settings.hardwareMonitorModule) ++count;
     if (settings.fileTrayModule) ++count;
+    if (settings.todoistModule) ++count;
+    if (settings.mailModule) ++count;
+    if (settings.claudeModule) ++count;
     return count;
 }
 
@@ -1439,6 +1525,39 @@ int FileTrayTabIndex(const Settings& settings) {
         return -1;
     }
     return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0);
+}
+
+// Integration tabs sit after the File Tray, always in this order:
+// Todoist, Mail, Claude. Both activeTabs lists in the renderer follow it.
+int TodoistTabIndex(const Settings& settings) {
+    if (!settings.todoistModule) {
+        return -1;
+    }
+    return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0) +
+           (settings.fileTrayModule ? 1 : 0);
+}
+
+int MailTabIndex(const Settings& settings) {
+    if (!settings.mailModule) {
+        return -1;
+    }
+    return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0) +
+           (settings.fileTrayModule ? 1 : 0) + (settings.todoistModule ? 1 : 0);
+}
+
+int ClaudeTabIndex(const Settings& settings) {
+    if (!settings.claudeModule) {
+        return -1;
+    }
+    return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0) +
+           (settings.fileTrayModule ? 1 : 0) + (settings.todoistModule ? 1 : 0) +
+           (settings.mailModule ? 1 : 0);
+}
+
+// Largest valid first-row offset for a Todoist list of `count` tasks shown in a
+// card of `contentHeight` (content px). 0 when everything fits.
+int TodoistMaxScroll(int count, float contentHeight) {
+    return std::max(0, count - FileTrayLayout::VisibleRowCapacity(contentHeight));
 }
 
 // ── Localization (#35) ───────────────────────────────────────────────────────
@@ -1586,6 +1705,23 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"No devices", {nullptr, L"Aucun appareil", L"Sin dispositivos", L"Keine Geräte", L"Nenhum dispositivo", L"Nessun dispositivo", L"Нет устройств", L"Cihaz yok", L"कोई डिवाइस नहीं", L"无设备", L"デバイスなし", L"장치 없음"}},
         {L"item", {nullptr, L"élément", L"elemento", L"Element", L"item", L"elemento", L"элемент", L"öğe", L"आइटम", L"项", L"項目", L"항목"}},
         {L"items", {nullptr, L"éléments", L"elementos", L"Elemente", L"itens", L"elementi", L"элементов", L"öğe", L"आइटम", L"项", L"項目", L"항목"}},
+        {L"Today", {nullptr, L"Aujourd’hui", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Nothing due today", {nullptr, L"Rien de prévu aujourd’hui", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Add your Todoist API token in the mod settings", {nullptr, L"Ajoute ton token Todoist dans les paramètres du mod", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Mail", {nullptr, L"Mail", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"No new mail", {nullptr, L"Aucun nouveau mail", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"new", {nullptr, L"nouveau(x)", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Click to open", {nullptr, L"Clic pour ouvrir", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Running", {nullptr, L"En cours", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Waiting for you", {nullptr, L"Attend ta réponse", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Done", {nullptr, L"Terminé", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Error", {nullptr, L"Erreur", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Idle", {nullptr, L"Inactif", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"No Claude Code activity yet", {nullptr, L"Aucune activité Claude Code pour l’instant", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Task finished", {nullptr, L"Tâche terminée", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"tasks", {nullptr, L"tâches", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Started", {nullptr, L"Démarré à", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
+        {L"Overdue", {nullptr, L"En retard", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr}},
     };
 
     const int langIndex = g_uiLanguage.load(std::memory_order_relaxed);
@@ -2070,6 +2206,10 @@ void ApplyHideShowHotkey();                 // forward declaration; defined afte
 void ApplyBackdropMaterial(HWND);           // forward declaration; defined after LoadSettings()
 void ApplyBackdropRegion(HWND, int, int);   // forward declaration; defined below PositionOverlayWindow
 void NotifyKeyboardThreadSettingChanged();  // forward declaration; defined with the keyboard hook
+void RequestTodoistRefresh();               // forward declaration; defined with the integrations
+void NoteIncomingMail(const std::wstring& app, const std::wstring& sender,
+                      const std::wstring& subject, int sourcePath);  // same
+void CompleteTodoistTask(const std::string& taskId);                 // same
 
 void LoadSettings() {
     Settings next;
@@ -2288,6 +2428,57 @@ void LoadSettings() {
     // ── File tray (#33) ──────────────────────────────────────────────────────
     next.fileTrayModule = Wh_GetIntSetting(L"Modules.FileTrayModule") != 0;
     next.fileTrayMaxItems = ClampInt(Wh_GetIntSetting(L"Modules.FileTrayMaxItems"), 1, 25);
+
+    // ── Integrations: Todoist / Mail / Claude ────────────────────────────────
+    next.todoistModule = Wh_GetIntSetting(L"Modules.TodoistModule") != 0;
+    next.todoistToken = GetStringSettingCopy(L"Modules.TodoistToken");
+    {
+        const size_t a = next.todoistToken.find_first_not_of(L" \t\r\n");
+        const size_t b = next.todoistToken.find_last_not_of(L" \t\r\n");
+        next.todoistToken = (a == std::wstring::npos) ? std::wstring()
+                                                      : next.todoistToken.substr(a, b - a + 1);
+    }
+    next.todoistFilter = GetStringSettingCopy(L"Modules.TodoistFilter");
+    if (next.todoistFilter.empty()) {
+        next.todoistFilter = L"today | overdue";
+    }
+    next.mailModule = Wh_GetIntSetting(L"Modules.MailModule") != 0;
+    next.mailOpenTarget = GetStringSettingCopy(L"Modules.MailOpenTarget");
+    next.mailApps.clear();
+    {
+        std::wstring raw = GetStringSettingCopy(L"Modules.MailApps");
+        if (raw.empty()) {
+            raw = L"outlook, mail, gmail, courrier, thunderbird";
+        }
+        size_t start = 0;
+        while (start <= raw.size()) {
+            const size_t comma = raw.find(L',', start);
+            const size_t end = (comma == std::wstring::npos) ? raw.size() : comma;
+            std::wstring token = raw.substr(start, end - start);
+            const size_t a = token.find_first_not_of(L" \t\r\n");
+            if (a != std::wstring::npos) {
+                const size_t b = token.find_last_not_of(L" \t\r\n");
+                std::wstring entry = token.substr(a, b - a + 1);
+                std::transform(entry.begin(), entry.end(), entry.begin(),
+                               [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
+                next.mailApps.push_back(std::move(entry));
+            }
+            if (comma == std::wstring::npos) {
+                break;
+            }
+            start = comma + 1;
+        }
+    }
+    next.claudeModule = Wh_GetIntSetting(L"Modules.ClaudeModule") != 0;
+    {
+        std::wstring raw = GetStringSettingCopy(L"Modules.ClaudeStatusFile");
+        if (raw.empty()) {
+            raw = L"%USERPROFILE%\\.claude\\island-status.json";
+        }
+        wchar_t expanded[MAX_PATH * 2] = {};
+        const DWORD n = ExpandEnvironmentStringsW(raw.c_str(), expanded, ARRAYSIZE(expanded));
+        next.claudeStatusFile = (n > 0 && n <= ARRAYSIZE(expanded)) ? std::wstring(expanded) : raw;
+    }
 
     // ── Media auto-expand exclusions (#62) ───────────────────────────────────
     next.mediaExpandBlocklist.clear();
@@ -2561,9 +2752,13 @@ void LoadSettings() {
     bool hotkeySettingChanged = false;
     bool backdropChanged = false;
     bool capsLockChanged = false;
+    bool todoistChanged = false;
     {
         std::lock_guard lock(g_settingsMutex);
         cityChanged = next.weatherCity != g_settings.weatherCity;
+        todoistChanged = next.todoistModule != g_settings.todoistModule ||
+                         next.todoistToken != g_settings.todoistToken ||
+                         next.todoistFilter != g_settings.todoistFilter;
         capsLockChanged = next.capsLock != g_settings.capsLock;
         hotkeySettingChanged =
             next.hideShowHotkeyEnabled != g_settings.hideShowHotkeyEnabled ||
@@ -2577,6 +2772,9 @@ void LoadSettings() {
     g_layoutDirty = true;
     if (cityChanged && g_settingsChangedEvent) {
         SetEvent(g_settingsChangedEvent);
+    }
+    if (todoistChanged) {
+        RequestTodoistRefresh();
     }
     // Installs or removes WH_KEYBOARD_LL to match. The keyboard thread would pick
     // this up on its next backstop tick anyway; this just makes it immediate.
@@ -4311,10 +4509,6 @@ DWORD WINAPI NotificationThreadProc(void*) {
                             // Immediately mark as seen so we don't process it again
                             seenIds.insert(id);
 
-                            if (g_settings.notificationRespectDnD && g_isDnDActive.load()) {
-                                continue;
-                            }
-
                             NotificationSnapshot snapshot;
                             snapshot.active = true;
                             snapshot.expiresAt = NowSeconds() + 4.0;
@@ -4344,6 +4538,13 @@ DWORD WINAPI NotificationThreadProc(void*) {
                                 if (textElements.Size() > 1) {
                                     snapshot.body = textElements.GetAt(1).Text().c_str();
                                 }
+                            }
+
+                            // Counted before the Do Not Disturb check on purpose:
+                            // DnD silences the pill, not the mail counter.
+                            NoteIncomingMail(snapshot.app, snapshot.title, snapshot.body, 0);
+                            if (g_settings.notificationRespectDnD && g_isDnDActive.load()) {
+                                continue;
                             }
 
                             if (snapshot.title.empty()) {
@@ -5396,6 +5597,805 @@ DWORD WINAPI WeatherThreadProc(void*) {
     return 0;
 }
 
+// ── Integrations backend: Todoist / Mail / Claude ────────────────────────────
+//
+// Three extra dashboard tabs. Each one feeds a field of SharedState and marks
+// the layout dirty; the renderer only ever reads the snapshot, like every other
+// module.
+//
+//   Todoist  WinHTTP against the official v1 REST API, polled on its own thread.
+//   Mail     no network at all: incoming Windows notifications whose app name
+//            matches the Mail apps setting are counted (see NoteIncomingMail).
+//   Claude   a small JSON file written by a Claude Code hook script, polled for
+//            changes on its own thread.
+
+// Minimal JSON reader, enough for the Todoist API and the hook status file.
+// Strings are kept as UTF-8 and converted to UTF-16 only where they are shown.
+struct JsonValue {
+    enum class Type { Null, Bool, Number, String, Array, Object };
+    Type type = Type::Null;
+    bool boolean = false;
+    double number = 0.0;
+    std::string str;
+    std::vector<JsonValue> items;     // Array elements, or Object values
+    std::vector<std::string> keys;    // Object keys, parallel to items
+
+    const JsonValue* Get(std::string_view key) const {
+        if (type != Type::Object) {
+            return nullptr;
+        }
+        for (size_t i = 0; i < keys.size(); ++i) {
+            if (keys[i] == key) {
+                return &items[i];
+            }
+        }
+        return nullptr;
+    }
+
+    std::string GetString(std::string_view key) const {
+        const JsonValue* v = Get(key);
+        if (!v) {
+            return std::string();
+        }
+        if (v->type == Type::String) {
+            return v->str;
+        }
+        if (v->type == Type::Number) {
+            // Ids used to be numeric in older Todoist APIs; keep them usable.
+            char buf[32] = {};
+            snprintf(buf, sizeof(buf), "%.0f", v->number);
+            return buf;
+        }
+        return std::string();
+    }
+
+    double GetNumber(std::string_view key, double fallback = 0.0) const {
+        const JsonValue* v = Get(key);
+        return (v && v->type == Type::Number) ? v->number : fallback;
+    }
+};
+
+class JsonReader {
+   public:
+    explicit JsonReader(std::string_view text) : s_(text) {}
+
+    bool Parse(JsonValue* out) {
+        SkipWs();
+        if (!ParseValue(out, 0)) {
+            return false;
+        }
+        SkipWs();
+        return pos_ == s_.size();
+    }
+
+   private:
+    std::string_view s_;
+    size_t pos_ = 0;
+
+    void SkipWs() {
+        while (pos_ < s_.size() &&
+               (s_[pos_] == ' ' || s_[pos_] == '\t' || s_[pos_] == '\r' || s_[pos_] == '\n')) {
+            ++pos_;
+        }
+    }
+
+    bool Literal(std::string_view word) {
+        if (s_.substr(pos_, word.size()) != word) {
+            return false;
+        }
+        pos_ += word.size();
+        return true;
+    }
+
+    static void AppendUtf8(std::string& out, uint32_t cp) {
+        if (cp < 0x80) {
+            out.push_back(static_cast<char>(cp));
+        } else if (cp < 0x800) {
+            out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else if (cp < 0x10000) {
+            out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+        }
+    }
+
+    bool Hex4(uint32_t* out) {
+        if (pos_ + 4 > s_.size()) {
+            return false;
+        }
+        uint32_t v = 0;
+        for (int i = 0; i < 4; ++i) {
+            const char c = s_[pos_++];
+            v <<= 4;
+            if (c >= '0' && c <= '9') v |= static_cast<uint32_t>(c - '0');
+            else if (c >= 'a' && c <= 'f') v |= static_cast<uint32_t>(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') v |= static_cast<uint32_t>(c - 'A' + 10);
+            else return false;
+        }
+        *out = v;
+        return true;
+    }
+
+    bool ParseString(std::string* out) {
+        if (pos_ >= s_.size() || s_[pos_] != '"') {
+            return false;
+        }
+        ++pos_;
+        while (pos_ < s_.size()) {
+            const char c = s_[pos_++];
+            if (c == '"') {
+                return true;
+            }
+            if (c != '\\') {
+                out->push_back(c);
+                continue;
+            }
+            if (pos_ >= s_.size()) {
+                return false;
+            }
+            const char e = s_[pos_++];
+            switch (e) {
+                case '"': out->push_back('"'); break;
+                case '\\': out->push_back('\\'); break;
+                case '/': out->push_back('/'); break;
+                case 'b': out->push_back('\b'); break;
+                case 'f': out->push_back('\f'); break;
+                case 'n': out->push_back('\n'); break;
+                case 'r': out->push_back('\r'); break;
+                case 't': out->push_back('\t'); break;
+                case 'u': {
+                    uint32_t cp = 0;
+                    if (!Hex4(&cp)) {
+                        return false;
+                    }
+                    // Surrogate pair, as emitted for emoji.
+                    if (cp >= 0xD800 && cp <= 0xDBFF && pos_ + 6 <= s_.size() &&
+                        s_[pos_] == '\\' && s_[pos_ + 1] == 'u') {
+                        pos_ += 2;
+                        uint32_t lo = 0;
+                        if (!Hex4(&lo)) {
+                            return false;
+                        }
+                        if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                            cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                        }
+                    }
+                    AppendUtf8(*out, cp);
+                    break;
+                }
+                default:
+                    return false;
+            }
+        }
+        return false;
+    }
+
+    bool ParseValue(JsonValue* out, int depth) {
+        if (depth > 64 || pos_ >= s_.size()) {
+            return false;
+        }
+        const char c = s_[pos_];
+        if (c == '{') {
+            ++pos_;
+            out->type = JsonValue::Type::Object;
+            SkipWs();
+            if (pos_ < s_.size() && s_[pos_] == '}') {
+                ++pos_;
+                return true;
+            }
+            while (true) {
+                SkipWs();
+                std::string key;
+                if (!ParseString(&key)) {
+                    return false;
+                }
+                SkipWs();
+                if (pos_ >= s_.size() || s_[pos_] != ':') {
+                    return false;
+                }
+                ++pos_;
+                SkipWs();
+                JsonValue value;
+                if (!ParseValue(&value, depth + 1)) {
+                    return false;
+                }
+                out->keys.push_back(std::move(key));
+                out->items.push_back(std::move(value));
+                SkipWs();
+                if (pos_ < s_.size() && s_[pos_] == ',') {
+                    ++pos_;
+                    continue;
+                }
+                if (pos_ < s_.size() && s_[pos_] == '}') {
+                    ++pos_;
+                    return true;
+                }
+                return false;
+            }
+        }
+        if (c == '[') {
+            ++pos_;
+            out->type = JsonValue::Type::Array;
+            SkipWs();
+            if (pos_ < s_.size() && s_[pos_] == ']') {
+                ++pos_;
+                return true;
+            }
+            while (true) {
+                SkipWs();
+                JsonValue value;
+                if (!ParseValue(&value, depth + 1)) {
+                    return false;
+                }
+                out->items.push_back(std::move(value));
+                SkipWs();
+                if (pos_ < s_.size() && s_[pos_] == ',') {
+                    ++pos_;
+                    continue;
+                }
+                if (pos_ < s_.size() && s_[pos_] == ']') {
+                    ++pos_;
+                    return true;
+                }
+                return false;
+            }
+        }
+        if (c == '"') {
+            out->type = JsonValue::Type::String;
+            return ParseString(&out->str);
+        }
+        if (Literal("true")) {
+            out->type = JsonValue::Type::Bool;
+            out->boolean = true;
+            return true;
+        }
+        if (Literal("false")) {
+            out->type = JsonValue::Type::Bool;
+            return true;
+        }
+        if (Literal("null")) {
+            out->type = JsonValue::Type::Null;
+            return true;
+        }
+        // Number.
+        const size_t start = pos_;
+        while (pos_ < s_.size() &&
+               (isdigit(static_cast<unsigned char>(s_[pos_])) || s_[pos_] == '-' ||
+                s_[pos_] == '+' || s_[pos_] == '.' || s_[pos_] == 'e' || s_[pos_] == 'E')) {
+            ++pos_;
+        }
+        if (pos_ == start) {
+            return false;
+        }
+        out->type = JsonValue::Type::Number;
+        out->number = strtod(std::string(s_.substr(start, pos_ - start)).c_str(), nullptr);
+        return true;
+    }
+};
+
+std::wstring Utf8ToWide(std::string_view text) {
+    if (text.empty()) {
+        return std::wstring();
+    }
+    const int n = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                                      nullptr, 0);
+    if (n <= 0) {
+        return std::wstring();
+    }
+    std::wstring out(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), n);
+    return out;
+}
+
+// Collapses line breaks and runs of spaces, and caps the length, so a long
+// prompt or task name renders as one tidy line.
+std::wstring OneLine(std::wstring text, size_t maxChars) {
+    std::wstring out;
+    out.reserve(std::min(text.size(), maxChars + 3));
+    bool lastSpace = true;
+    for (wchar_t c : text) {
+        if (c == L'\r' || c == L'\n' || c == L'\t') {
+            c = L' ';
+        }
+        if (c == L' ') {
+            if (lastSpace) {
+                continue;
+            }
+            lastSpace = true;
+        } else {
+            lastSpace = false;
+        }
+        out.push_back(c);
+        if (out.size() >= maxChars) {
+            out += L"…";
+            break;
+        }
+    }
+    while (!out.empty() && out.back() == L' ') {
+        out.pop_back();
+    }
+    return out;
+}
+
+// General HTTPS request with extra headers and a body, returning the status
+// code. HttpGet above stays as it was for the weather module.
+std::string HttpRequest(const wchar_t* method, const wchar_t* host, const std::wstring& path,
+                        const std::wstring& headers, const std::string& body, DWORD* statusOut) {
+    std::string response;
+    if (statusOut) {
+        *statusOut = 0;
+    }
+
+    HINTERNET session = WinHttpOpen(L"DynamicIsland/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) {
+        return response;
+    }
+    WinHttpSetTimeouts(session, 5000, 5000, 10000, 10000);
+
+    HINTERNET connect = WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (connect) {
+        HINTERNET request = WinHttpOpenRequest(connect, method, path.c_str(), nullptr,
+                                               WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                               WINHTTP_FLAG_SECURE);
+        if (request) {
+            const BOOL sent = WinHttpSendRequest(
+                request,
+                headers.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers.c_str(),
+                headers.empty() ? 0 : static_cast<DWORD>(-1L),
+                body.empty() ? WINHTTP_NO_REQUEST_DATA : const_cast<char*>(body.data()),
+                static_cast<DWORD>(body.size()), static_cast<DWORD>(body.size()), 0);
+            if (sent && WinHttpReceiveResponse(request, nullptr)) {
+                DWORD status = 0;
+                DWORD statusSize = sizeof(status);
+                WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                                    WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
+                                    WINHTTP_NO_HEADER_INDEX);
+                if (statusOut) {
+                    *statusOut = status;
+                }
+
+                DWORD available = 0;
+                while (WinHttpQueryDataAvailable(request, &available) && available > 0) {
+                    const size_t offset = response.size();
+                    response.resize(offset + available);
+                    DWORD read = 0;
+                    if (!WinHttpReadData(request, response.data() + offset, available, &read)) {
+                        response.resize(offset);
+                        break;
+                    }
+                    response.resize(offset + read);
+                    if (response.size() > 4 * 1024 * 1024) {
+                        break;  // nothing we ask for is anywhere near this big
+                    }
+                }
+            } else {
+                Wh_Log(L"HttpRequest %s %s failed (error %lu)", method, path.c_str(), GetLastError());
+            }
+            WinHttpCloseHandle(request);
+        }
+        WinHttpCloseHandle(connect);
+    }
+    WinHttpCloseHandle(session);
+    return response;
+}
+
+// ── Todoist ──────────────────────────────────────────────────────────────────
+
+HANDLE g_todoistThread = nullptr;
+HANDLE g_todoistWakeEvent = nullptr;
+HANDLE g_claudeThread = nullptr;
+
+void RequestTodoistRefresh() {
+    if (g_todoistWakeEvent) {
+        SetEvent(g_todoistWakeEvent);
+    }
+}
+
+static std::wstring TodayIsoDate() {
+    SYSTEMTIME local = {};
+    GetLocalTime(&local);
+    wchar_t buf[16] = {};
+    swprintf_s(buf, L"%04u-%02u-%02u", local.wYear, local.wMonth, local.wDay);
+    return buf;
+}
+
+// Fetches the active tasks matching the filter. Returns false and fills
+// `error` on any failure, so the card can say what went wrong.
+static bool FetchTodoistTasks(const std::wstring& token, const std::wstring& filter,
+                              std::vector<TodoistTask>* out, std::wstring* error) {
+    const std::wstring headers = L"Authorization: Bearer " + token + L"\r\n";
+    const std::wstring today = TodayIsoDate();
+    std::string cursor;
+
+    out->clear();
+    for (int page = 0; page < 5; ++page) {
+        std::wstring path = L"/api/v1/tasks/filter?limit=100&query=" + PercentEncodeUtf8(filter);
+        if (!cursor.empty()) {
+            path += L"&cursor=" + PercentEncodeUtf8(Utf8ToWide(cursor));
+        }
+
+        DWORD status = 0;
+        const std::string body = HttpRequest(L"GET", L"api.todoist.com", path, headers, "", &status);
+        if (status == 401 || status == 403) {
+            *error = L"Token Todoist refusé (401)";
+            return false;
+        }
+        if (status == 400) {
+            *error = L"Filtre Todoist invalide";
+            return false;
+        }
+        if (status != 200) {
+            *error = status == 0 ? L"Todoist injoignable" : L"Erreur Todoist " + std::to_wstring(status);
+            return false;
+        }
+
+        JsonValue root;
+        if (!JsonReader(body).Parse(&root)) {
+            *error = L"Réponse Todoist illisible";
+            return false;
+        }
+
+        // v1 wraps a page as {"results": [...], "next_cursor": ...}; accept a
+        // bare array too, in case the endpoint ever answers that way.
+        const JsonValue* list = root.type == JsonValue::Type::Array ? &root : root.Get("results");
+        if (!list || list->type != JsonValue::Type::Array) {
+            *error = L"Réponse Todoist inattendue";
+            return false;
+        }
+
+        for (const JsonValue& item : list->items) {
+            if (item.type != JsonValue::Type::Object) {
+                continue;
+            }
+            const JsonValue* checked = item.Get("checked");
+            if (checked && checked->type == JsonValue::Type::Bool && checked->boolean) {
+                continue;
+            }
+
+            TodoistTask task;
+            task.id = item.GetString("id");
+            task.content = OneLine(Utf8ToWide(item.GetString("content")), 80);
+            task.priority = ClampInt(static_cast<int>(item.GetNumber("priority", 1.0)), 1, 4);
+
+            if (const JsonValue* due = item.Get("due"); due && due->type == JsonValue::Type::Object) {
+                // "date" is YYYY-MM-DD for all-day tasks and a full ISO stamp
+                // (YYYY-MM-DDTHH:MM:SS) for timed ones.
+                const std::wstring date = Utf8ToWide(due->GetString("date"));
+                if (date.size() >= 10) {
+                    task.overdue = date.substr(0, 10) < today;
+                    if (date.size() >= 16 && date[10] == L'T') {
+                        task.dueLabel = date.substr(11, 5);
+                    }
+                }
+            }
+
+            if (!task.id.empty() && !task.content.empty()) {
+                out->push_back(std::move(task));
+            }
+        }
+
+        cursor = root.type == JsonValue::Type::Object ? root.GetString("next_cursor") : std::string();
+        if (cursor.empty()) {
+            break;
+        }
+    }
+
+    // Overdue first, then priority (4 = p1), then timed tasks by time.
+    std::stable_sort(out->begin(), out->end(), [](const TodoistTask& a, const TodoistTask& b) {
+        if (a.overdue != b.overdue) return a.overdue;
+        if (a.priority != b.priority) return a.priority > b.priority;
+        if (a.dueLabel.empty() != b.dueLabel.empty()) return !a.dueLabel.empty();
+        return a.dueLabel < b.dueLabel;
+    });
+    return true;
+}
+
+// Completes a task in the background. The row is marked as completing right
+// away so the click feels instant; the list is re-fetched once the server
+// has answered either way.
+void CompleteTodoistTask(const std::string& taskId) {
+    std::wstring token;
+    {
+        std::lock_guard lock(g_settingsMutex);
+        token = g_settings.todoistToken;
+    }
+    if (token.empty() || taskId.empty()) {
+        return;
+    }
+
+    {
+        std::lock_guard lock(g_stateMutex);
+        for (TodoistTask& task : g_state.todoist.tasks) {
+            if (task.id == taskId) {
+                task.completing = true;
+            }
+        }
+    }
+    g_layoutDirty = true;
+
+    std::thread([token, taskId]() {
+        const std::wstring headers = L"Authorization: Bearer " + token + L"\r\n";
+        const std::wstring path = L"/api/v1/tasks/" + PercentEncodeUtf8(Utf8ToWide(taskId)) + L"/close";
+        DWORD status = 0;
+        HttpRequest(L"POST", L"api.todoist.com", path, headers, "", &status);
+        if (status < 200 || status >= 300) {
+            Wh_Log(L"Todoist: closing task failed (HTTP %lu)", status);
+            std::lock_guard lock(g_stateMutex);
+            for (TodoistTask& task : g_state.todoist.tasks) {
+                if (task.id == taskId) {
+                    task.completing = false;
+                }
+            }
+        }
+        RequestTodoistRefresh();
+        g_layoutDirty = true;
+    }).detach();
+}
+
+DWORD WINAPI TodoistThreadProc(void*) {
+    WaitForSingleObject(g_stopEvent, 2000);  // stay out of the way at startup
+
+    while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
+        bool enabled = false;
+        std::wstring token;
+        std::wstring filter;
+        {
+            std::lock_guard lock(g_settingsMutex);
+            enabled = g_settings.todoistModule;
+            token = g_settings.todoistToken;
+            filter = g_settings.todoistFilter;
+        }
+
+        DWORD waitMs = 2 * 60 * 1000;
+        if (enabled) {
+            if (token.empty()) {
+                std::lock_guard lock(g_stateMutex);
+                g_state.todoist = TodoistSnapshot{};
+            } else {
+                std::vector<TodoistTask> tasks;
+                std::wstring error;
+                const bool ok = FetchTodoistTasks(token, filter, &tasks, &error);
+                {
+                    std::lock_guard lock(g_stateMutex);
+                    TodoistSnapshot& snap = g_state.todoist;
+                    snap.configured = true;
+                    if (ok) {
+                        snap.loaded = true;
+                        snap.error.clear();
+                        snap.tasks = std::move(tasks);
+                        snap.lastUpdated = NowSeconds();
+                    } else {
+                        // Keep showing the last good list under the error.
+                        snap.error = error;
+                    }
+                }
+                if (!ok) {
+                    Wh_Log(L"Todoist: %s", error.c_str());
+                    waitMs = 60 * 1000;
+                }
+            }
+            g_layoutDirty = true;
+        } else {
+            waitMs = INFINITE;  // woken by RequestTodoistRefresh when it's turned on
+        }
+
+        if (!g_todoistWakeEvent) {
+            if (WaitForSingleObject(g_stopEvent, waitMs == INFINITE ? 5000 : waitMs) == WAIT_OBJECT_0) {
+                break;
+            }
+            continue;
+        }
+        HANDLE events[] = {g_stopEvent, g_todoistWakeEvent};
+        if (WaitForMultipleObjects(2, events, FALSE, waitMs) == WAIT_OBJECT_0) {
+            break;
+        }
+    }
+    return 0;
+}
+
+// ── Mail (from Windows notifications) ────────────────────────────────────────
+
+// Called for every incoming notification, by the notification listener and by
+// the shell-hook fallback. Both paths can see the same toast, so a second
+// report from the *other* path within a few seconds is treated as the same
+// mail rather than counted twice.
+void NoteIncomingMail(const std::wstring& app, const std::wstring& sender,
+                      const std::wstring& subject, int sourcePath) {
+    if (app.empty()) {
+        return;
+    }
+
+    bool matched = false;
+    {
+        std::lock_guard lock(g_settingsMutex);
+        if (!g_settings.mailModule) {
+            return;
+        }
+        const std::wstring appLower = ToLowerCopy(app);
+        for (const std::wstring& needle : g_settings.mailApps) {
+            if (!needle.empty() && appLower.find(needle) != std::wstring::npos) {
+                matched = true;
+                break;
+            }
+        }
+    }
+    Wh_Log(L"Mail: notification from \"%s\" (path %d) -> %s", app.c_str(), sourcePath,
+           matched ? L"counted" : L"ignored (not in Mail apps)");
+    if (!matched) {
+        return;
+    }
+
+    static std::mutex s_dedupeMutex;
+    static double s_lastAt = -100.0;
+    static int s_lastPath = -1;
+    {
+        std::lock_guard lock(s_dedupeMutex);
+        const double now = NowSeconds();
+        if (sourcePath != s_lastPath && now - s_lastAt < 4.0) {
+            return;
+        }
+        s_lastAt = now;
+        s_lastPath = sourcePath;
+    }
+
+    MailItem item;
+    item.app = app;
+    item.sender = OneLine(sender, 60);
+    item.subject = OneLine(subject, 90);
+    GetLocalTime(&item.receivedAt);
+
+    {
+        std::lock_guard lock(g_stateMutex);
+        MailSnapshot& mail = g_state.mail;
+        mail.unread = std::min(mail.unread + 1, 999);
+        mail.recent.push_back(std::move(item));
+        while (mail.recent.size() > 10) {
+            mail.recent.erase(mail.recent.begin());
+        }
+    }
+    g_layoutDirty = true;
+}
+
+// ── Claude (status file written by the Claude Code hook) ─────────────────────
+
+static void ShowClaudePill(const std::wstring& title, const std::wstring& body) {
+    NotificationSnapshot pill;
+    pill.active = true;
+    pill.app = L"Claude";
+    pill.title = body.empty() ? title : title + L" - " + body;
+    if (pill.title.size() > 120) {
+        pill.title.resize(120);
+        pill.title += L"...";
+    }
+    pill.expiresAt = NowSeconds() + 5.0;
+    {
+        std::lock_guard lock(g_stateMutex);
+        g_state.notification = std::move(pill);
+    }
+    TriggerNudge();
+}
+
+DWORD WINAPI ClaudeStatusThreadProc(void*) {
+    FILETIME lastWrite = {};
+    std::wstring lastPath;
+    std::wstring lastState;
+    bool firstRead = true;
+
+    while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
+        bool enabled = false;
+        std::wstring path;
+        {
+            std::lock_guard lock(g_settingsMutex);
+            enabled = g_settings.claudeModule;
+            path = g_settings.claudeStatusFile;
+        }
+
+        if (!enabled || path.empty()) {
+            WaitForSingleObject(g_stopEvent, 2000);
+            continue;
+        }
+        if (path != lastPath) {
+            lastPath = path;
+            lastWrite = {};
+            firstRead = true;
+            Wh_Log(L"Claude: watching %s (%s)", path.c_str(),
+                   GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES
+                       ? L"not found yet - is the Claude Code hook installed?"
+                       : L"found");
+        }
+
+        WIN32_FILE_ATTRIBUTE_DATA attr = {};
+        if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attr)) {
+            bool changed = false;
+            {
+                std::lock_guard lock(g_stateMutex);
+                changed = g_state.claude.available;
+                g_state.claude = ClaudeStatusSnapshot{};
+            }
+            if (changed) {
+                g_layoutDirty = true;
+            }
+            WaitForSingleObject(g_stopEvent, 1000);
+            continue;
+        }
+
+        if (CompareFileTime(&attr.ftLastWriteTime, &lastWrite) != 0 && attr.nFileSizeLow < 256 * 1024) {
+            // The hook rewrites the file in place; open with full sharing and
+            // retry on the next tick if we caught it mid-write.
+            std::string text;
+            HANDLE file = CreateFileW(path.c_str(), GENERIC_READ,
+                                      FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                      nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file != INVALID_HANDLE_VALUE) {
+                text.resize(attr.nFileSizeLow);
+                DWORD read = 0;
+                if (!ReadFile(file, text.data(), static_cast<DWORD>(text.size()), &read, nullptr)) {
+                    read = 0;
+                }
+                text.resize(read);
+                CloseHandle(file);
+            }
+            // PowerShell 5 writes a UTF-8 BOM unless told not to.
+            if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
+                static_cast<unsigned char>(text[1]) == 0xBB && static_cast<unsigned char>(text[2]) == 0xBF) {
+                text.erase(0, 3);
+            }
+
+            JsonValue root;
+            const bool parsed = !text.empty() && JsonReader(text).Parse(&root) &&
+                                root.type == JsonValue::Type::Object;
+            if (!parsed && !text.empty()) {
+                Wh_Log(L"Claude: status file is not valid JSON yet (%u bytes)", static_cast<unsigned>(text.size()));
+            }
+            if (parsed) {
+                lastWrite = attr.ftLastWriteTime;
+
+                ClaudeStatusSnapshot next;
+                next.available = true;
+                next.state = ToLowerCopy(Utf8ToWide(root.GetString("state")));
+                next.title = OneLine(Utf8ToWide(root.GetString("title")), 110);
+                next.detail = OneLine(Utf8ToWide(root.GetString("detail")), 110);
+                next.project = OneLine(Utf8ToWide(root.GetString("project")), 40);
+                next.done = std::max(0, static_cast<int>(root.GetNumber("done")));
+                next.total = std::max(0, static_cast<int>(root.GetNumber("total")));
+                next.started = static_cast<int64_t>(root.GetNumber("started"));
+                next.updated = static_cast<int64_t>(root.GetNumber("updated"));
+
+                // A transition into done / waiting pops a pill, but never for
+                // the state already on disk when the mod starts.
+                const bool notify = !firstRead && next.state != lastState;
+                const std::wstring state = next.state;
+                const std::wstring title = next.title;
+                const std::wstring detail = next.detail;
+                lastState = state;
+                firstRead = false;
+
+                {
+                    std::lock_guard lock(g_stateMutex);
+                    g_state.claude = std::move(next);
+                }
+                g_layoutDirty = true;
+
+                if (notify && state == L"done") {
+                    ShowClaudePill(Loc(L"Task finished"), title);
+                } else if (notify && state == L"waiting") {
+                    ShowClaudePill(Loc(L"Waiting for you"), detail.empty() ? title : detail);
+                }
+            }
+        }
+
+        WaitForSingleObject(g_stopEvent, 1000);
+    }
+    return 0;
+}
+
 DWORD WINAPI AudioThreadProc(void*) {
     HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
@@ -6400,6 +7400,14 @@ void CaptureShellNotification(HWND hwnd) {
                         if (fullText.empty() && !appName.empty()) {
                             fullText = appName;
                             appName = L"Notification";
+                        }
+
+                        if (!fullText.empty() && appName != L"Notification") {
+                            const size_t sep = fullText.find(L"  -  ");
+                            NoteIncomingMail(appName,
+                                             sep == std::wstring::npos ? fullText : fullText.substr(0, sep),
+                                             sep == std::wstring::npos ? std::wstring() : fullText.substr(sep + 5),
+                                             1);
                         }
 
                         if (!fullText.empty()) {
@@ -9224,6 +10232,405 @@ class Renderer {
         mutedBrush_->SetOpacity(0.75f);
     }
 
+    // ── Integration dashboards: Todoist / Mail / Claude ─────────────────────
+    // Same grammar as the File Tray: left-aligned title, a quiet counter on the
+    // right, then rows built from DrawCard. Todoist rows share FileTrayLayout so
+    // the existing row hit test works for them unchanged.
+
+    void DrawIntegrationHeader(D2D1_RECT_F rect, float scale, const std::wstring& title,
+                               const std::wstring& right, const D2D1_COLOR_F* rightColor) {
+        const float padX = FileTrayLayout::kPadX * scale;
+        const D2D1_RECT_F headerRect = D2D1::RectF(rect.left + padX, rect.top + 18.0f * scale,
+                                                   rect.right - padX - 8.0f * scale, rect.top + 38.0f * scale);
+        textBrush_->SetOpacity(0.96f);
+        if (boldTextFormat_) {
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            target_->DrawTextW(title.c_str(), static_cast<UINT32>(title.size()), boldTextFormat_.Get(),
+                               headerRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        }
+        if (!right.empty() && smallTextFormat_) {
+            ComPtr<ID2D1SolidColorBrush> brush;
+            target_->CreateSolidColorBrush(
+                rightColor ? WithAlpha(*rightColor, 0.95f * settingsOpacity_)
+                           : WithAlpha(material_.textSecondary, 0.80f * settingsOpacity_),
+                &brush);
+            if (brush) {
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                target_->DrawTextW(right.c_str(), static_cast<UINT32>(right.size()), smallTextFormat_.Get(),
+                                   headerRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+        }
+    }
+
+    // Centred one-line message for empty and error states.
+    void DrawIntegrationMessage(D2D1_RECT_F rect, float scale, const std::wstring& message) {
+        const float padX = FileTrayLayout::kPadX * scale;
+        const D2D1_RECT_F box = D2D1::RectF(rect.left + padX, rect.top + FileTrayLayout::kListTop * scale,
+                                            rect.right - padX - 8.0f * scale,
+                                            rect.bottom - FileTrayLayout::kListBottomInset * scale);
+        DrawCard(box, 12.0f * scale);
+        if (smallTextFormat_) {
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            smallTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            mutedBrush_->SetOpacity(0.85f);
+            const D2D1_RECT_F textBox = D2D1::RectF(box.left + 12.0f * scale, box.top, box.right - 12.0f * scale, box.bottom);
+            target_->DrawTextW(message.c_str(), static_cast<UINT32>(message.size()), smallTextFormat_.Get(),
+                               textBox, mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            smallTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        }
+        mutedBrush_->SetOpacity(0.75f);
+    }
+
+    static D2D1_COLOR_F TodoistPriorityColor(int priority) {
+        // Todoist's own palette: p1 red, p2 orange, p3 blue. p4 has no colour.
+        switch (priority) {
+            case 4: return D2D1::ColorF(0.82f, 0.27f, 0.23f, 1.0f);
+            case 3: return D2D1::ColorF(0.92f, 0.54f, 0.04f, 1.0f);
+            case 2: return D2D1::ColorF(0.14f, 0.44f, 0.88f, 1.0f);
+            default: return D2D1::ColorF(0.55f, 0.55f, 0.58f, 1.0f);
+        }
+    }
+
+    void DrawTodoistDashboard(const SharedState& state, D2D1_RECT_F rect, float scale) {
+        const TodoistSnapshot& todo = state.todoist;
+        const D2D1_COLOR_F red = D2D1::ColorF(1.0f, 0.36f, 0.32f, 1.0f);
+
+        int overdue = 0;
+        for (const TodoistTask& t : todo.tasks) {
+            if (t.overdue) ++overdue;
+        }
+        std::wstring right;
+        if (todo.loaded) {
+            right = std::to_wstring(todo.tasks.size()) + L" " + Loc(L"tasks");
+            if (overdue > 0) {
+                right += L" · " + std::to_wstring(overdue) + L" " + Loc(L"Overdue");
+            }
+        }
+        DrawIntegrationHeader(rect, scale, std::wstring(L"Todoist · ") + Loc(L"Today"), right,
+                              overdue > 0 ? &red : nullptr);
+
+        if (!todo.configured) {
+            DrawIntegrationMessage(rect, scale, Loc(L"Add your Todoist API token in the mod settings"));
+            return;
+        }
+        if (!todo.loaded) {
+            DrawIntegrationMessage(rect, scale, todo.error.empty() ? std::wstring(Loc(L"Loading..."))
+                                                                   : todo.error);
+            return;
+        }
+        if (todo.tasks.empty()) {
+            DrawIntegrationMessage(rect, scale, todo.error.empty() ? std::wstring(L"✓  ") + Loc(L"Nothing due today")
+                                                                   : todo.error);
+            return;
+        }
+
+        const float padX = FileTrayLayout::kPadX * scale;
+        const float listTop = rect.top + FileTrayLayout::kListTop * scale;
+        const float rowH = FileTrayLayout::kRowHeight * scale;
+        const float rowGap = FileTrayLayout::kRowGap * scale;
+        const int capacity = FileTrayLayout::VisibleRowCapacity((rect.bottom - rect.top) / scale);
+        const int hoveredRow = g_hoveredFileTrayRow.load(std::memory_order_relaxed);
+
+        const int taskCount = static_cast<int>(todo.tasks.size());
+        const int maxScroll = std::max(0, taskCount - capacity);
+        const int scroll = ClampInt(g_todoistScroll.load(std::memory_order_relaxed), 0, maxScroll);
+
+        for (int i = 0; i < capacity && scroll + i < taskCount; ++i) {
+            const TodoistTask& task = todo.tasks[static_cast<size_t>(scroll + i)];
+            const float top = listTop + i * (rowH + rowGap);
+            const D2D1_RECT_F row = D2D1::RectF(rect.left + padX, top, rect.right - padX - 8.0f * scale, top + rowH);
+            DrawCard(row, 9.0f * scale, hoveredRow == i);
+
+            // Checkbox circle in the task's priority colour.
+            const D2D1_POINT_2F c = D2D1::Point2F(row.left + 16.0f * scale, (row.top + row.bottom) * 0.5f);
+            const float r = 7.0f * scale;
+            ComPtr<ID2D1SolidColorBrush> ring;
+            target_->CreateSolidColorBrush(WithAlpha(TodoistPriorityColor(task.priority), 0.95f * settingsOpacity_), &ring);
+            if (ring) {
+                if (task.completing) {
+                    target_->FillEllipse(D2D1::Ellipse(c, r, r), ring.Get());
+                    ComPtr<ID2D1SolidColorBrush> tick;
+                    target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.95f), &tick);
+                    if (tick) {
+                        target_->DrawLine(D2D1::Point2F(c.x - 3.2f * scale, c.y + 0.2f * scale),
+                                          D2D1::Point2F(c.x - 0.8f * scale, c.y + 2.6f * scale), tick.Get(), 1.6f * scale);
+                        target_->DrawLine(D2D1::Point2F(c.x - 0.8f * scale, c.y + 2.6f * scale),
+                                          D2D1::Point2F(c.x + 3.6f * scale, c.y - 2.4f * scale), tick.Get(), 1.6f * scale);
+                    }
+                } else {
+                    ring->SetOpacity(task.priority > 1 ? 1.0f : 0.7f);
+                    target_->DrawEllipse(D2D1::Ellipse(c, r, r), ring.Get(), 1.5f * scale);
+                }
+            }
+
+            // Right-hand label: time for timed tasks, "Overdue" for late ones.
+            std::wstring tag = task.dueLabel;
+            if (task.overdue) {
+                tag = Loc(L"Overdue");
+            }
+            const float tagW = tag.empty() ? 0.0f : 70.0f * scale;
+
+            if (smallTextFormat_) {
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                textBrush_->SetOpacity(task.completing ? 0.40f : 0.94f);
+                const D2D1_RECT_F textRect = D2D1::RectF(row.left + 32.0f * scale, row.top,
+                                                         row.right - 10.0f * scale - tagW, row.bottom);
+                target_->DrawTextW(task.content.c_str(), static_cast<UINT32>(task.content.size()),
+                                   smallTextFormat_.Get(), textRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+
+                if (!tag.empty()) {
+                    ComPtr<ID2D1SolidColorBrush> tagBrush;
+                    target_->CreateSolidColorBrush(task.overdue ? WithAlpha(red, 0.95f * settingsOpacity_)
+                                                                : WithAlpha(material_.textSecondary, 0.80f * settingsOpacity_),
+                                                   &tagBrush);
+                    if (tagBrush) {
+                        smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                        target_->DrawTextW(tag.c_str(), static_cast<UINT32>(tag.size()), smallTextFormat_.Get(),
+                                           D2D1::RectF(row.right - 10.0f * scale - tagW, row.top,
+                                                       row.right - 10.0f * scale, row.bottom),
+                                           tagBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                    }
+                }
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+        }
+
+        // Scrollbar along the right edge of the list when it overflows. The
+        // wheel scrolls the list while the cursor is over it; over the header
+        // it still switches tabs.
+        if (maxScroll > 0) {
+            const float listBottom = rect.bottom - FileTrayLayout::kListBottomInset * scale;
+            const float trackX = rect.right - padX - 3.0f * scale;
+            const float trackTop = listTop;
+            const float trackH = listBottom - listTop;
+            const float thumbH = std::max(14.0f * scale, trackH * capacity / static_cast<float>(taskCount));
+            const float thumbTop = trackTop + (trackH - thumbH) * (static_cast<float>(scroll) / maxScroll);
+
+            ComPtr<ID2D1SolidColorBrush> trackBrush;
+            ComPtr<ID2D1SolidColorBrush> thumbBrush;
+            target_->CreateSolidColorBrush(material_.raised, &trackBrush);
+            target_->CreateSolidColorBrush(WithAlpha(material_.textSecondary, 0.70f * settingsOpacity_), &thumbBrush);
+            if (trackBrush && thumbBrush) {
+                const float w = 1.5f * scale;
+                target_->FillRoundedRectangle(D2D1::RoundedRect(
+                    D2D1::RectF(trackX - w, trackTop, trackX + w, trackTop + trackH), w, w), trackBrush.Get());
+                target_->FillRoundedRectangle(D2D1::RoundedRect(
+                    D2D1::RectF(trackX - w, thumbTop, trackX + w, thumbTop + thumbH), w, w), thumbBrush.Get());
+            }
+        }
+
+        textBrush_->SetOpacity(0.96f);
+        mutedBrush_->SetOpacity(0.75f);
+    }
+
+    void DrawMailDashboard(const SharedState& state, D2D1_RECT_F rect, float scale) {
+        const MailSnapshot& mail = state.mail;
+        std::wstring right;
+        if (mail.unread > 0) {
+            right = std::to_wstring(mail.unread) + L" " + Loc(L"new");
+        } else {
+            right = Loc(L"Click to open");
+        }
+        DrawIntegrationHeader(rect, scale, Loc(L"Mail"), right, mail.unread > 0 ? &material_.accent : nullptr);
+
+        if (mail.recent.empty()) {
+            DrawIntegrationMessage(rect, scale, Loc(L"No new mail"));
+            return;
+        }
+
+        const float padX = FileTrayLayout::kPadX * scale;
+        const float listTop = rect.top + FileTrayLayout::kListTop * scale;
+        const float rowH = FileTrayLayout::kRowHeight * scale;
+        const float rowGap = FileTrayLayout::kRowGap * scale;
+        const int capacity = FileTrayLayout::VisibleRowCapacity((rect.bottom - rect.top) / scale);
+
+        int drawn = 0;
+        for (auto it = mail.recent.rbegin(); it != mail.recent.rend() && drawn < capacity; ++it, ++drawn) {
+            const MailItem& item = *it;
+            const float top = listTop + drawn * (rowH + rowGap);
+            const D2D1_RECT_F row = D2D1::RectF(rect.left + padX, top, rect.right - padX - 8.0f * scale, top + rowH);
+            // Rows that arrived since the last click stay highlighted.
+            DrawCard(row, 9.0f * scale, drawn < mail.unread);
+
+            // Unread dot.
+            if (drawn < mail.unread) {
+                ComPtr<ID2D1SolidColorBrush> dot;
+                target_->CreateSolidColorBrush(WithAlpha(material_.accent, 0.95f * settingsOpacity_), &dot);
+                if (dot) {
+                    target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(row.left + 11.0f * scale, (row.top + row.bottom) * 0.5f),
+                                                       3.0f * scale, 3.0f * scale), dot.Get());
+                }
+            }
+
+            wchar_t timeBuf[16] = {};
+            swprintf_s(timeBuf, L"%02u:%02u", item.receivedAt.wHour, item.receivedAt.wMinute);
+            const float timeW = 40.0f * scale;
+            const float textLeft = row.left + 20.0f * scale;
+            const float textRight = row.right - 10.0f * scale - timeW;
+            const float senderW = (textRight - textLeft) * (item.subject.empty() ? 1.0f : 0.40f);
+
+            if (smallTextFormat_) {
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                const std::wstring& sender = item.sender.empty() ? item.app : item.sender;
+                textBrush_->SetOpacity(0.95f);
+                target_->DrawTextW(sender.c_str(), static_cast<UINT32>(sender.size()), smallTextFormat_.Get(),
+                                   D2D1::RectF(textLeft, row.top, textLeft + senderW - 6.0f * scale, row.bottom),
+                                   textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                if (!item.subject.empty()) {
+                    mutedBrush_->SetOpacity(0.80f);
+                    target_->DrawTextW(item.subject.c_str(), static_cast<UINT32>(item.subject.size()), smallTextFormat_.Get(),
+                                       D2D1::RectF(textLeft + senderW, row.top, textRight, row.bottom),
+                                       mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                }
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                mutedBrush_->SetOpacity(0.65f);
+                target_->DrawTextW(timeBuf, static_cast<UINT32>(wcslen(timeBuf)), smallTextFormat_.Get(),
+                                   D2D1::RectF(textRight, row.top, row.right - 10.0f * scale, row.bottom),
+                                   mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+        }
+
+        textBrush_->SetOpacity(0.96f);
+        mutedBrush_->SetOpacity(0.75f);
+    }
+
+    static std::wstring UnixToLocalHourMinute(int64_t unixSeconds) {
+        if (unixSeconds <= 0) {
+            return std::wstring();
+        }
+        ULARGE_INTEGER ticks;
+        ticks.QuadPart = static_cast<ULONGLONG>(unixSeconds) * 10000000ULL + 116444736000000000ULL;
+        FILETIME utc = {ticks.LowPart, ticks.HighPart};
+        FILETIME local = {};
+        SYSTEMTIME st = {};
+        if (!FileTimeToLocalFileTime(&utc, &local) || !FileTimeToSystemTime(&local, &st)) {
+            return std::wstring();
+        }
+        wchar_t buf[16] = {};
+        swprintf_s(buf, L"%02u:%02u", st.wHour, st.wMinute);
+        return buf;
+    }
+
+    void DrawClaudeDashboard(const SharedState& state, D2D1_RECT_F rect, float scale) {
+        const ClaudeStatusSnapshot& claude = state.claude;
+
+        // A "running" state the hook hasn't touched for 30 minutes means the
+        // session was closed without a Stop event; don't claim it is working.
+        const int64_t nowUnix = static_cast<int64_t>(time(nullptr));
+        std::wstring stateKey = claude.state;
+        if (stateKey == L"running" && claude.updated > 0 && nowUnix - claude.updated > 30 * 60) {
+            stateKey = L"idle";
+        }
+
+        D2D1_COLOR_F chip = material_.textSecondary;
+        const wchar_t* label = Loc(L"Idle");
+        if (stateKey == L"running") {
+            chip = material_.accent;
+            label = Loc(L"Running");
+        } else if (stateKey == L"waiting") {
+            chip = D2D1::ColorF(1.0f, 0.69f, 0.13f, 1.0f);
+            label = Loc(L"Waiting for you");
+        } else if (stateKey == L"done") {
+            chip = D2D1::ColorF(0.19f, 0.83f, 0.38f, 1.0f);
+            label = Loc(L"Done");
+        } else if (stateKey == L"error") {
+            chip = D2D1::ColorF(1.0f, 0.36f, 0.32f, 1.0f);
+            label = Loc(L"Error");
+        }
+
+        DrawIntegrationHeader(rect, scale, L"Claude", claude.available ? std::wstring(L"●  ") + label : std::wstring(),
+                              claude.available ? &chip : nullptr);
+
+        if (!claude.available) {
+            DrawIntegrationMessage(rect, scale, Loc(L"No Claude Code activity yet"));
+            return;
+        }
+
+        const float padX = FileTrayLayout::kPadX * scale;
+        const float left = rect.left + padX;
+        const float right = rect.right - padX - 8.0f * scale;
+        const D2D1_RECT_F card = D2D1::RectF(left, rect.top + FileTrayLayout::kListTop * scale,
+                                             right, rect.bottom - FileTrayLayout::kListBottomInset * scale);
+        DrawCard(card, 12.0f * scale);
+
+        const float inL = card.left + 12.0f * scale;
+        const float inR = card.right - 12.0f * scale;
+
+        // Title: what was asked.
+        if (textFormat_) {
+            textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            textBrush_->SetOpacity(0.96f);
+            const std::wstring title = claude.title.empty() ? std::wstring(L"Claude Code") : claude.title;
+            target_->DrawTextW(title.c_str(), static_cast<UINT32>(title.size()), textFormat_.Get(),
+                               D2D1::RectF(inL, card.top + 8.0f * scale, inR, card.top + 28.0f * scale),
+                               textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        }
+
+        // Detail: what it's doing right now.
+        if (smallTextFormat_ && !claude.detail.empty()) {
+            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            mutedBrush_->SetOpacity(0.85f);
+            target_->DrawTextW(claude.detail.c_str(), static_cast<UINT32>(claude.detail.size()), smallTextFormat_.Get(),
+                               D2D1::RectF(inL, card.top + 29.0f * scale, inR, card.top + 46.0f * scale),
+                               mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        }
+
+        // Progress from the task list, when Claude made one.
+        const float trackY = card.top + 60.0f * scale;
+        if (claude.total > 0) {
+            const float fraction = static_cast<float>(std::min(claude.done, claude.total)) / static_cast<float>(claude.total);
+            const float countW = 70.0f * scale;
+            DrawAccentTrack(D2D1::RectF(inL, trackY - 2.5f * scale, inR - countW, trackY + 2.5f * scale),
+                            stateKey == L"done" ? 1.0f : fraction, 2.5f * scale);
+            if (smallTextFormat_) {
+                const std::wstring count = std::to_wstring(std::min(claude.done, claude.total)) + L"/" +
+                                           std::to_wstring(claude.total) + L" " + Loc(L"tasks");
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                textBrush_->SetOpacity(0.90f);
+                target_->DrawTextW(count.c_str(), static_cast<UINT32>(count.size()), smallTextFormat_.Get(),
+                                   D2D1::RectF(inR - countW, trackY - 9.0f * scale, inR, trackY + 9.0f * scale),
+                                   textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+        } else if (stateKey == L"done") {
+            DrawAccentTrack(D2D1::RectF(inL, trackY - 2.5f * scale, inR, trackY + 2.5f * scale), 1.0f, 2.5f * scale);
+        }
+
+        // Footer: project and start time.
+        std::wstring footer = claude.project;
+        const std::wstring started = UnixToLocalHourMinute(claude.started);
+        if (!started.empty()) {
+            if (!footer.empty()) footer += L"  ·  ";
+            footer += std::wstring(Loc(L"Started")) + L" " + started;
+        }
+        if (!footer.empty() && smallTextFormat_) {
+            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            mutedBrush_->SetOpacity(0.62f);
+            target_->DrawTextW(footer.c_str(), static_cast<UINT32>(footer.size()), smallTextFormat_.Get(),
+                               D2D1::RectF(inL, card.bottom - 24.0f * scale, inR, card.bottom - 6.0f * scale),
+                               mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+        }
+
+        textBrush_->SetOpacity(0.96f);
+        mutedBrush_->SetOpacity(0.75f);
+    }
+
     // Load colour is *semantic*, not decorative: the accent while a component is
     // comfortable, amber under pressure, red when saturated. The previous design
     // assigned a fixed rainbow colour per metric, which carried no information
@@ -9693,6 +11100,9 @@ class Renderer {
             if (settings.weather) activeTabs.push_back(1);
             if (settings.hardwareMonitorModule) activeTabs.push_back(2);
             if (settings.fileTrayModule) activeTabs.push_back(4);
+            if (settings.todoistModule) activeTabs.push_back(5);
+            if (settings.mailModule) activeTabs.push_back(6);
+            if (settings.claudeModule) activeTabs.push_back(7);
 
             int maxTabs = static_cast<int>(activeTabs.size());
             int tabIdx = NormalizedTabIndex(settings);
@@ -9704,6 +11114,9 @@ class Renderer {
             else if (activeTabId == 1) DrawWeatherDashboard(state, rect, settings, now, scale, hasWeather, wIcon, wText);
             else if (activeTabId == 2) DrawHardwareMonitorDashboard(state, rect, settings, scale);
             else if (activeTabId == 4) DrawFileTrayDashboard(state, rect, settings, scale);
+            else if (activeTabId == 5) DrawTodoistDashboard(state, rect, scale);
+            else if (activeTabId == 6) DrawMailDashboard(state, rect, scale);
+            else if (activeTabId == 7) DrawClaudeDashboard(state, rect, scale);
 
             // Pagination dots (Vertical on the right edge)
             if (maxTabs > 1) {
@@ -9983,6 +11396,9 @@ class Renderer {
             if (settings.weather) activeTabs.push_back(2);
             if (settings.hardwareMonitorModule) activeTabs.push_back(3);
             if (settings.fileTrayModule) activeTabs.push_back(4);
+            if (settings.todoistModule) activeTabs.push_back(5);
+            if (settings.mailModule) activeTabs.push_back(6);
+            if (settings.claudeModule) activeTabs.push_back(7);
 
             // Same settings object as the list above, so the index can't be
             // normalised against a tab set that no longer matches.
@@ -10170,6 +11586,12 @@ class Renderer {
                 DrawHardwareMonitorDashboard(state, rect, settings, 1.0f);
             } else if (activeTabId == 4) {
                 DrawFileTrayDashboard(state, rect, settings, 1.0f);
+            } else if (activeTabId == 5) {
+                DrawTodoistDashboard(state, rect, 1.0f);
+            } else if (activeTabId == 6) {
+                DrawMailDashboard(state, rect, 1.0f);
+            } else if (activeTabId == 7) {
+                DrawClaudeDashboard(state, rect, 1.0f);
             }
 
             // Pagination dots (Vertical on the right edge)
@@ -13555,8 +14977,13 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 }
 
                 // A File Tray row under the cursor is clickable (opens the file).
-                if (g_settings.fileTrayModule && currentTab == FileTrayTabIndex(g_settings) &&
+                if (((g_settings.fileTrayModule && currentTab == FileTrayTabIndex(g_settings)) ||
+                     (g_settings.todoistModule && currentTab == TodoistTabIndex(g_settings))) &&
                     g_hoveredFileTrayRow.load(std::memory_order_relaxed) >= 0) {
+                    SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                    return TRUE;
+                }
+                if (g_settings.mailModule && currentTab == MailTabIndex(g_settings)) {
                     SetCursor(LoadCursorW(nullptr, IDC_HAND));
                     return TRUE;
                 }
@@ -13664,6 +15091,17 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 hoveredRow = FileTrayRowAtContentPoint(MediaContentFromClient(xPos, yPos),
                                                        static_cast<int>(trayCount));
             }
+            if (g_settings.todoistModule && currentTab == TodoistTabIndex(g_settings)) {
+                size_t taskCount = 0;
+                {
+                    std::lock_guard lock(g_stateMutex);
+                    taskCount = g_state.todoist.tasks.size();
+                }
+                const MediaContentPoint hp = MediaContentFromClient(xPos, yPos);
+                const int count = static_cast<int>(taskCount);
+                const int scroll = hp.valid ? ClampInt(g_todoistScroll.load(), 0, TodoistMaxScroll(count, hp.height)) : 0;
+                hoveredRow = FileTrayRowAtContentPoint(hp, count - scroll);
+            }
             if (g_hoveredFileTrayRow.exchange(hoveredRow) != hoveredRow) {
                 g_layoutDirty = true;
             }
@@ -13767,6 +15205,67 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
                 const MediaContentPoint cp = MediaContentFromClient(xPos, yPos);
 
+                // Todoist: the circle completes the task, the rest of the row
+                // opens it in Todoist, and empty space opens today's view.
+                if (g_settings.todoistModule && currentTab == TodoistTabIndex(g_settings)) {
+                    std::string taskId;
+                    bool alreadyCompleting = false;
+                    int row = -1;
+                    {
+                        std::lock_guard lock(g_stateMutex);
+                        const int total = static_cast<int>(g_state.todoist.tasks.size());
+                        row = FileTrayRowAtContentPoint(
+                            cp, total - ClampInt(g_todoistScroll.load(), 0, TodoistMaxScroll(total, cp.height)));
+                        if (row >= 0) {
+                            const int count = static_cast<int>(g_state.todoist.tasks.size());
+                            const int index = row + ClampInt(g_todoistScroll.load(), 0,
+                                                             TodoistMaxScroll(count, cp.height));
+                            if (index < count) {
+                                taskId = g_state.todoist.tasks[static_cast<size_t>(index)].id;
+                                alreadyCompleting = g_state.todoist.tasks[static_cast<size_t>(index)].completing;
+                            } else {
+                                row = -1;
+                            }
+                        }
+                    }
+                    std::wstring url = L"https://app.todoist.com/app/today";
+                    if (row >= 0) {
+                        // Circle hit zone: the first 32px of the row.
+                        if (cp.x <= FileTrayLayout::kPadX + 32.0f) {
+                            if (!alreadyCompleting) {
+                                CompleteTodoistTask(taskId);
+                            }
+                            return 0;
+                        }
+                        url = L"https://app.todoist.com/app/task/" + Utf8ToWide(taskId);
+                    }
+                    ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                    return 0;
+                }
+
+                // Mail: clicking marks everything as seen and opens the mail app.
+                if (g_settings.mailModule && currentTab == MailTabIndex(g_settings)) {
+                    {
+                        std::lock_guard lock(g_stateMutex);
+                        g_state.mail.unread = 0;
+                    }
+                    g_layoutDirty = true;
+                    std::wstring target;
+                    {
+                        std::lock_guard lock(g_settingsMutex);
+                        target = g_settings.mailOpenTarget;
+                    }
+                    if (!target.empty()) {
+                        ShellExecuteW(nullptr, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                    }
+                    return 0;
+                }
+
+                // Claude: nothing to open; just don't fall through to the media app.
+                if (g_settings.claudeModule && currentTab == ClaudeTabIndex(g_settings)) {
+                    return 0;
+                }
+
                 // File Tray: clicking a row opens that file with its default app.
                 if (g_settings.fileTrayModule && currentTab == FileTrayTabIndex(g_settings)) {
                     std::wstring toOpen;
@@ -13839,6 +15338,29 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             return 0;
 
         case WM_MOUSEWHEEL: {
+            // Over an overflowing Todoist list, the wheel scrolls the list
+            // instead of switching tabs. No debounce here: one notch, one row.
+            if (g_settings.todoistModule && NormalizedTabIndex(g_settings) == TodoistTabIndex(g_settings)) {
+                POINT pt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ScreenToClient(hwnd, &pt);
+                const MediaContentPoint cp = MediaContentFromClient(pt.x, pt.y);
+                int count = 0;
+                {
+                    std::lock_guard lock(g_stateMutex);
+                    count = static_cast<int>(g_state.todoist.tasks.size());
+                }
+                const int maxScroll = cp.valid ? TodoistMaxScroll(count, cp.height) : 0;
+                if (maxScroll > 0 && cp.y >= FileTrayLayout::kListTop - 4.0f) {
+                    const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+                    const int current = ClampInt(g_todoistScroll.load(), 0, maxScroll);
+                    const int next = ClampInt(current + (delta > 0 ? -1 : 1), 0, maxScroll);
+                    g_todoistScroll = next;
+                    g_hoveredFileTrayRow = FileTrayRowAtContentPoint(cp, count - next);
+                    g_layoutDirty = true;
+                    return 0;
+                }
+            }
+
             static ULONGLONG lastScrollTime = 0;
             ULONGLONG now = GetTickCount64();
             if (now - lastScrollTime < 150) return 0; // 150ms debounce
@@ -14927,6 +16449,9 @@ bool StartThreads() {
     g_notificationThread = CreateThread(nullptr, 0, NotificationThreadProc, nullptr, 0, nullptr);
 #endif
     g_bluetoothThread = CreateThread(nullptr, 0, BluetoothThreadProc, nullptr, 0, nullptr);
+    g_todoistWakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    g_todoistThread = CreateThread(nullptr, 0, TodoistThreadProc, nullptr, 0, nullptr);
+    g_claudeThread = CreateThread(nullptr, 0, ClaudeStatusThreadProc, nullptr, 0, nullptr);
     SubscribeDndNotification();
 
     return true;
@@ -14944,7 +16469,7 @@ void StopThreads() {
         SetEvent(g_stopEvent);
     }
 
-    HANDLE handles[] = {g_renderThread, g_mediaThread, g_audioThread, g_weatherThread, g_notificationThread, g_keyboardThread, g_mouseThread, g_bluetoothThread};
+    HANDLE handles[] = {g_renderThread, g_mediaThread, g_audioThread, g_weatherThread, g_notificationThread, g_keyboardThread, g_mouseThread, g_bluetoothThread, g_todoistThread, g_claudeThread};
     for (HANDLE handle : handles) {
         if (handle) {
             WaitForSingleObject(handle, 3000);
@@ -14962,6 +16487,12 @@ void StopThreads() {
     g_mouseThread = nullptr;
     g_mouseThreadId = 0;
     g_bluetoothThread = nullptr;
+    g_todoistThread = nullptr;
+    g_claudeThread = nullptr;
+    if (g_todoistWakeEvent) {
+        CloseHandle(g_todoistWakeEvent);
+        g_todoistWakeEvent = nullptr;
+    }
 
     if (g_stopEvent) {
         CloseHandle(g_stopEvent);

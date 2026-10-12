@@ -52,6 +52,9 @@ A smooth, interactive overlay for your desktop, inspired by Apple's Dynamic Isla
 - 🎵 **Smooth Media Controls:** Fully overhauled media controls directly from the island. No more lag or bugs—just fluid, instant playback control alongside live album art.
 - 🖼️ **Image Clipboard Thumbnails:** Instantly preview a thumbnail of any image you copy to your clipboard. It's highly optimized and adds zero load to your system.
 - 🔕 **Do Not Disturb Integration:** Respects Windows notification panel Do Not Disturb mode and displays a status alert when toggled.
+- ✅ **Todoist Tab:** Today's tasks (or any Todoist filter) right in the island. Click the circle to complete a task, click the text to open it, scroll the wheel over the list to see more.
+- ✉️ **Mail Tab:** Counts new mail from the apps you pick (Outlook, Mail, Gmail installed as an app…) using Windows notifications — no account login — and lists the latest senders and subjects.
+- 🤖 **Claude Tab:** Live state and task progress of your current Claude Code session, plus a pill when Claude finishes or needs you. Set up with the one-line installer in [`claude-hook/`](claude-hook/).
 
 **Core Features:**
 
@@ -116,6 +119,7 @@ Found a bug? Have a cool feature idea? We want to hear from you! Please drop an 
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color extraction, reorganized settings into logical categories, and fixed various UI, media, and theme edge cases.
 - **[David Ravelo (DavidRaveloU) @GitHub](https://github.com/DavidRaveloU)**: Added selectable audio spectrum styles with a live frequency analyzer, new progress bar styles, optional track-change animations for the title, cover flip, playback controls and pill cover spin, an optional clock in the collapsed media pill, and a brightness slider flyout.
 - **[Retr0dev-jpg @GitHub](https://github.com/Retr0dev-jpg)**: Event-driven volume flyout with animated bar and default device switching, plus a calendar that follows the Windows locale for weekday initials and first day of the week (with a Monday/Sunday override).
+- **[Aksel7 @GitHub](https://github.com/Aksel7)**: Added Todoist, Mail and Claude dashboard tabs: today's Todoist tasks with click-to-complete and wheel scrolling, a mail counter fed by Windows notifications, and live Claude Code task progress through a hook script.
 
 ---
 
