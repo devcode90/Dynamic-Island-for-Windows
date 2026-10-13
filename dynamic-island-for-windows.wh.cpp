@@ -2619,19 +2619,19 @@ void EnableBlurBehind(HWND hwnd) {
 // Instead we capture the desktop behind the window, blur it and use it as the
 // pill's fill brush, which clips it to the island shape exactly.
 //
-// DWM composites the island into the screen, so a plain BitBlt would capture
-// the island itself; WDA_EXCLUDEFROMCAPTURE removes it from capture so the
-// desktop behind is read. The capture is refreshed while the island is visible.
+// DWM composites the island into the screen, so the capture also contains a
+// trace of the island itself. The island is deliberately NOT excluded from
+// screen capture, so that screenshots, recordings and screen sharing show it;
+// the heavy blur makes the self-capture practically invisible. The capture is
+// refreshed while the island is visible.
 namespace Backdrop {
 
-// WDA_EXCLUDEFROMCAPTURE (Windows 10 2004+). On older builds the call fails and
-// the backdrop captures the island over itself.
-constexpr DWORD kExcludeFromCapture = 0x00000011;
-
-// How often the backdrop is re-captured while the island is visible. The render
-// loop is woken at this cadence too, since a static island is never otherwise
-// marked dirty.
-constexpr double kRefreshSeconds = 0.1;
+// Minimum time between backdrop re-captures while the island is visible. The
+// render loop is woken at this cadence too, since a static island is never
+// otherwise marked dirty. 12 ms lets the backdrop follow the desktop at roughly
+// 60-80 updates per second (the effective rate is bounded by the render loop's
+// own pacing), which reads as real time; it used to be 100 ms (10 Hz).
+constexpr double kRefreshSeconds = 0.012;
 
 // Odd box sizes whose 3-pass composition approximates a Gaussian of stddev sigma.
 void BoxesForGauss(double sigma, int n, int* sizes) {
@@ -2734,7 +2734,29 @@ void BuildBackdrop(const uint32_t* src, int w, int h, int factor, double sigmaPx
 }
 
 // Captures the screen region (x, y, w, h) into `out`, downscaled and blurred.
-// Relies on the caller having excluded the island window from capture.
+// GDI objects reused between captures. Creating a DC and a DIB section 60+ times
+// a second is a large part of the cost of a capture, so they are kept and only
+// rebuilt when the captured size changes. Used from the render thread only.
+struct CaptureCache {
+    HDC mem = nullptr;
+    HBITMAP dib = nullptr;
+    HGDIOBJ oldBmp = nullptr;
+    void* bits = nullptr;
+    int w = 0;
+    int h = 0;
+};
+CaptureCache g_captureCache;
+
+void ReleaseCaptureCache() {
+    CaptureCache& c = g_captureCache;
+    if (c.mem && c.oldBmp) {
+        SelectObject(c.mem, c.oldBmp);
+    }
+    if (c.dib) DeleteObject(c.dib);
+    if (c.mem) DeleteDC(c.mem);
+    c = CaptureCache{};
+}
+
 bool Capture(int x, int y, int w, int h, double sigmaPx, int satPct,
              std::vector<uint32_t>& out, int& ow, int& oh) {
     if (w <= 0 || h <= 0) {
@@ -2744,30 +2766,46 @@ bool Capture(int x, int y, int w, int h, double sigmaPx, int satPct,
     if (!screen) {
         return false;
     }
-    HDC mem = CreateCompatibleDC(screen);
-    BITMAPINFO bi = {};
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = w;
-    bi.bmiHeader.biHeight = -h;
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    void* bits = nullptr;
-    HBITMAP dib = mem ? CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0) : nullptr;
+    CaptureCache& c = g_captureCache;
+    if (!c.mem) {
+        c.mem = CreateCompatibleDC(screen);
+    }
+    if (c.mem && (!c.dib || c.w != w || c.h != h)) {
+        if (c.dib) {
+            SelectObject(c.mem, c.oldBmp);
+            DeleteObject(c.dib);
+            c.dib = nullptr;
+            c.oldBmp = nullptr;
+            c.bits = nullptr;
+        }
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth = w;
+        bi.bmiHeader.biHeight = -h;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        c.dib = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &c.bits, nullptr, 0);
+        if (c.dib && c.bits) {
+            c.oldBmp = SelectObject(c.mem, c.dib);
+            c.w = w;
+            c.h = h;
+        } else {
+            if (c.dib) DeleteObject(c.dib);
+            c.dib = nullptr;
+            c.bits = nullptr;
+        }
+    }
     bool ok = false;
-    if (mem && dib && bits) {
-        HGDIOBJ old = SelectObject(mem, dib);
-        ok = BitBlt(mem, 0, 0, w, h, screen, x, y, SRCCOPY) != 0;
-        SelectObject(mem, old);
+    if (c.mem && c.dib && c.bits) {
+        ok = BitBlt(c.mem, 0, 0, w, h, screen, x, y, SRCCOPY) != 0;
         if (ok) {
             GdiFlush();
             const int factor = std::clamp(static_cast<int>(sigmaPx / 3.0), 1, 4);
-            BuildBackdrop(reinterpret_cast<const uint32_t*>(bits), w, h, factor, sigmaPx, satPct,
+            BuildBackdrop(reinterpret_cast<const uint32_t*>(c.bits), w, h, factor, sigmaPx, satPct,
                           out, ow, oh);
         }
     }
-    if (dib) DeleteObject(dib);
-    if (mem) DeleteDC(mem);
     ReleaseDC(nullptr, screen);
     return ok;
 }
@@ -2776,20 +2814,57 @@ bool Capture(int x, int y, int w, int h, double sigmaPx, int satPct,
 // refreshes its cached capture promptly.
 std::atomic<bool> g_recaptureRequested{true};
 
+// Screenshot suspension: while non-zero (GetTickCount64 deadline) the island is
+// NOT excluded from capture and the backdrop is frozen, so Snipping Tool /
+// Win+Shift+S / PrtScn see the island like any other window.
+
+// True while the foreground window belongs to the Snipping Tool / screen clip UI.
+bool ScreenClipUiActive() {
+    HWND fg = GetForegroundWindow();
+    if (!fg) return false;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    if (!pid) return false;
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return false;
+    wchar_t path[MAX_PATH] = {};
+    DWORD n = MAX_PATH;
+    bool hit = false;
+    if (QueryFullProcessImageNameW(h, 0, path, &n)) {
+        const wchar_t* name = wcsrchr(path, L'\\');
+        name = name ? name + 1 : path;
+        hit = _wcsicmp(name, L"SnippingTool.exe") == 0 ||
+              _wcsicmp(name, L"ScreenClippingHost.exe") == 0;
+    }
+    CloseHandle(h);
+    return hit;
+}
+
+// True while the Snipping Tool overlay is the foreground window. While true the island must
+// yield: no raising itself to HWND_TOPMOST and no SWP_SHOWWINDOW, otherwise a
+// hover-expand or the topmost watchdog drags the live island over the frozen
+// overlay. Cached for 100 ms because PositionOverlayWindow runs every animation
+// frame.
+bool ClipUiActiveCached() {
+    static std::atomic<ULONGLONG> lastCheck{0};
+    static std::atomic<bool> last{false};
+    const ULONGLONG now = GetTickCount64();
+    if (now - lastCheck.load() >= 100) {
+        last.store(ScreenClipUiActive());
+        lastCheck.store(now);
+    }
+    return last.load();
+}
+
 }  // namespace Backdrop
 
-// Excludes the island from screen capture while a backdrop is active and asks
-// for a fresh capture when the material setting changes.
+// The island is never excluded from screen capture, so screenshots, recordings
+// and screen sharing always show it. Clears any exclusion left on the window and
+// asks for a fresh backdrop capture when the material setting changes.
 void ApplyBackdropMaterial(HWND hwnd) {
     Backdrop::g_recaptureRequested.store(true);
     if (hwnd) {
-        const bool enabled = g_settings.backdropMaterial != BackdropMaterial::None;
-        const DWORD affinity = enabled ? Backdrop::kExcludeFromCapture : 0;  // 0 = WDA_NONE
-        if (!SetWindowDisplayAffinity(hwnd, affinity) && enabled) {
-            Wh_Log(L"SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) failed (error %lu); "
-                   L"the backdrop may capture the island over itself on this system.",
-                   GetLastError());
-        }
+        SetWindowDisplayAffinity(hwnd, 0);  // WDA_NONE
     }
 }
 
@@ -2933,8 +3008,12 @@ void PositionOverlayWindow(HWND hwnd, int width, int height) {
 
     x += g_settings.offsetX;
     y += ResolveOffsetY(static_cast<float>(height));
-    SetWindowPos(hwnd, zOrder, x, y, width, height,
-                 SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+    // Yield to the screen-clip overlay: keep the island where it is in the
+    // z-order (below the overlay) instead of raising/showing it.
+    const bool yieldToClipUi = Backdrop::ClipUiActiveCached();
+    SetWindowPos(hwnd, yieldToClipUi ? nullptr : zOrder, x, y, width, height,
+                 SWP_NOACTIVATE | SWP_NOOWNERZORDER |
+                     (yieldToClipUi ? SWP_NOZORDER : SWP_SHOWWINDOW));
 }
 
 // Windows' own shell surfaces are all WS_EX_TOPMOST, and they are *supposed* to
@@ -2981,6 +3060,9 @@ bool IsShellOwnedWindow(HWND hwnd) {
 void EnsureTopmost(HWND hwnd) {
     if (!g_settings.alwaysOnTop || !IsWindow(hwnd) || !IsWindowVisible(hwnd)) {
         return;
+    }
+    if (Backdrop::ClipUiActiveCached()) {
+        return;  // never fight the Snipping Tool overlay for the top of the z-order
     }
 
     // If we are not topmost at all, PositionOverlayWindow owns fixing that;
@@ -7298,12 +7380,19 @@ class Renderer {
             std::vector<uint32_t> px;
             if (Backdrop::Capture(winX, winY, winW, winH, sigmaPx, satPct, px, ow, oh) &&
                 ow > 0 && oh > 0) {
+                // Only rebuild the D2D bitmap/brush when the blurred result actually
+                // changed. At 60+ captures a second most of them are identical.
+                const bool changed = ow != backdropW_ || oh != backdropH_ ||
+                                     settings.backdropMaterial != backdropMaterial_ ||
+                                     px != backdropPx_;
                 backdropPx_ = std::move(px);
                 backdropW_ = ow;
                 backdropH_ = oh;
                 backdropMaterial_ = settings.backdropMaterial;
                 backdropCapturedAt_ = now;
-                backdropDirty_ = true;
+                if (changed) {
+                    backdropDirty_ = true;
+                }
             }
         }
 
@@ -7343,6 +7432,49 @@ class Renderer {
                 static_cast<float>(winH) / static_cast<float>(backdropH_));
             backdropBrush_->SetTransform(&m);
         }
+    }
+
+    // Called by the render loop between frames while the island is otherwise idle.
+    // Takes a (throttled) backdrop capture and reports whether the blurred result
+    // actually changed, i.e. whether a repaint is needed. A static island over a
+    // still desktop therefore stays idle instead of repainting at a fixed rate.
+    // The result is stored, so the following Render() reuses it without capturing
+    // again. Render thread only.
+    bool PollBackdropChanged(BackdropMaterial material, double now) {
+        if (material == BackdropMaterial::None || !target_ || !hwnd_) {
+            return false;
+        }
+        const bool forced = Backdrop::g_recaptureRequested.exchange(false);
+        if (!forced && now - backdropCapturedAt_ < Backdrop::kRefreshSeconds) {
+            return false;
+        }
+        RECT wr = {};
+        if (!GetWindowRect(hwnd_, &wr)) {
+            return false;
+        }
+        const int w = wr.right - wr.left;
+        const int h = wr.bottom - wr.top;
+        if (w <= 0 || h <= 0) {
+            return false;
+        }
+        const int satPct = (material == BackdropMaterial::Acrylic) ? 125 : 100;
+        int ow = 0, oh = 0;
+        std::vector<uint32_t> px;
+        if (!Backdrop::Capture(wr.left, wr.top, w, h, 30.0, satPct, px, ow, oh) || ow <= 0 ||
+            oh <= 0) {
+            return forced;
+        }
+        backdropCapturedAt_ = now;
+        const bool changed = forced || ow != backdropW_ || oh != backdropH_ ||
+                             material != backdropMaterial_ || px != backdropPx_;
+        if (changed) {
+            backdropPx_ = std::move(px);
+            backdropW_ = ow;
+            backdropH_ = oh;
+            backdropMaterial_ = material;
+            backdropDirty_ = true;
+        }
+        return changed;
     }
 
     bool Render(const SharedState& state, const Settings& settings, const Activity& primary,
@@ -14901,14 +15033,15 @@ DWORD WINAPI RenderThreadProc(void*) {
             prevCtrlHoverCT = ctrlHoverCT;
         }
 
-        // Software backdrop: wake the loop so the blur keeps tracking the
-        // desktop, since a static island is never otherwise marked dirty.
+        // Software backdrop: poll the desktop behind the island so the blur keeps
+        // tracking it, since a static island is never otherwise marked dirty.
         // Skipped while collapsed/hidden so parking stays zero-CPU.
         if (g_settings.backdropMaterial != BackdropMaterial::None && !isHidden &&
             widthSpring.value > 8.0f && heightSpring.value > 8.0f) {
-            static double lastBackdropRepaint = -1.0;
-            if (now - lastBackdropRepaint >= Backdrop::kRefreshSeconds) {
-                lastBackdropRepaint = now;
+            // Only repaint when the blurred backdrop really changed. While
+            // something else already forces a frame (animation, hover), Render()
+            // refreshes the backdrop itself, so no extra capture is needed.
+            if (!needsRender && renderer.PollBackdropChanged(g_settings.backdropMaterial, now)) {
                 needsRender = true;
             }
         }
@@ -15030,6 +15163,7 @@ DWORD WINAPI RenderThreadProc(void*) {
     setHighResTimer(false);
 
     UnbindVolumeEndpoint();
+    Backdrop::ReleaseCaptureCache();
     renderer.Shutdown();
     DestroyWindow(hwnd);
     g_hwnd = nullptr;
