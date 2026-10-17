@@ -166,7 +166,7 @@ We love community contributions! To ensure high-quality updates, please follow t
       - bar: Bar (thick bar with a line thumb)
   - SpectrumStyle: bars
     $name: Audio spectrum style
-    $description: Look of the live audio visualizer next to the album art (collapsed pill and expanded player). Pulse Orb, Plasma Thread and Peak Matrix use a real frequency analysis of the system audio, and each plays its own animation when the track changes.
+    $description: Look of the live audio visualizer next to the album art (collapsed pill and expanded player). Every style uses a real frequency analysis of the system audio, with bars/spokes/columns mapped across bass, mids and highs. Each style plays its own animation when the track changes.
     $options:
       - bars: Classic Bars
       - led: Peak Matrix
@@ -196,7 +196,7 @@ We love community contributions! To ensure high-quality updates, please follow t
     $description: Expand the island automatically when hovered. If disabled, click to expand.
   - AutoHideIdleSeconds: '0'
     $name: Auto-hide island (all states)
-    $description: Hide the island (including idle, media, and other states) after this many seconds of inactivity. 0 to disable.
+    $description: Parks the whole island window after this many idle seconds (no input). Does not change the active module — only hides the UI. 0 disables.
     $options:
       - '-1': Hide instantly
       - '0': Never hide (default)
@@ -204,6 +204,16 @@ We love community contributions! To ensure high-quality updates, please follow t
       - '10': Hide after 10 seconds
       - '30': Hide after 30 seconds
       - '60': Hide after 60 seconds
+  - MediaIdleClearSeconds: '0'
+    $name: Clear media when paused
+    $description: After a session stays paused/stopped this long, drop it and show the idle clock instead of a frozen paused source. The island stays on screen (use Auto-hide above to park the UI). 0 keeps the paused source (default).
+    $options:
+      - '0': Keep paused source (default)
+      - '15': Clear after 15 seconds
+      - '30': Clear after 30 seconds
+      - '60': Clear after 1 minute
+      - '120': Clear after 2 minutes
+      - '300': Clear after 5 minutes
   - AutoHideFullscreen: true
     $name: Hide on full screen
     $description: Automatically hide the island when playing a video or app in full screen mode.
@@ -364,6 +374,12 @@ We love community contributions! To ensure high-quality updates, please follow t
   - MediaPillClock: false
     $name: Show clock in the collapsed media pill
     $description: While media is playing, the collapsed pill also shows the current time on the left, separated from the album cover by a thin divider. Hovering still opens the normal player. Uses the same 12h/24h and seconds options as the clock below. Off by default.
+  - MediaPillMeta: false
+    $name: Show title and artist in the collapsed media pill
+    $description: Widens the collapsed media pill to show title and artist between the cover and the EQ. Does not change the expanded player (that already shows them). If collapsed lyrics are on (right-click), lyrics use that slot instead. Off by default.
+  - MediaPillProgress: false
+    $name: Bottom progress strip
+    $description: Thin flush strip along the bottom of pills — song position on the collapsed media pill, and time-remaining countdown on temporary status cards (Clipboard, Notifications, Device, Bluetooth, Do Not Disturb). Not the expanded player's scrubber (that is "Progress bar style" above). Off by default.
   - Volume: true
     $name: Volume slider flyout
     $description: Shows a volume slider banner on the island when adjusting system volume. Disable if you prefer the default Windows volume flyout.
@@ -391,9 +407,6 @@ We love community contributions! To ensure high-quality updates, please follow t
   - Clipboard: true
     $name: Clipboard module
     $description: Shows a quick preview of the text or images you just copied.
-  - StatusCountdownProgress: false
-    $name: Status countdown progress bar
-    $description: Shows a subtle countdown progress bar at the bottom of temporary status alert cards (such as Clipboard, Notifications, and Device alerts). Disabled by default.
   - DoNotDisturbIndicator: true
     $name: Do Not Disturb status alert
     $description: Shows a status alert card when Do Not Disturb is toggled in the Windows notification panel.
@@ -1138,7 +1151,6 @@ struct Settings {
     bool media = true;
     bool mediaAutoExpand = false;
     bool clipboard = true;
-    bool statusCountdownProgress = false;
     bool battery = true;
     bool progress = true;
     bool volume = true;
@@ -1191,6 +1203,9 @@ struct Settings {
     int lyricsCacheMaxMB = 25;     // Modules.LyricsCacheMaxMB; 0 = disk cache off
     bool mediaTabLyrics = false;   // lyrics side panel in the expanded media tab
     int autoHideIdleSeconds = 0;
+    // Behavior.MediaIdleClearSeconds — independent of autoHideIdleSeconds:
+    // clears a paused SMTC session back to Idle, without parking the window.
+    int mediaIdleClearSeconds = 0;
     bool autoHideFullscreen = true;
     bool borderMergedMode = false;
     bool unhideOnHover = true;
@@ -1231,6 +1246,8 @@ struct Settings {
     bool clockFollowSystem = true;
     std::wstring dateFormat;        // empty = locale default
     bool mediaPillClock = false;    // show the clock inside the collapsed media pill
+    bool mediaPillMeta = false;     // title + artist on the collapsed media pill
+    bool mediaPillProgress = false; // flush bottom strip (media position + status countdown)
     bool dateFirst = false;
     int firstDayOfWeek = -1;        // 0 = Sunday .. 6 = Saturday, -1 = follow Windows
 
@@ -1710,7 +1727,8 @@ std::atomic<bool> g_scrubbing = false;           // true while press-dragging th
 std::atomic<float> g_scrubDragFraction = 0.0f;   // live 0..1 drag position while g_scrubbing is true
 std::atomic<double> g_lastLiveSeekTime = 0.0;    // throttle gate for live seeks while dragging
 std::atomic<bool> g_audioCaptureNeeded = false;  // gates the WASAPI loopback thread
-std::atomic<bool> g_spectrumBandsNeeded = false; // only Pulse Orb / Plasma Thread read the frequency bands
+std::atomic<bool> g_spectrumBandsNeeded = false; // all spectrum styles read the frequency bands
+std::atomic<int> g_mediaIdleClearSeconds{0};     // Behavior.MediaIdleClearSeconds; 0 = keep paused source
 std::atomic<bool> g_manuallyHidden = false;      // user-toggled hide, via menu or hotkey
 UINT g_registeredHotkeyModifiers = 0;            // modifiers currently registered with the OS
 UINT g_registeredHotkeyVk = 0;                   // vk currently registered with the OS
@@ -1750,6 +1768,74 @@ double NowSeconds() {
     using clock = std::chrono::steady_clock;
     static const auto start = clock::now();
     return std::chrono::duration<double>(clock::now() - start).count();
+}
+
+// Shared by hotkey unhide, settings reload, compile startup, and media-idle
+// clear. Extends the grace window that AutoHideIdleSeconds / fullscreen hide
+// respect — it does not change those settings themselves.
+void BeginIslandVisibleGrace(double seconds = 6.0) {
+    if (seconds < 0.5) {
+        seconds = 0.5;
+    }
+    g_manuallyHidden.store(false, std::memory_order_relaxed);
+    g_autoHiddenParked.store(false, std::memory_order_relaxed);
+    g_hotkeyUnhideUntil.store(NowSeconds() + seconds, std::memory_order_relaxed);
+    g_layoutDirty = true;
+}
+
+// SMTC callbacks can fire many times a second (timeline ticks). Coalesce wakes
+// so MediaThreadProc does not stampede on TryGetMediaPropertiesAsync.
+void WakeMediaThreadThrottled() {
+    static std::atomic<ULONGLONG> lastWakeMs{0};
+    const ULONGLONG nowMs = GetTickCount64();
+    const ULONGLONG prev = lastWakeMs.load(std::memory_order_relaxed);
+    if (nowMs - prev < 50 && nowMs >= prev) {
+        return;
+    }
+    lastWakeMs.store(nowMs, std::memory_order_relaxed);
+    if (g_mediaRefreshEvent) {
+        SetEvent(g_mediaRefreshEvent);
+    }
+}
+
+// Behavior.MediaIdleClearSeconds — orthogonal to AutoHideIdleSeconds.
+// Auto-hide parks the window; this only stops advertising a paused session so
+// ChooseActivities falls back to Idle while the island stays on screen.
+void ApplyMediaIdleClearPolicy(MediaSnapshot& next) {
+    static double lastPlayingAt = 0.0;
+    static bool announcedClear = false;
+
+    const int clearSec = g_mediaIdleClearSeconds.load(std::memory_order_relaxed);
+    const double now = NowSeconds();
+
+    if (next.playing) {
+        lastPlayingAt = now;
+        announcedClear = false;
+        return;
+    }
+    if (!next.available) {
+        lastPlayingAt = 0.0;
+        announcedClear = false;
+        return;
+    }
+    if (clearSec <= 0) {
+        announcedClear = false;
+        return;
+    }
+    if (lastPlayingAt <= 0.0) {
+        lastPlayingAt = now;
+    }
+    if (now - lastPlayingAt < static_cast<double>(clearSec)) {
+        return;
+    }
+
+    next.available = false;
+    if (!announcedClear) {
+        announcedClear = true;
+        // User may have been idle for longer than AutoHideIdleSeconds while the
+        // paused pill was up — without grace, Media→Idle would park immediately.
+        BeginIslandVisibleGrace(6.0);
+    }
 }
 
 float Clamp(float v, float lo, float hi) {
@@ -2475,6 +2561,24 @@ std::wstring GetStringSettingWithFallback(PCWSTR primary, PCWSTR fallback, PCWST
     return L"";
 }
 
+// Dropdown string settings that store numeric seconds (AutoHideIdleSeconds,
+// MediaIdleClearSeconds, …). Only values in `allowed` are accepted so a bad
+// migration or empty key cannot invent a timeout.
+int ParseAllowedIntSetting(const std::wstring& raw,
+                           std::initializer_list<int> allowed,
+                           int fallback = 0) {
+    if (raw.empty()) {
+        return fallback;
+    }
+    const int parsed = _wtoi(raw.c_str());
+    for (int value : allowed) {
+        if (value == parsed) {
+            return parsed;
+        }
+    }
+    return fallback;
+}
+
 
 
 D2D1_COLOR_F ColorFromHex(std::wstring text, D2D1_COLOR_F fallback) {
@@ -2736,7 +2840,7 @@ D2D1_COLOR_F GetSystemAccentColor() {
 
 void ApplyHideShowHotkey();                 // forward declaration; defined after LoadSettings()
 void ApplyBackdropMaterial(HWND);           // forward declaration; defined after LoadSettings()
-void ApplyBackdropRegion(HWND, int, int);   // forward declaration; defined below PositionOverlayWindow
+void ApplyBackdropRegion(HWND, int, int);   // forward declaration; defined below ApplyOverlayZOrder
 void NotifyKeyboardThreadSettingChanged();  // forward declaration; defined with the keyboard hook
 
 void ApplyLookupHotkey();  // forward declaration; defined with Quick Lookup
@@ -2838,7 +2942,9 @@ void LoadSettings() {
         next.spectrumStyle = SpectrumStyle::Bars;  // default
     }
     g_spectrumBandsNeeded.store(next.spectrumStyle == SpectrumStyle::Orb ||
-                                    next.spectrumStyle == SpectrumStyle::Plasma,
+                                    next.spectrumStyle == SpectrumStyle::Plasma ||
+                                    next.spectrumStyle == SpectrumStyle::Bars ||
+                                    next.spectrumStyle == SpectrumStyle::Led,
                                 std::memory_order_relaxed);
     next.expandedMediaAnim = Wh_GetIntSetting(L"Animations.ExpandedMediaTransitions") != 0;
     next.pillCoverAnim = Wh_GetIntSetting(L"Animations.PillCoverSpin") != 0;
@@ -2872,7 +2978,6 @@ void LoadSettings() {
         g_brightnessInitialized = false;
     }
     next.clipboard = Wh_GetIntSetting(L"Modules.Clipboard") != 0;
-    next.statusCountdownProgress = Wh_GetIntSetting(L"Modules.StatusCountdownProgress") != 0;
 
     next.battery = Wh_GetIntSetting(L"Modules.Battery") != 0;
     next.progress = Wh_GetIntSetting(L"Modules.Progress") != 0;
@@ -2980,6 +3085,8 @@ void LoadSettings() {
         next.firstDayOfWeek = -1;
     }
     next.mediaPillClock = Wh_GetIntSetting(L"Modules.MediaPillClock") != 0;
+    next.mediaPillMeta = Wh_GetIntSetting(L"Modules.MediaPillMeta") != 0;
+    next.mediaPillProgress = Wh_GetIntSetting(L"Modules.MediaPillProgress") != 0;
 
     // ── Localization (#35) ───────────────────────────────────────────────────
     {
@@ -3065,6 +3172,12 @@ void LoadSettings() {
     }
     const std::wstring hideSec = GetStringSettingWithFallback(L"Behavior.AutoHideIdleSeconds", L"Appearance.AutoHideIdleSeconds");
     next.autoHideIdleSeconds = hideSec.empty() ? 0 : _wtoi(hideSec.c_str());
+    {
+        next.mediaIdleClearSeconds = ParseAllowedIntSetting(
+            GetStringSettingCopy(L"Behavior.MediaIdleClearSeconds"),
+            {0, 15, 30, 60, 120, 300}, 0);
+        g_mediaIdleClearSeconds.store(next.mediaIdleClearSeconds, std::memory_order_relaxed);
+    }
     next.unhideOnHover = Wh_GetIntSetting(L"Behavior.UnhideOnHover") != 0;
     next.alwaysOnTop = Wh_GetIntSetting(L"Behavior.AlwaysOnTop") != 0;
     const int localExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1);
@@ -3258,20 +3371,12 @@ void LoadSettings() {
     bool settingsChangedWhileHidden = (g_autoHiddenParked.load() || g_manuallyHidden.load());
     bool unhideRequested = (next.autoHideIdleSeconds == 0) ||
                            (next.unhideOnHover && !g_settings.unhideOnHover);
-    if (unhideRequested || (settingsChangedWhileHidden && next.autoHideIdleSeconds == 0)) {
-        g_autoHiddenParked = false;
-        g_manuallyHidden = false;
+    if (unhideRequested || (settingsChangedWhileHidden && next.autoHideIdleSeconds == 0) ||
+        (settingsChangedWhileHidden && next.unhideOnHover)) {
         Wh_SetIntValue(L"ManuallyHidden", 0);
-        g_hotkeyUnhideUntil.store(NowSeconds() + (next.autoHideIdleSeconds > 0 ? next.autoHideIdleSeconds : 6.0));
-        if (g_hwnd) {
-            ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
-            PostMessageW(g_hwnd, WM_APP_NEW_EVENT, 0, 0);
-        }
-    } else if (settingsChangedWhileHidden && next.unhideOnHover) {
-        g_autoHiddenParked = false;
-        g_manuallyHidden = false;
-        Wh_SetIntValue(L"ManuallyHidden", 0);
-        g_hotkeyUnhideUntil.store(NowSeconds() + (next.autoHideIdleSeconds > 0 ? next.autoHideIdleSeconds : 6.0));
+        BeginIslandVisibleGrace(next.autoHideIdleSeconds > 0
+                                    ? static_cast<double>(next.autoHideIdleSeconds)
+                                    : 6.0);
         if (g_hwnd) {
             ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
             PostMessageW(g_hwnd, WM_APP_NEW_EVENT, 0, 0);
@@ -3557,58 +3662,6 @@ int ResolveOffsetY(float windowHeight) {
     return static_cast<int>(std::lround(collapsed + (expanded - collapsed) * t));
 }
 
-void PositionOverlayWindow(HWND hwnd, int width, int height) {
-    RECT work = GetAnchorWorkRect();
-    const bool flushTop = g_settings.notchStyle || g_settings.borderMergedMode;
-    int x = work.left + (work.right - work.left - width) / 2;
-    int y = flushTop ? work.top : (work.top + 8);
-
-    switch (g_settings.position) {
-        case Position::TopLeft:
-            x = work.left + 16;
-            y = flushTop ? work.top : (work.top + 8);
-            break;
-        case Position::TopRight:
-            x = work.right - width - 16;
-            y = flushTop ? work.top : (work.top + 8);
-            break;
-        case Position::BottomCenter:
-            x = work.left + (work.right - work.left - width) / 2;
-            y = work.bottom - height - 40;
-            break;
-        case Position::BottomLeft:
-            x = work.left + 16;
-            y = work.bottom - height - 40;
-            break;
-        case Position::BottomRight:
-            x = work.right - width - 16;
-            y = work.bottom - height - 40;
-            break;
-        case Position::TopCenter:
-        default:
-            break;
-    }
-
-    HWND zOrder = g_settings.alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST;
-
-    // Manage owner window to firmly anchor to desktop when alwaysOnTop is false
-    if (g_settings.alwaysOnTop) {
-        SetWindowLongPtr(hwnd, GWLP_HWNDPARENT, 0);
-    } else {
-        HWND hProgman = FindWindowW(L"Progman", nullptr);
-        if (hProgman) {
-            SetWindowLongPtr(hwnd, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(hProgman));
-        }
-    }
-
-    x += g_settings.offsetX;
-    y += ResolveOffsetY(static_cast<float>(height));
-    SetWindowPos(hwnd, zOrder, x, y, width, height,
-                 SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
-
-    ApplyBackdropRegion(hwnd, width, height);
-}
-
 // Where the layered window's top-left goes for a pill `pillWidth` px wide.
 // *subX receives the pill's fractional left edge (0..1) so the renderer can draw
 // at the exact float position. Snapping to whole pixels made the pill's centre
@@ -3853,8 +3906,8 @@ bool IsShellOwnedWindow(HWND hwnd) {
 
 // Re-asserts the island's place in the topmost band when another always-on-top
 // window has been raised over it (PowerToys' bar, taskbar mods, other
-// overlays). PositionOverlayWindow only runs on a resize or an explicit layout
-// change, so without this the island stayed buried until the next one.
+// overlays). ApplyOverlayZOrder only runs on layout upkeep, so without this the
+// island stayed buried until the next resize/settings pass.
 //
 // Deliberately conservative: shell surfaces are ignored, a slight clip does not
 // count, and we only act when we are still in the topmost band ourselves. That
@@ -3865,7 +3918,7 @@ void EnsureTopmost(HWND hwnd, const RECT* pillScreenRect = nullptr) {
         return;
     }
 
-    // If we are not topmost at all, PositionOverlayWindow owns fixing that;
+    // If we are not topmost at all, ApplyOverlayZOrder owns fixing that;
     // walking the whole z-order from a demoted position would be expensive.
     if ((GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST) == 0) {
         return;
@@ -5010,6 +5063,7 @@ DWORD WINAPI MediaThreadProc(void*) {
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
 
     using Manager = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+    using Session = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession;
     using PlaybackStatus = winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus;
 
     Manager manager{nullptr};
@@ -5017,6 +5071,64 @@ DWORD WINAPI MediaThreadProc(void*) {
     int64_t pendingSeekBaseline = -1;  // guards against bogus "went backwards" readings
     MediaSourceTracker sourceTracker;
     ULONGLONG pendingSeekBaselineTickCount = 0;
+
+    // Event-driven wake (plus a 1.5s poll fallback). Manual token revoke is used
+    // instead of winrt::auto_revoke: SMTC sources may not expose weak refs, and
+    // MSDN recommends falling back to tokens in that case.
+    winrt::event_token sessionsChangedToken{};
+    winrt::event_token mediaPropsToken{};
+    winrt::event_token playbackToken{};
+    Session boundSession{nullptr};
+    std::wstring boundSessionAumid;
+
+    auto unbindSessionEvents = [&]() {
+        if (!boundSession) {
+            mediaPropsToken = {};
+            playbackToken = {};
+            boundSessionAumid.clear();
+            return;
+        }
+        try {
+            if (mediaPropsToken.value != 0) {
+                boundSession.MediaPropertiesChanged(mediaPropsToken);
+            }
+            if (playbackToken.value != 0) {
+                boundSession.PlaybackInfoChanged(playbackToken);
+            }
+        } catch (...) {
+        }
+        mediaPropsToken = {};
+        playbackToken = {};
+        boundSession = nullptr;
+        boundSessionAumid.clear();
+    };
+
+    auto bindSessionEvents = [&](Session const& session) {
+        std::wstring aumid;
+        try {
+            if (session) {
+                aumid = session.SourceAppUserModelId().c_str();
+            }
+        } catch (...) {
+        }
+        if (session && aumid == boundSessionAumid && boundSession) {
+            return;
+        }
+        unbindSessionEvents();
+        if (!session) {
+            return;
+        }
+        try {
+            boundSession = session;
+            boundSessionAumid = std::move(aumid);
+            mediaPropsToken = boundSession.MediaPropertiesChanged(
+                [](auto&&, auto&&) { WakeMediaThreadThrottled(); });
+            playbackToken = boundSession.PlaybackInfoChanged(
+                [](auto&&, auto&&) { WakeMediaThreadThrottled(); });
+        } catch (...) {
+            unbindSessionEvents();
+        }
+    };
 
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         MediaSnapshot next;
@@ -5026,6 +5138,13 @@ DWORD WINAPI MediaThreadProc(void*) {
         try {
             if (!manager) {
                 manager = Manager::RequestAsync().get();
+                if (manager && sessionsChangedToken.value == 0) {
+                    try {
+                        sessionsChangedToken = manager.SessionsChanged(
+                            [](auto&&, auto&&) { WakeMediaThreadThrottled(); });
+                    } catch (...) {
+                    }
+                }
             }
 
             if (manager) {
@@ -5034,6 +5153,7 @@ DWORD WINAPI MediaThreadProc(void*) {
                     ? ChooseMediaSourceAumid(sourceTracker, GetPreferredMediaSource())
                     : GetPreferredMediaSource();
                 auto session = SelectActiveMediaSession(manager, chosenAumid);
+                bindSessionEvents(session);
                 if (session) {
                     auto properties = session.TryGetMediaPropertiesAsync().get();
                     auto playback = session.GetPlaybackInfo();
@@ -5265,6 +5385,8 @@ DWORD WINAPI MediaThreadProc(void*) {
             }
         }
 
+        ApplyMediaIdleClearPolicy(next);
+
         bool trackJustChanged = false;
         {
             std::lock_guard lock(g_stateMutex);
@@ -5314,8 +5436,20 @@ DWORD WINAPI MediaThreadProc(void*) {
             }
         }
 
+        // Events wake us immediately on track/source changes. Position is
+        // extrapolated on the UI thread between polls, so the fallback can stay
+        // leisurely — no need to spin the media thread several times a second.
         HANDLE mediaWaits[2] = {g_stopEvent, g_mediaRefreshEvent};
         WaitForMultipleObjects(g_mediaRefreshEvent ? 2 : 1, mediaWaits, FALSE, 1500);
+    }
+
+    unbindSessionEvents();
+    if (manager && sessionsChangedToken.value != 0) {
+        try {
+            manager.SessionsChanged(sessionsChangedToken);
+        } catch (...) {
+        }
+        sessionsChangedToken = {};
     }
 
     winrt::uninit_apartment();
@@ -6225,8 +6359,10 @@ struct SpectrumAnalyzer {
             const float power = 0.5f * (sum / static_cast<float>(binHi[b] - binLo[b])) + 0.5f * mx;
             // 4/kWindow normalises a Hann-windowed sinusoid back to ~its amplitude.
             float amp = std::sqrt(power) * (4.0f / kWindow);
-            // Music has a steep spectral tilt; lift the highs so they stay visible.
-            const float tilt = 1.0f + 2.2f * static_cast<float>(b) / (kSpectrumBands - 1);
+            // Music has a steep spectral tilt; lift the highs hard so mid/high
+            // bars in the island EQ stay as lively as the bass.
+            const float t = static_cast<float>(b) / (kSpectrumBands - 1);
+            const float tilt = 1.0f + 2.8f * t + 2.2f * t * t;
             amp *= tilt;
             raw[b] = amp;
             peak = std::max(peak, amp);
@@ -11440,12 +11576,22 @@ std::wstring WidestDigitForm(std::wstring text) {
 // Width of the collapsed media pill while it carries a lyric line (content px).
 constexpr float kCollapsedLyricsWidth = 320.0f;
 
+// Width while showing title + artist between the cover and the EQ (content px).
+constexpr float kCollapsedMetaWidth = 268.0f;
+
 // True when the collapsed pill should be widened for lyrics. "fetching" counts
 // too, so the pill does not shrink and regrow on every track change.
 bool CollapsedLyricsActive(const SharedState& state, const Settings& settings) {
     // Stays wide for as long as media is available. If there are no lyrics to
     // show, DrawCollapsedLyrics shows the media title instead.
     return settings.collapsedLyrics && settings.media && state.media.available;
+}
+
+// Title + artist in the collapsed pill. Collapsed lyrics keep the same slot when
+// enabled, so the two options never fight for width or draw on top of each other.
+bool CollapsedMetaActive(const SharedState& state, const Settings& settings) {
+    return settings.mediaPillMeta && settings.media && state.media.available &&
+           !CollapsedLyricsActive(state, settings);
 }
 
 // One pre-built lyric line. Built once when the line changes, then reused every
@@ -11496,7 +11642,8 @@ class Renderer {
 
     bool Render(const SharedState& state, const Settings& settings, const Activity& primary,
                 const std::optional<Activity>& secondary, float width, float height,
-                float nudge, bool hover, bool pinned, double now) {
+                float nudge, bool hover, bool pinned, double now,
+                bool combineClosing = false) {
         EnsureTextFormats(settings.sizeScale, settings.fontFamily, settings.textScale);
 
         width = std::max(width, 0.0f);
@@ -11593,26 +11740,77 @@ class Renderer {
 
         if (width >= 2.0f && height >= 2.0f) {
             if (secondary) {
-                const float gap = 12.0f * settings.sizeScale;
-                const float maxH = std::max(primary.height, secondary->height);
-                // Notch / border-merged islands hang from the top edge, so the
-                // shorter pill stays flush with it instead of being centred
-                // inside the taller one's height (which pushed it down).
-                const bool hangFromTop = settings.notchStyle || settings.borderMergedMode;
-                const float pTop = hangFromTop ? top : top + (maxH - primary.height) * 0.5f;
-                const float sTop = hangFromTop ? top : top + (maxH - secondary->height) * 0.5f;
+                // Apple-style: one continuous island with leading + trailing
+                // content regions. Reveal progress drives open: alert grows from
+                // the center while media is pushed to the trailing edge.
+                const float slotGap = 10.0f * settings.sizeScale;
+                const float pairTarget = primary.width + secondary->width + slotGap;
+                const float reveal = (pairTarget > secondary->width + 2.0f)
+                    ? SmoothStep01(Clamp(
+                          (width - secondary->width) / (pairTarget - secondary->width), 0.0f, 1.0f))
+                    : 1.0f;
+                const float islandTop = top;
+                const D2D1_RECT_F islandRect =
+                    D2D1::RectF(left, islandTop, left + width, islandTop + height);
 
-                DrawPill(state, settings, primary,
-                         D2D1::RectF(left, pTop, left + primary.width, pTop + primary.height),
-                         scale, now);
+                float radius = settings.w11Style ? 8.0f * settings.sizeScale
+                                                 : (islandRect.bottom - islandRect.top) * 0.5f;
+                if (settings.notchStyle) {
+                    radius = 16.0f * settings.sizeScale;
+                } else if (!settings.w11Style) {
+                    radius = std::min(radius, 44.0f * settings.sizeScale);
+                }
+                DrawSoftShadow(islandRect, radius);
+                const IslandKind chromeKind =
+                    (primary.kind == IslandKind::Media || secondary->kind == IslandKind::Media)
+                        ? IslandKind::Media
+                        : primary.kind;
+                DrawPillSurface(islandRect, radius, chromeKind, settings);
+
+                // Media stays on the trailing edge (pushed right as we open).
+                const float mediaW = secondary->width;
+                const float mediaLeft = left + std::max(0.0f, width - mediaW);
+                // Alert grows out of the center of the leading bay into the left slot.
+                const float leadWidth = std::max(0.0f, mediaLeft - slotGap - left);
+                const float alertDrawW = std::min(primary.width * reveal, leadWidth);
+                const float alertDrawLeft =
+                    left + (leadWidth - alertDrawW) * 0.5f * (1.0f - reveal);
+
+                if (alertDrawW > 2.0f) {
+                    DrawPill(state, settings, primary,
+                             D2D1::RectF(alertDrawLeft, islandTop,
+                                          alertDrawLeft + alertDrawW, islandTop + height),
+                             scale, now, /*drawChrome=*/false);
+                }
                 DrawPill(state, settings, *secondary,
-                         D2D1::RectF(left + primary.width + gap, sTop,
-                                      left + primary.width + gap + secondary->width,
-                                      sTop + secondary->height),
-                         scale, now);
+                         D2D1::RectF(mediaLeft, islandTop, mediaLeft + mediaW, islandTop + height),
+                         scale, now, /*drawChrome=*/false);
             } else {
-                DrawPill(state, settings, primary,
-                         D2D1::RectF(left, top, left + width, top + height), scale, now);
+                // Closing a combined alert: keep the full silhouette while it
+                // shrinks, and slide media along the trailing edge back to center.
+                if (combineClosing && primary.kind == IslandKind::Media &&
+                    width > primary.width + 2.0f) {
+                    const D2D1_RECT_F islandRect =
+                        D2D1::RectF(left, top, left + width, top + height);
+                    float radius = settings.w11Style ? 8.0f * settings.sizeScale
+                                                     : (islandRect.bottom - islandRect.top) * 0.5f;
+                    if (settings.notchStyle) {
+                        radius = 16.0f * settings.sizeScale;
+                    } else if (!settings.w11Style) {
+                        radius = std::min(radius, 44.0f * settings.sizeScale);
+                    }
+                    DrawSoftShadow(islandRect, radius);
+                    DrawPillSurface(islandRect, radius, IslandKind::Media, settings);
+
+                    const float mediaW = primary.width;
+                    const float mediaLeft = left + (width - mediaW);
+                    DrawPill(state, settings, primary,
+                             D2D1::RectF(mediaLeft, top, mediaLeft + mediaW, top + height),
+                             scale, now, /*drawChrome=*/false);
+                } else {
+                    DrawPill(state, settings, primary,
+                             D2D1::RectF(left, top, left + width, top + height), scale, now);
+                }
             }
         }
 
@@ -11667,6 +11865,8 @@ class Renderer {
         marqueeAlbumCache_.layout.Reset();
         marqueeClipboardCache_.layout.Reset();
         marqueeNotificationCache_.layout.Reset();
+        marqueePillTitleCache_.layout.Reset();
+        marqueePillArtistCache_.layout.Reset();
         scratchColorBrush_.Reset();
         lyricsActiveTextFormat_.Reset();
         lyricsActiveFitTextFormat_.Reset();
@@ -12118,6 +12318,8 @@ class Renderer {
             marqueeAlbumCache_.layout.Reset();
             marqueeClipboardCache_.layout.Reset();
             marqueeNotificationCache_.layout.Reset();
+            marqueePillTitleCache_.layout.Reset();
+            marqueePillArtistCache_.layout.Reset();
             weatherDescFormat_.Reset();
             weatherDescFormatSize_ = -1.0f;
         }
@@ -12453,7 +12655,7 @@ class Renderer {
     }
 
     void DrawPill(const SharedState& state, const Settings& settings, const Activity& activity,
-                  D2D1_RECT_F rect, float scale, double now) {
+                  D2D1_RECT_F rect, float scale, double now, bool drawChrome = true) {
         const float cx = (rect.left + rect.right) * 0.5f;
         const float cy = (rect.top + rect.bottom) * 0.5f;
         const float w = (rect.right - rect.left) * scale;
@@ -12466,9 +12668,11 @@ class Renderer {
         } else if (!settings.w11Style) {
             radius = std::min(radius, 44.0f * settings.sizeScale);
         }
-        DrawSoftShadow(rect, radius);
 
-        DrawPillSurface(rect, radius, activity.kind, settings);
+        if (drawChrome) {
+            DrawSoftShadow(rect, radius);
+            DrawPillSurface(rect, radius, activity.kind, settings);
+        }
 
         if (activity.kind == IslandKind::Progress) {
             DrawProgressRing(rect, state.progress.percent);
@@ -15448,9 +15652,11 @@ class Renderer {
         constexpr float kArtMorphEndHeight = 120.0f;
         constexpr float kCollapsedArtPad = 6.0f;
         constexpr float kCollapsedArtSize = kCollapsedPillHeight - kCollapsedArtPad * 2.0f;
-        // Raw progress straight from the island's height.
-        const float artMorphRaw = Clamp((height - kCollapsedPillHeight) /
-                                        (kArtMorphEndHeight - kCollapsedPillHeight), 0.0f, 1.0f);
+        // Start the expand morph where the expanded layer appears, so a taller
+        // companion alert (clipboard at 56px) does not partially morph the art.
+        const float artMorphRaw = Clamp((height - MediaLayout::kExpandedMinHeight) /
+                                        (kArtMorphEndHeight - MediaLayout::kExpandedMinHeight),
+                                        0.0f, 1.0f);
 
         // Shrinking follows the height exactly (unchanged). Expanding is not
         // allowed to run faster than kArtExpandSec for the full circle -> square
@@ -15488,10 +15694,13 @@ class Renderer {
         if (settings.mediaPillClock && idleTextFormat_) {
             pillClockSection = MeasureMediaPill(state, settings).sectionWidth;
         }
+        // Vertically center the cover so a taller shared island height still
+        // lines up with the alert content beside it.
+        const float collapsedArtTop = rect.top + (height - kCollapsedArtSize) * 0.5f;
         const D2D1_RECT_F collapsedArtRect = D2D1::RectF(
-            rect.left + pillClockSection + kCollapsedArtPad, rect.top + kCollapsedArtPad,
+            rect.left + pillClockSection + kCollapsedArtPad, collapsedArtTop,
             rect.left + pillClockSection + kCollapsedArtPad + kCollapsedArtSize,
-            rect.top + kCollapsedArtPad + kCollapsedArtSize);
+            collapsedArtTop + kCollapsedArtSize);
         auto lerpF = [](float a, float b, float t) { return a + (b - a) * t; };
         const D2D1_RECT_F normalArtRect = D2D1::RectF(
             rect.left + MediaLayout::kArtInsetX, rect.top + MediaLayout::kArtInsetY,
@@ -15570,7 +15779,8 @@ class Renderer {
                 const bool normalFaded = BeginImmersiveFade(1.0f - immersiveMix);
                 if (immersiveMix < 0.999f) {
 
-                const float waveW = 32.0f;
+                // Same width as the collapsed pill EQ so bar count stays identical.
+                const float waveW = 28.0f;
                 const float waveH = 20.0f;
                 D2D1_RECT_F waveRect = D2D1::RectF(rect.right - 24.0f - waveW,
                                                    rect.top + 20.0f + (artSize - waveH) * 0.5f,
@@ -15580,25 +15790,42 @@ class Renderer {
                 const float textLeft = artRect.right + 18.0f;
                 const float textRight = waveRect.left - 16.0f;
 
-                // Title — bold, prominent.
-                D2D1_RECT_F titleRect = D2D1::RectF(textLeft, rect.top + 34.0f, textRight, rect.top + 54.0f);
-                const std::wstring titleText =
-                    state.media.title.empty() ? std::wstring(Loc(L"Unknown")) : state.media.title;
-                if (!DrawTitleTransition(titleText, titleRect, textBrush_.Get(), now, !state.media.title.empty())) {
-                    DrawMarqueeText(titleText, titleRect, textFormat_.Get(), textBrush_.Get(), now, 42.0f,
-                                    marqueeTitleCache_);
+                // MediaPillMeta: only while the island is mid-morph, a shared pass
+                // owns title/artist so they can travel with the cover. Once fully
+                // expanded, fall back to the original path (DrawTitleTransition /
+                // DrawSwapMarquee) so ExpandedMediaTransitions keep working.
+                const bool metaMorphing = settings.mediaPillMeta &&
+                                          !CollapsedLyricsActive(state, settings) &&
+                                          artMorph < 1.0f;
+                if (!metaMorphing) {
+                    // Title — bold, prominent.
+                    D2D1_RECT_F titleRect = D2D1::RectF(textLeft, rect.top + 34.0f, textRight, rect.top + 54.0f);
+                    const std::wstring titleText =
+                        state.media.title.empty() ? std::wstring(Loc(L"Unknown")) : state.media.title;
+                    if (!DrawTitleTransition(titleText, titleRect, textBrush_.Get(), now, !state.media.title.empty())) {
+                        DrawMarqueeText(titleText, titleRect, textFormat_.Get(), textBrush_.Get(), now, 42.0f,
+                                        marqueeTitleCache_);
+                    }
+
+                    // Artist — muted below title.
+                    D2D1_RECT_F artistRect = D2D1::RectF(textLeft, rect.top + 54.0f, textRight, rect.top + 74.0f);
+                    mutedBrush_->SetOpacity(0.80f);
+                    DrawSwapMarquee(swapArtist_, state.media.artist, artistRect, smallTextFormat_.Get(),
+                                    mutedBrush_.Get(), now, 30.0f, marqueeArtistCache_, 0.06f);
+                    mutedBrush_->SetOpacity(0.75f);
                 }
 
-                // Artist — muted below title.
-                D2D1_RECT_F artistRect = D2D1::RectF(textLeft, rect.top + 54.0f, textRight, rect.top + 74.0f);
-                mutedBrush_->SetOpacity(0.80f);
-                DrawSwapMarquee(swapArtist_, state.media.artist, artistRect, smallTextFormat_.Get(),
-                                mutedBrush_.Get(), now, 30.0f, marqueeArtistCache_, 0.06f);
-                mutedBrush_->SetOpacity(0.75f);
-
-                if (!state.media.albumTitle.empty()) {
+                // Singles often report the track name as the album too — skip that
+                // duplicate line so the title does not appear twice.
+                const bool showAlbum = !state.media.albumTitle.empty() &&
+                                       !EqualsNoCase(state.media.albumTitle, state.media.title);
+                // During the morph, fade album/source in late so they don't fight
+                // the traveling title. Fully expanded: always on (upstream behavior).
+                const float extraMetaAlpha =
+                    metaMorphing ? SmoothStep01((artMorph - 0.72f) / 0.28f) : 1.0f;
+                if (showAlbum && extraMetaAlpha > 0.01f) {
                     D2D1_RECT_F albumRect = D2D1::RectF(textLeft, rect.top + 68.0f, textRight, rect.top + 84.0f);
-                    mutedBrush_->SetOpacity(0.70f);
+                    mutedBrush_->SetOpacity(0.70f * extraMetaAlpha);
                     DrawSwapMarquee(swapAlbum_, state.media.albumTitle, albumRect, smallTextFormat_.Get(),
                                     mutedBrush_.Get(), now, 28.0f, marqueeAlbumCache_, 0.12f);
                     mutedBrush_->SetOpacity(0.75f);
@@ -15609,7 +15836,7 @@ class Renderer {
                 } else {
                     const float gap = 2.5f;
                     const float availableW = waveRect.right - waveRect.left;
-                    const int count = 7;
+                    const int count = 6;  // match Classic Bars on this rect size
                     const float barWidth = (availableW - gap * (count - 1)) / count;
                     const float centerY = (waveRect.top + waveRect.bottom) * 0.5f;
                     mutedBrush_->SetOpacity(0.5f);
@@ -15620,8 +15847,24 @@ class Renderer {
                 }
 
                 // Source line, under the artist (or under the album when there is one).
-                const float srcLineTop = rect.top + (state.media.albumTitle.empty() ? 70.0f : 85.0f);
-                DrawSourceLine(state.media, D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 14.0f), now);
+                if (extraMetaAlpha > 0.01f) {
+                    const float srcLineTop = rect.top + (showAlbum ? 85.0f : 70.0f);
+                    ID2D1Layer* srcLayer = (extraMetaAlpha < 0.99f) ? AcquireLayer() : nullptr;
+                    if (srcLayer) {
+                        target_->PushLayer(
+                            D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
+                                                  D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                  D2D1::IdentityMatrix(), extraMetaAlpha, nullptr,
+                                                  D2D1_LAYER_OPTIONS_NONE),
+                            srcLayer);
+                    }
+                    DrawSourceLine(state.media,
+                                   D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 14.0f),
+                                   now);
+                    if (srcLayer) {
+                        target_->PopLayer();
+                    }
+                }
                 }  // end of `if (immersiveMix < 0.999f)`
                 EndImmersiveFade(normalFaded);
                 DrawImmersiveLyricsView(state, rect, settings, now, immersiveMix);
@@ -15832,7 +16075,7 @@ class Renderer {
             } else {
                 const float gap = 2.5f;
                 const float availableW = waveRect.right - waveRect.left;
-                const int count = std::max(1, static_cast<int>((availableW + gap) / (2.0f + gap)));
+                const int count = 6;  // match Classic Bars on the media EQ slot
                 const float barWidth = (availableW - gap * (count - 1)) / count;
                 mutedBrush_->SetOpacity(0.5f);
                 for (int i = 0; i < count; ++i) {
@@ -15854,6 +16097,9 @@ class Renderer {
                                         now, lyricsAlpha);
                 }
             }
+            // Title/artist for MediaPillMeta are drawn by the shared morph pass
+            // below (same idea as the album-art morph), so they are not painted
+            // inside this collapsing layer.
 
             // Clock + divider on the left, same face, size and time format as the
             // idle strip. On hover the collapsed layer fades out and the normal
@@ -15883,6 +16129,15 @@ class Renderer {
                                                       divX + divW, rect.bottom - MediaPillLayout::kDividerInsetY),
                                           divW * 0.5f, divW * 0.5f),
                         divider.Get());
+                }
+            }
+
+            // Flush progress strip — clipped by this layer's pill mask so it
+            // follows the bottom curve with no side gaps.
+            if (settings.mediaPillProgress) {
+                const float progAlpha = Clamp(1.0f - expandedAlpha / 0.45f, 0.0f, 1.0f);
+                if (progAlpha > 0.01f) {
+                    DrawCollapsedMediaProgress(state, rect, progAlpha);
                 }
             }
 
@@ -15953,6 +16208,60 @@ class Renderer {
                 }
                 DrawAlbumArtDrop(state.media, artDrawRect, now, artDrawRadius);
                 if (artLayer) {
+                    target_->PopLayer();
+                }
+            }
+        }
+
+        // ── Shared title/artist morph (MediaPillMeta) ────────────────────────
+        // Only while collapsing/expanding (artMorph < 1). At rest expanded, the
+        // normal media card draws title/artist so track-change transitions stay
+        // intact. Same idea as the album-art pass for the morph itself.
+        if (settings.mediaPillMeta && settings.media && state.media.available &&
+            artMorph < 1.0f &&
+            !CollapsedLyricsActive(state, settings) &&
+            !g_trayDragOver.load(std::memory_order_relaxed) &&
+            NormalizedTabIndex(settings) == MediaTabIndex(settings) && !islandHiding_) {
+            float shiftX = 0.0f;
+            if (state.system.micActive || state.system.cameraActive) {
+                shiftX = 22.0f;
+            }
+            const float cy = (collapsedArtRect.top + collapsedArtRect.bottom) * 0.5f;
+            const float cWaveL = rect.right - 42.0f - shiftX;
+            const float eWaveL = rect.right - 24.0f - 28.0f;
+            const float t = artMorph;
+            const float waveL = lerpF(cWaveL, eWaveL, t);
+            const float textLeft = morphArtRect.right + lerpF(10.0f, 18.0f, t);
+            const float textRight = waveL - lerpF(10.0f, 16.0f, t);
+
+            const float titleHc = 15.0f;
+            const float artistHc = 13.0f;
+            const bool hasArtist = !state.media.artist.empty();
+            const float blockH = titleHc + (hasArtist ? artistHc : 0.0f);
+            const float cTop = cy - blockH * 0.5f;
+
+            const D2D1_RECT_F titleRect = D2D1::RectF(
+                textLeft, lerpF(cTop, rect.top + 34.0f, t), textRight,
+                lerpF(cTop + titleHc, rect.top + 54.0f, t));
+            const D2D1_RECT_F artistRect = D2D1::RectF(
+                textLeft, lerpF(cTop + titleHc, rect.top + 54.0f, t), textRight,
+                lerpF(cTop + titleHc + (hasArtist ? artistHc : 0.0f), rect.top + 74.0f, t));
+
+            const float widthAlpha =
+                SmoothStep01(((rect.right - rect.left) - 160.0f) / 50.0f);
+            const float metaAlpha = lerpF(widthAlpha, 1.0f, t);
+            if (metaAlpha > 0.01f && textRight > textLeft + 24.0f) {
+                ID2D1Layer* metaLayer = (metaAlpha < 0.99f) ? AcquireLayer() : nullptr;
+                if (metaLayer) {
+                    target_->PushLayer(
+                        D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
+                                              D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                              D2D1::IdentityMatrix(), metaAlpha, nullptr,
+                                              D2D1_LAYER_OPTIONS_NONE),
+                        metaLayer);
+                }
+                DrawMorphingMediaMeta(state, titleRect, artistRect, t, now);
+                if (metaLayer) {
                     target_->PopLayer();
                 }
             }
@@ -16588,6 +16897,109 @@ class Renderer {
             out.layout->GetMetrics(&tm);
             out.width = tm.widthIncludingTrailingWhitespace;
             out.height = tm.height;
+        }
+    }
+
+    // Shared flush bottom strip (collapsed media + status countdown). Clipped to
+    // the pill silhouette so stadium corners stay clean.
+    void DrawFlushProgressStrip(D2D1_RECT_F rect, float progress, float alpha = 1.0f) {
+        if (alpha <= 0.01f) {
+            return;
+        }
+        progress = Clamp(progress, 0.0f, 1.0f);
+        constexpr float kHeight = 2.5f;
+        const D2D1_RECT_F track =
+            D2D1::RectF(rect.left, rect.bottom - kHeight, rect.right, rect.bottom);
+
+        const float radius = std::max(1.0f, (rect.bottom - rect.top) * 0.5f);
+        ComPtr<ID2D1RoundedRectangleGeometry> mask;
+        if (d2dFactory_) {
+            d2dFactory_->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(rect, radius, radius), &mask);
+        }
+        ID2D1Layer* layer = (mask || alpha < 0.99f) ? AcquireLayer() : nullptr;
+        if (layer) {
+            target_->PushLayer(
+                D2D1::LayerParameters(rect, mask.Get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                      D2D1::IdentityMatrix(), Clamp(alpha, 0.0f, 1.0f), nullptr,
+                                      D2D1_LAYER_OPTIONS_NONE),
+                layer);
+        }
+
+        if (raisedStrongBrush_) {
+            raisedStrongBrush_->SetOpacity(0.22f);
+            target_->FillRectangle(track, raisedStrongBrush_.Get());
+            raisedStrongBrush_->SetOpacity(1.0f);
+        }
+        const float span = (track.right - track.left) * progress;
+        if (span > 0.5f && accentBrush_) {
+            accentBrush_->SetOpacity(0.92f);
+            target_->FillRectangle(
+                D2D1::RectF(track.left, track.top, track.left + span, track.bottom),
+                accentBrush_.Get());
+            accentBrush_->SetOpacity(1.0f);
+        }
+
+        if (layer) {
+            target_->PopLayer();
+        }
+    }
+
+    void DrawCollapsedMediaProgress(const SharedState& state, D2D1_RECT_F rect, float alpha = 1.0f) {
+        if (state.media.endTicks <= 0) return;
+
+        double currentPosition = state.media.positionTicks / 10000000.0;
+        const double duration = state.media.endTicks / 10000000.0;
+        if (duration <= 0.05) return;
+        if (state.media.playing && state.media.lastUpdatedTicks > 0) {
+            currentPosition += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
+        }
+        const float progress =
+            Clamp(static_cast<float>(currentPosition / duration), 0.0f, 1.0f);
+        DrawFlushProgressStrip(rect, progress, alpha);
+    }
+
+    // Title + artist that lerp between the collapsed pill slot and the expanded
+    // player layout, so expand/collapse never cross-fades two copies of the text.
+    void DrawMorphingMediaMeta(const SharedState& state, D2D1_RECT_F titleRect,
+                               D2D1_RECT_F artistRect, float artMorph, double now) {
+        if (!textFormat_ || !smallTextFormat_) return;
+        if (titleRect.right - titleRect.left < 20.0f) return;
+
+        const std::wstring* titlePtr = &state.media.title;
+        std::wstring titleStorage;
+        if (titlePtr->empty()) {
+            titlePtr = &state.media.sourceName;
+        }
+        if (titlePtr->empty()) {
+            titleStorage.assign(Loc(L"Media"));
+            titlePtr = &titleStorage;
+        }
+
+        const float expandT = SmoothStep01(artMorph);
+        // Compact bold while collapsed; display face once mostly open. One draw
+        // only — dual-format crossfade doubled the glyphs mid-morph.
+        IDWriteTextFormat* titleFmt = (expandT < 0.45f && boldTextFormat_)
+                                          ? boldTextFormat_.Get()
+                                          : textFormat_.Get();
+        if (titleFmt == boldTextFormat_.Get()) {
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            boldTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+        textBrush_->SetOpacity(0.96f);
+        DrawMarqueeText(*titlePtr, titleRect, titleFmt, textBrush_.Get(), now,
+                        28.0f + 14.0f * expandT, marqueePillTitleCache_);
+        if (titleFmt == boldTextFormat_.Get()) {
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        }
+
+        if (!state.media.artist.empty() && artistRect.bottom > artistRect.top + 2.0f) {
+            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            mutedBrush_->SetOpacity(0.70f + 0.10f * expandT);
+            DrawMarqueeText(state.media.artist, artistRect, smallTextFormat_.Get(), mutedBrush_.Get(),
+                            now, 22.0f + 8.0f * expandT, marqueePillArtistCache_);
+            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            mutedBrush_->SetOpacity(0.75f);
         }
     }
 
@@ -18245,12 +18657,34 @@ class Renderer {
     // expanded player and the Lyrics tab. It owns the track-change detection and
     // hands the animation clock to the selected style via specT_/specDir_.
     float SpecBandRange(const SharedState& state, float from, float to) const {
-        // Average of the analyzer bands covering [from, to) in 0..kSpectrumBands.
+        // Peak-biased sample of [from, to). Mean alone washed out mid/high under
+        // loud bass; peak keeps each region independently lively.
         int a = std::clamp(static_cast<int>(std::floor(from)), 0, kSpectrumBands - 1);
         int b = std::clamp(static_cast<int>(std::ceil(to)), a + 1, kSpectrumBands);
-        float sum = 0.0f;
-        for (int i = a; i < b; ++i) sum += state.bands[static_cast<size_t>(i)];
-        return sum / static_cast<float>(b - a);
+        float sum = 0.0f, mx = 0.0f;
+        for (int i = a; i < b; ++i) {
+            const float v = state.bands[static_cast<size_t>(i)];
+            sum += v;
+            mx = std::max(mx, v);
+        }
+        float level = 0.35f * (sum / static_cast<float>(b - a)) + 0.65f * mx;
+        // Lift toward the top of the spectrum (bass already dominates in music).
+        const float mid = 0.5f * (from + to) / static_cast<float>(kSpectrumBands);
+        level *= 1.0f + 1.8f * mid;
+        // sqrt instead of pow(_, 0.58): same soft lift, cheaper on the frame path
+        // (Bars / Led / Orb / Plasma all call this many times per paint).
+        level = std::sqrt(Clamp(level, 0.0f, 1.8f));
+        return Clamp(level, 0.0f, 1.0f);
+    }
+
+    // One visualizer column mapped across bass → mids → highs. Shared by Classic
+    // Bars and Peak Matrix so every style uses the same frequency split.
+    float SpecBarLevel(const SharedState& state, int bar, int bars) const {
+        if (bars <= 0) return 0.0f;
+        // Disjoint slices — overlap made the first two bars read the same kick.
+        const float span = static_cast<float>(kSpectrumBands) / static_cast<float>(bars);
+        return SpecBandRange(state, static_cast<float>(bar) * span,
+                             static_cast<float>(bar + 1) * span);
     }
 
     void DrawSpectrum(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, double now) {
@@ -18499,12 +18933,8 @@ class Renderer {
 
         for (int c = 0; c < cols; ++c) {
             const int slot = dir >= 0.0f ? c : cols - 1 - c;  // order the scan reaches this column
-            // Same source as Classic Bars: each column reads the level history, newest on the
-            // right, so every column rises and falls with the music (no frequency tilt).
-            const size_t wfSize = state.waveform.size();
-            const size_t wfOffset = static_cast<size_t>(cols - c) * 3;
-            const size_t wfSrc = (state.waveformWrite + wfSize * 2 - wfOffset) % wfSize;
-            float v = Clamp(state.waveform[wfSrc], 0.03f, 1.0f);
+            // Same bass→mids→highs split as Classic Bars (left = low, right = high).
+            float v = Clamp(SpecBarLevel(state, c, cols), 0.03f, 1.0f);
 
             // Falling peak cap with gravity; a hit snaps it up.
             float& pk = specPeak_[c];
@@ -18848,26 +19278,37 @@ class Renderer {
         target_->PopAxisAlignedClip();
     }
 
+    // Same bar count as before, but each bar reads its own bass→mids→highs slice
+    // of the live FFT instead of the shared time-domain waveform.
     void DrawWaveform(const SharedState& state, D2D1_RECT_F rect) {
         const float gap = 2.5f;
         const float minBarWidth = 2.0f;
         const float availableW = rect.right - rect.left;
-        size_t count = std::max<size_t>(1, static_cast<size_t>((availableW + gap) / (minBarWidth + gap)));
-        count = std::min<size_t>(count, 32);
+        if (availableW < 8.0f) {
+            return;
+        }
+        // Collapsed and expanded media EQ share a ~28px slot; pin to 6 bars so
+        // a 1–2px width difference cannot change the count on expand.
+        size_t count;
+        if (availableW <= 48.0f) {
+            count = 6;
+        } else {
+            count = std::max<size_t>(1, static_cast<size_t>((availableW + gap) / (minBarWidth + gap)));
+            count = std::min<size_t>(count, 32);
+        }
 
-        const float barWidth = (availableW - gap * (count - 1)) / count;
+        const float barWidth = (availableW - gap * static_cast<float>(count - 1)) /
+                               static_cast<float>(count);
+        if (barWidth < 0.5f) {
+            return;
+        }
         const float centerY = (rect.top + rect.bottom) * 0.5f;
         const float maxH = (rect.bottom - rect.top) * 0.86f;
 
-        // Use a step size of 4 samples (approx 40ms) so bars aren't identical
-        const size_t step = 4;
-
         const float t = specT_;
         for (size_t i = 0; i < count; ++i) {
-            const size_t offset = (count - i) * step;
-            const size_t source = (state.waveformWrite + state.waveform.size() - offset) %
-                                  state.waveform.size();
-            const float amp = Clamp(state.waveform[source], 0.03f, 1.0f);
+            const float amp = Clamp(SpecBarLevel(state, static_cast<int>(i), static_cast<int>(count)),
+                                    0.06f, 1.0f);
             float h = std::max(3.0f, amp * maxH);
             float glow = 0.0f;
 
@@ -18899,19 +19340,12 @@ class Renderer {
         accentBrush_->SetOpacity(1.0f);
     }
 
-    void DrawCountdownProgress(float left, float right, float bottom, float progress) {
-        if (!g_settings.statusCountdownProgress) return;
-        const float h = 2.5f;
-        D2D1_RECT_F track = D2D1::RectF(left, bottom - h, right, bottom);
-        ComPtr<ID2D1SolidColorBrush> trackBrush;
-        target_->CreateSolidColorBrush(D2D1::ColorF(1, 1, 1, 0.08f), &trackBrush);
-        target_->FillRoundedRectangle(D2D1::RoundedRect(track, 1.25f, 1.25f), trackBrush.Get());
-        D2D1_RECT_F fill = D2D1::RectF(track.left, track.top,
-                                       track.left + (track.right - track.left) * Clamp(progress, 0.0f, 1.0f),
-                                       track.bottom);
-        accentBrush_->SetOpacity(0.70f);
-        target_->FillRoundedRectangle(D2D1::RoundedRect(fill, 1.25f, 1.25f), accentBrush_.Get());
-        accentBrush_->SetOpacity(1.0f);
+    // Status-card countdown — same strip + same Modules.MediaPillProgress gate.
+    void DrawCountdownProgress(D2D1_RECT_F rect, float progress, float alpha = 1.0f) {
+        if (!g_settings.mediaPillProgress) {
+            return;
+        }
+        DrawFlushProgressStrip(rect, progress, alpha);
     }
 
     void DrawClipboard(const SharedState& state, D2D1_RECT_F rect) {
@@ -18961,7 +19395,7 @@ class Renderer {
         }
 
         const float tx = badge.right + 14.0f;
-        const bool showBar = g_settings.statusCountdownProgress;
+        const bool showBar = g_settings.mediaPillProgress;
         D2D1_RECT_F titleRect = showBar
             ? D2D1::RectF(tx, cy - 18.0f, rect.right - 14.0f, cy - 2.0f)
             : D2D1::RectF(tx, cy - 16.0f, rect.right - 14.0f, cy - 1.0f);
@@ -18980,7 +19414,7 @@ class Renderer {
         DrawMarqueeText(state.clipboard.text.empty() ? std::wstring(Loc(L"Copied")) : state.clipboard.text,
                         textRect, textFormat_.Get(), textBrush_.Get(), now, 34.0f, marqueeClipboardCache_);
 
-        DrawCountdownProgress(tx, rect.right - 14.0f, rect.bottom - 6.0f, progress);
+        DrawCountdownProgress(rect, progress);
         mutedBrush_->SetOpacity(0.58f);
     }
 
@@ -19036,7 +19470,7 @@ class Renderer {
         }
 
         const float tx = badge.right + 14.0f;
-        const bool showBar = g_settings.statusCountdownProgress;
+        const bool showBar = g_settings.mediaPillProgress;
         D2D1_RECT_F appRect = showBar
             ? D2D1::RectF(tx, cy - 18.0f, rect.right - 14.0f, cy - 2.0f)
             : D2D1::RectF(tx, cy - 16.0f, rect.right - 14.0f, cy - 1.0f);
@@ -19054,7 +19488,7 @@ class Renderer {
                         titleRect, textFormat_.Get(), textBrush_.Get(), now, 28.0f, marqueeNotificationCache_);
         textBrush_->SetOpacity(0.90f);
 
-        DrawCountdownProgress(tx, rect.right - 14.0f, rect.bottom - 6.0f, progress);
+        DrawCountdownProgress(rect, progress);
         mutedBrush_->SetOpacity(0.50f);
     }
 
@@ -19320,7 +19754,7 @@ class Renderer {
         target_->FillEllipse(D2D1::Ellipse(dotCenter, 4.5f, 4.5f), dotBrush.Get());
 
         const float tx = badge.right + 14.0f;
-        const bool showBar = g_settings.statusCountdownProgress;
+        const bool showBar = g_settings.mediaPillProgress;
         const double now = NowSeconds();
         const float ttl = 3.0f;
         const float remaining = Clamp(static_cast<float>(state.device.expiresAt - now), 0.0f, ttl);
@@ -19347,7 +19781,7 @@ class Renderer {
                            D2D1_DRAW_TEXT_OPTIONS_CLIP);
         textBrush_->SetOpacity(0.90f);
 
-        DrawCountdownProgress(tx, rect.right - 14.0f, rect.bottom - 6.0f, progress);
+        DrawCountdownProgress(rect, progress);
         mutedBrush_->SetOpacity(0.58f);
     }
 
@@ -19409,7 +19843,7 @@ class Renderer {
         const float ttl = 3.0f;
         const float remaining = Clamp(static_cast<float>(state.doNotDisturb.expiresAt - now), 0.0f, ttl);
         const float progress = remaining / ttl;
-        DrawCountdownProgress(tx, rect.right - 14.0f, rect.bottom - 4.0f, progress);
+        DrawCountdownProgress(rect, progress);
         mutedBrush_->SetOpacity(0.58f);
         textBrush_->SetOpacity(0.90f);
     }
@@ -19482,7 +19916,7 @@ class Renderer {
         target_->FillEllipse(D2D1::Ellipse(dotCenter, 4.5f, 4.5f), dotBrush.Get());
 
         const float tx = badge.right + 14.0f;
-        const bool showBar = g_settings.statusCountdownProgress;
+        const bool showBar = g_settings.mediaPillProgress;
         const float rightEdge = hasBattery ? rect.right - 62.0f : rect.right - 14.0f;
 
         mutedBrush_->SetOpacity(0.50f);
@@ -19545,7 +19979,7 @@ class Renderer {
             }
         }
 
-        DrawCountdownProgress(tx, rect.right - 14.0f, rect.bottom - 6.0f, progress);
+        DrawCountdownProgress(rect, progress);
         mutedBrush_->SetOpacity(0.58f);
         textBrush_->SetOpacity(0.90f);
     }
@@ -20468,6 +20902,8 @@ class Renderer {
     ComPtr<ID2D1Bitmap> dockIconBitmap_[MediaLayout::kDockMaxSlots];
     uint64_t     dockIconGen_[MediaLayout::kDockMaxSlots] = {};
     MarqueeLayoutCache marqueeSourceCache_;
+    MarqueeLayoutCache marqueePillTitleCache_;   // collapsed-pill title (MediaPillMeta)
+    MarqueeLayoutCache marqueePillArtistCache_;  // collapsed-pill artist (MediaPillMeta)
 
     // ── Tab transition state ────────────────────────────────────────────────
     int          tabContext_ = -1;      // 0 = media view, 1 = idle view (ids mean different things)
@@ -20627,6 +21063,21 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
 
     if (activities.empty()) {
         activities.push_back(IslandKind::Idle);
+    }
+
+    // Apple-style pairing: one status/alert stays primary, and ongoing media is
+    // kept as the companion instead of being dropped when two alerts fire.
+    // Lookup still owns the island alone (handled later by clearing secondary).
+    const auto mediaIt = std::find(activities.begin(), activities.end(), IslandKind::Media);
+    if (mediaIt != activities.end() && activities.size() >= 2 &&
+        activities.front() != IslandKind::Media) {
+        activities.erase(mediaIt);
+        if (activities.size() > 1) {
+            activities.resize(1);
+        }
+        activities.push_back(IslandKind::Media);
+    } else if (activities.size() > 2) {
+        activities.resize(2);
     }
 
     return activities;
@@ -22357,19 +22808,15 @@ DWORD WINAPI RenderThreadProc(void*) {
     }
     EnableBlurBehind(hwnd);
     ApplyBackdropMaterial(hwnd);
-    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-
     ApplyHideShowHotkey();
 
-    if (g_settings.autoHideIdleSeconds == 0) {
-        g_manuallyHidden = false;
-        Wh_SetIntValue(L"ManuallyHidden", 0);
-    } else {
-        g_manuallyHidden = Wh_GetIntValue(L"ManuallyHidden", 0) != 0;
-    }
-    if (g_manuallyHidden.load()) {
-        ShowWindow(hwnd, SW_HIDE);
-    }
+    // Fresh process after Compile / reload: clear any persisted manual hide and
+    // open a short grace so Windhawk (often fullscreen-sized while focused) does
+    // not park the island before the first paint. See BeginIslandVisibleGrace.
+    Wh_SetIntValue(L"ManuallyHidden", 0);
+    g_fullscreenOverrideVisible.store(false, std::memory_order_relaxed);
+    BeginIslandVisibleGrace(10.0);
+    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 
     Renderer renderer;
     if (!renderer.Initialize(hwnd)) {
@@ -22658,7 +23105,19 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool pinned = Wh_GetIntValue(L"PinnedExpanded", 0) != 0;
 
         if (primary.kind != previousPrimary) {
-            if (primary.kind != IslandKind::Idle) {
+            // Skip the vertical bump when an alert closes back to media/idle —
+            // that bump fights the horizontal slide-to-center exit.
+            const auto isStatusKind = [](IslandKind kind) {
+                return kind == IslandKind::Clipboard || kind == IslandKind::Notification ||
+                       kind == IslandKind::Volume || kind == IslandKind::Brightness ||
+                       kind == IslandKind::BatteryLow || kind == IslandKind::CapsLock ||
+                       kind == IslandKind::Device || kind == IslandKind::Bluetooth ||
+                       kind == IslandKind::DoNotDisturb;
+            };
+            const bool closingAlert = isStatusKind(previousPrimary) &&
+                                      (primary.kind == IslandKind::Media ||
+                                       primary.kind == IslandKind::Idle);
+            if (primary.kind != IslandKind::Idle && !closingAlert) {
                 nudgeSpring.value = -6.0f;
                 nudgeSpring.velocity = 0.0f;
                 nudgeSpring.target = 0.0f;
@@ -22863,23 +23322,37 @@ DWORD WINAPI RenderThreadProc(void*) {
                                                      metricCount) * g_settings.sizeScale;
             primary.height = GameOverlayLayout::For(compact).height * g_settings.sizeScale;
         }
-        if (primary.kind == IslandKind::Media) {
-            if (!isFullscreen && (isHoverExpanded || pinned || recentTrackChange)) {
-                primary.width = MediaLayout::kExpandedWidth * g_settings.sizeScale;
-                primary.height = MediaLayout::kExpandedHeight * g_settings.sizeScale;
-                // (Immersive lyrics: the island keeps its normal 380px width.)
-            } else {
-                // Optional clock section on the left of the collapsed pill.
-                const float clockSection = g_settings.mediaPillClock
-                    ? renderer.MeasureMediaPill(snapshot, g_settings).sectionWidth
-                    : 0.0f;
-                if (CollapsedLyricsActive(snapshot, g_settings)) {
-                    // Collapsed but carrying lyrics: wider pill, same height.
-                    primary.width = (kCollapsedLyricsWidth + clockSection) * g_settings.sizeScale;
-                } else if (g_settings.mediaPillClock) {
-                    primary.width = (MediaPillLayout::kBaseWidth + clockSection) * g_settings.sizeScale;
-                }
+        // Size collapsed/expanded media whether it is primary or the companion slot.
+        // Secondary used to stay at the 150px base width, which killed MediaPillMeta
+        // (title/artist fade in only after ~160px) whenever another module was up.
+        auto applyMediaWidth = [&](Activity& activity, bool allowExpand) {
+            if (activity.kind != IslandKind::Media) {
+                return;
             }
+            if (!isFullscreen && allowExpand && (isHoverExpanded || pinned || recentTrackChange)) {
+                activity.width = MediaLayout::kExpandedWidth * g_settings.sizeScale;
+                activity.height = MediaLayout::kExpandedHeight * g_settings.sizeScale;
+                return;
+            }
+            const float clockSection = g_settings.mediaPillClock
+                ? renderer.MeasureMediaPill(snapshot, g_settings).sectionWidth
+                : 0.0f;
+            if (CollapsedLyricsActive(snapshot, g_settings)) {
+                activity.width = (kCollapsedLyricsWidth + clockSection) * g_settings.sizeScale;
+            } else if (CollapsedMetaActive(snapshot, g_settings)) {
+                activity.width = (kCollapsedMetaWidth + clockSection) * g_settings.sizeScale;
+            } else if (g_settings.mediaPillClock) {
+                activity.width = (MediaPillLayout::kBaseWidth + clockSection) * g_settings.sizeScale;
+            }
+        };
+        applyMediaWidth(primary, /*allowExpand=*/true);
+        if (secondary) {
+            // Companion media stays collapsed — Apple's "minimal" trailing slot.
+            applyMediaWidth(*secondary, /*allowExpand=*/false);
+            // One shared height so leading/trailing content share the silhouette.
+            const float sharedH = std::max(primary.height, secondary->height);
+            primary.height = sharedH;
+            secondary->height = sharedH;
         }
 
         if (primary.kind == IslandKind::Lookup) {
@@ -22892,8 +23365,12 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
         }
 
+        // Startup / hotkey grace also blocks fullscreen hide: otherwise compiling
+        // in Windhawk (foreground, often monitor-sized) parks the island before
+        // the first paint, and only a full mod toggle brings it back.
         const bool fullscreenSuppressed =
-            isFullscreen && !g_fullscreenOverrideVisible.load(std::memory_order_relaxed);
+            isFullscreen && !g_fullscreenOverrideVisible.load(std::memory_order_relaxed) &&
+            !unhideGraceActive;
         if ((isHidden || fullscreenSuppressed) && !privacyActive && !pinned && !isHoverExpanded && !isTransientAlert) {
             primary.width = 0.0f;
             primary.height = 0.0f;
@@ -22909,7 +23386,8 @@ DWORD WINAPI RenderThreadProc(void*) {
         float targetWidth = primary.width;
         float targetHeight = primary.height;
         if (secondary) {
-            targetWidth = primary.width + secondary->width + 12.0f * g_settings.sizeScale;
+            // Inner content gap only — chrome is one continuous island.
+            targetWidth = primary.width + secondary->width + 10.0f * g_settings.sizeScale;
             targetHeight = std::max(primary.height, secondary->height);
         }
 
@@ -22941,24 +23419,54 @@ DWORD WINAPI RenderThreadProc(void*) {
         }
 
         const float speed = g_settings.animationSpeed;
+
+        // Soften open/close for status modules (Clipboard, Notifications, …)
+        // so the silhouette leads and content can fade in without a snap.
+        // Keep the softer curve until the resize settles after the module closes.
+        const bool statusModule =
+            primary.kind == IslandKind::Clipboard || primary.kind == IslandKind::Notification ||
+            primary.kind == IslandKind::Volume || primary.kind == IslandKind::Brightness ||
+            primary.kind == IslandKind::BatteryLow || primary.kind == IslandKind::CapsLock ||
+            primary.kind == IslandKind::Device || primary.kind == IslandKind::Bluetooth ||
+            primary.kind == IslandKind::DoNotDisturb || primary.kind == IslandKind::Lookup;
+        static bool s_moduleMorphActive = false;
+        static bool s_combinedWithMedia = false;
+        if (secondary && secondary->kind == IslandKind::Media) {
+            s_combinedWithMedia = true;
+        }
+        if (statusModule) {
+            s_moduleMorphActive = true;
+        } else if (s_moduleMorphActive &&
+                   std::fabs(widthSpring.value - widthSpring.target) < 0.5f &&
+                   std::fabs(heightSpring.value - heightSpring.target) < 0.5f &&
+                   std::fabs(widthSpring.velocity) < 0.5f &&
+                   std::fabs(heightSpring.velocity) < 0.5f) {
+            s_moduleMorphActive = false;
+            s_combinedWithMedia = false;
+        }
+        const bool moduleMorph = statusModule || s_moduleMorphActive;
+        const bool combineClosing =
+            s_combinedWithMedia && !secondary && primary.kind == IslandKind::Media &&
+            s_moduleMorphActive;
+
         float widthStiffness = 280.0f * styleStiffnessMult;
         float widthDamping = 24.0f * styleDampingMult;
         if (targetWidth > widthSpring.value) {
-            widthStiffness = 380.0f * styleStiffnessMult;
-            widthDamping = 26.0f * styleDampingMult;
+            widthStiffness = (moduleMorph ? 300.0f : 380.0f) * styleStiffnessMult;
+            widthDamping = (moduleMorph ? 28.0f : 26.0f) * styleDampingMult;
         } else if (targetWidth < widthSpring.value) {
-            widthStiffness = 200.0f * styleStiffnessMult;
-            widthDamping = 28.0f * styleDampingMult;
+            widthStiffness = (moduleMorph ? 160.0f : 200.0f) * styleStiffnessMult;
+            widthDamping = (moduleMorph ? 30.0f : 28.0f) * styleDampingMult;
         }
 
         float heightStiffness = 280.0f * styleStiffnessMult;
         float heightDamping = 24.0f * styleDampingMult;
         if (targetHeight > heightSpring.value) {
-            heightStiffness = 380.0f * styleStiffnessMult;
-            heightDamping = 26.0f * styleDampingMult;
+            heightStiffness = (moduleMorph ? 300.0f : 380.0f) * styleStiffnessMult;
+            heightDamping = (moduleMorph ? 28.0f : 26.0f) * styleDampingMult;
         } else if (targetHeight < heightSpring.value) {
-            heightStiffness = 200.0f * styleStiffnessMult;
-            heightDamping = 28.0f * styleDampingMult;
+            heightStiffness = (moduleMorph ? 160.0f : 200.0f) * styleStiffnessMult;
+            heightDamping = (moduleMorph ? 30.0f : 28.0f) * styleDampingMult;
         }
 
         widthSpring.Step(dt * speed, widthStiffness, widthDamping);
@@ -23106,7 +23614,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             return kind == IslandKind::Device || kind == IslandKind::Bluetooth ||
                    kind == IslandKind::DoNotDisturb;
         };
-        const bool countdownBarsOn = g_settings.statusCountdownProgress;
+        const bool countdownBarsOn = g_settings.mediaPillProgress;
 
         const bool continuousAnimation =
             mediaAnimating || isTransientPill(primary.kind) ||
@@ -23249,7 +23757,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
             renderer.Render(snapshot, renderSettings, primary, secondary,
                             widthSpring.value, heightSpring.value, nudgeSpring.value,
-                            hover, pinned, now);
+                            hover, pinned, now, combineClosing);
         }
 
         // --- Zero-CPU parking for auto-hidden states (idle timeout / fullscreen) ---
@@ -23554,16 +24062,29 @@ BOOL Wh_ModInit() {
     }
 
     if (isCurrentToolModProcess) {
-        g_toolModProcessMutex =
-            CreateMutex(nullptr, TRUE, L"windhawk-tool-mod_" WH_MOD_ID);
-        if (!g_toolModProcessMutex) {
-            Wh_Log(L"CreateMutex failed");
-            ExitProcess(1);
-        }
-
-        if (GetLastError() == ERROR_ALREADY_EXISTS) {
-            Wh_Log(L"Tool mod already running (%s)", WH_MOD_ID);
-            ExitProcess(1);
+        // Named single-instance mutex (Windhawk tool-mod template). On Compile the
+        // launcher can spawn us before the previous process has closed its handle;
+        // keeping that duplicate handle open would keep the mutex alive forever
+        // (MSDN / CreateMutex guidance), so close and retry instead of ExitProcess.
+        constexpr int kMutexAttempts = 50;
+        for (int attempt = 0; attempt < kMutexAttempts; ++attempt) {
+            SetLastError(ERROR_SUCCESS);
+            g_toolModProcessMutex =
+                CreateMutexW(nullptr, TRUE, L"windhawk-tool-mod_" WH_MOD_ID);
+            if (!g_toolModProcessMutex) {
+                Wh_Log(L"CreateMutex failed");
+                ExitProcess(1);
+            }
+            if (GetLastError() != ERROR_ALREADY_EXISTS) {
+                break;
+            }
+            CloseHandle(g_toolModProcessMutex);
+            g_toolModProcessMutex = nullptr;
+            if (attempt + 1 >= kMutexAttempts) {
+                Wh_Log(L"Tool mod already running (%s)", WH_MOD_ID);
+                ExitProcess(1);
+            }
+            Sleep(100);
         }
 
         if (!WhTool_ModInit()) {
