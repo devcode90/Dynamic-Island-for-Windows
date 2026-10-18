@@ -1681,6 +1681,14 @@ std::atomic<int> g_lyricsEffectiveOffsetBtMs{0};      // Bluetooth output: setti
 std::atomic<bool> g_volumeEndpointStale{true};
 std::atomic<bool> g_layoutDirty = true;
 std::atomic<bool> g_clickExpanded = false;
+// The user can hold Shift and drag the pill. These offsets are deliberately
+// separate from the settings offsets: the settings still select the initial
+// anchor, while this remembers the user's free-form adjustment from it.
+std::atomic<int> g_manualDragOffsetX{0};
+std::atomic<int> g_manualDragOffsetY{0};
+std::atomic<bool> g_islandDragging{false};
+std::atomic<ULONGLONG> g_dragExpansionBlockedUntil{0};
+constexpr ULONGLONG kDragExpansionCooldownMs = 450;
 std::atomic<int> g_pressedMediaButton = -1;
 std::atomic<int> g_hoveredMediaButton = -1;
 std::atomic<unsigned> g_skipTriggerPrev{0};  // bumped on click, the render thread plays the prev button's animation
@@ -3601,8 +3609,8 @@ void PositionOverlayWindow(HWND hwnd, int width, int height) {
         }
     }
 
-    x += g_settings.offsetX;
-    y += ResolveOffsetY(static_cast<float>(height));
+    x += g_settings.offsetX + g_manualDragOffsetX.load(std::memory_order_relaxed);
+    y += ResolveOffsetY(static_cast<float>(height)) + g_manualDragOffsetY.load(std::memory_order_relaxed);
     SetWindowPos(hwnd, zOrder, x, y, width, height,
                  SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
 
@@ -3644,14 +3652,14 @@ POINT ComputeOverlayOrigin(int height, float pillWidth, float* subX) {
             break;
     }
 
-    pillLeft += static_cast<float>(g_settings.offsetX);
+    pillLeft += static_cast<float>(g_settings.offsetX + g_manualDragOffsetX.load(std::memory_order_relaxed));
     const float windowLeft = pillLeft - kRenderPadX;
     const float windowLeftFloor = std::floor(windowLeft);
     if (subX) {
         *subX = windowLeft - windowLeftFloor;
     }
 
-    y += ResolveOffsetY(static_cast<float>(height));
+    y += ResolveOffsetY(static_cast<float>(height)) + g_manualDragOffsetY.load(std::memory_order_relaxed);
     return POINT{static_cast<LONG>(windowLeftFloor), static_cast<LONG>(y)};
 }
 
@@ -3726,15 +3734,15 @@ StageLayout ComputeStageLayout(const Settings& settings, float pillW, float pill
             s.pillLeft = (static_cast<float>(s.width) - pillW) * 0.5f;
             break;
     }
-    s.origin.x += settings.offsetX;
+    s.origin.x += settings.offsetX + g_manualDragOffsetX.load(std::memory_order_relaxed);
 
     // Vertical. Bottom positions keep the pill's bottom edge fixed, so it grows upward.
     const int offsetY = ResolveOffsetY(pillH + kRenderPadY * 2.0f);
     if (IsBottomPosition(settings.position)) {
-        s.origin.y = work.bottom - s.height - 40 + offsetY;
+        s.origin.y = work.bottom - s.height - 40 + offsetY + g_manualDragOffsetY.load(std::memory_order_relaxed);
         s.pillTop = static_cast<float>(s.height) - kRenderPadY - pillH;
     } else {
-        s.origin.y = (flushTop ? work.top : work.top + 8) + offsetY;
+        s.origin.y = (flushTop ? work.top : work.top + 8) + offsetY + g_manualDragOffsetY.load(std::memory_order_relaxed);
         s.pillTop = flushTop ? 0.0f : kRenderPadY;
     }
     return s;
@@ -3953,10 +3961,10 @@ RECT GetIslandDockRect() {
             break;
     }
 
-    x += g_settings.offsetX;
+    x += g_settings.offsetX + g_manualDragOffsetX.load(std::memory_order_relaxed);
     // The dock rect is the hover target for a hidden island, which is always in
     // its collapsed state, so it follows the collapsed offset.
-    y += g_settings.offsetY;
+    y += g_settings.offsetY + g_manualDragOffsetY.load(std::memory_order_relaxed);
 
     RECT r;
     r.left = x;
@@ -21469,6 +21477,9 @@ void StartFileTrayDrag(const std::wstring& path) {
 LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     static POINT s_touchStart = {0, 0};
     static ULONGLONG s_touchStartTime = 0;
+    static POINT s_islandDragStartScreen = {0, 0};
+    static int s_islandDragStartOffsetX = 0;
+    static int s_islandDragStartOffsetY = 0;
     static bool s_trayPressActive = false;   // left button went down on a File Tray row
     static POINT s_trayPressPt = {0, 0};
     static std::wstring s_trayPressPath;
@@ -21771,6 +21782,21 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 int xPos = GET_X_LPARAM(lParam);
                 int yPos = GET_Y_LPARAM(lParam);
 
+                // Shift+drag is reserved for moving the island. Start this before
+                // any media, lookup, or tray hit testing so moving never triggers
+                // the control underneath the pointer.
+                if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) {
+                    s_islandDragStartScreen = {xPos, yPos};
+                    ClientToScreen(hwnd, &s_islandDragStartScreen);
+                    s_islandDragStartOffsetX = g_manualDragOffsetX.load(std::memory_order_relaxed);
+                    s_islandDragStartOffsetY = g_manualDragOffsetY.load(std::memory_order_relaxed);
+                    g_islandDragging = true;
+                    g_clickExpanded = false;
+                    SetCapture(hwnd);
+                    g_layoutDirty = true;
+                    return 0;
+                }
+
                 s_touchStart.x = xPos;
                 s_touchStart.y = yPos;
                 s_touchStartTime = GetTickCount64();
@@ -21848,6 +21874,17 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
             const int xPos = GET_X_LPARAM(lParam);
             const int yPos = GET_Y_LPARAM(lParam);
+
+            if (g_islandDragging.load(std::memory_order_relaxed)) {
+                POINT current = {xPos, yPos};
+                ClientToScreen(hwnd, &current);
+                g_manualDragOffsetX.store(s_islandDragStartOffsetX + current.x - s_islandDragStartScreen.x,
+                                          std::memory_order_relaxed);
+                g_manualDragOffsetY.store(s_islandDragStartOffsetY + current.y - s_islandDragStartScreen.y,
+                                          std::memory_order_relaxed);
+                g_layoutDirty = true;
+                return 0;
+            }
 
             if (g_lookupUi.open) {
                 HandleLookupMouseMove(xPos, yPos);
@@ -21976,6 +22013,13 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         case WM_CAPTURECHANGED:
             if (reinterpret_cast<HWND>(lParam) != hwnd) {
+                if (g_islandDragging.exchange(false)) {
+                    Wh_SetIntValue(L"ManualDragOffsetX", g_manualDragOffsetX.load(std::memory_order_relaxed));
+                    Wh_SetIntValue(L"ManualDragOffsetY", g_manualDragOffsetY.load(std::memory_order_relaxed));
+                    g_dragExpansionBlockedUntil.store(GetTickCount64() + kDragExpansionCooldownMs,
+                                                      std::memory_order_relaxed);
+                    g_layoutDirty = true;
+                }
                 if (g_scrubbing.exchange(false)) {
                     g_layoutDirty = true;
                 }
@@ -21990,6 +22034,17 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
         case WM_LBUTTONUP:
             {
+                if (g_islandDragging.exchange(false)) {
+                    ReleaseCapture();
+                    Wh_SetIntValue(L"ManualDragOffsetX", g_manualDragOffsetX.load(std::memory_order_relaxed));
+                    Wh_SetIntValue(L"ManualDragOffsetY", g_manualDragOffsetY.load(std::memory_order_relaxed));
+                    // Do not let the stationary pointer immediately re-expand the
+                    // island over a menu below it after the user releases it.
+                    g_dragExpansionBlockedUntil.store(GetTickCount64() + kDragExpansionCooldownMs,
+                                                      std::memory_order_relaxed);
+                    g_layoutDirty = true;
+                    return 0;
+                }
                 if (g_scrubbing.load()) {
                     g_scrubbing = false;
                     ReleaseCapture();
@@ -22698,7 +22753,15 @@ DWORD WINAPI RenderThreadProc(void*) {
             hover = true;
         }
 
+        const bool dragExpansionBlocked = g_islandDragging.load(std::memory_order_relaxed) ||
+            GetTickCount64() < g_dragExpansionBlockedUntil.load(std::memory_order_relaxed);
+        const bool effectivePinned = pinned && !dragExpansionBlocked;
         bool needsRender = false;
+        // Keep ticking through the short release cooldown so a stationary pointer
+        // can expand again once the delay has elapsed.
+        if (dragExpansionBlocked) {
+            needsRender = true;
+        }
 
         if (!hover && g_clickExpanded.load()) {
             g_clickExpanded = false;
@@ -22714,7 +22777,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         // *title* change is transient now, so the pill behaves like the clipboard
         // and battery alerts -- it surfaces, then hides again while playback
         // continues in the background.
-        const bool recentTrackChange = g_settings.mediaAutoExpand &&
+        const bool recentTrackChange = !dragExpansionBlocked && g_settings.mediaAutoExpand &&
                                        !MediaExpandBlocked(snapshot.media) &&
                                        primary.kind == IslandKind::Media &&
                                        snapshot.media.playing &&
@@ -22745,7 +22808,8 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
         }
 
-        bool isHoverExpanded = g_settings.expandOnHover ? hover : (hover && g_clickExpanded.load());
+        bool isHoverExpanded = !dragExpansionBlocked &&
+            (g_settings.expandOnHover ? hover : (hover && g_clickExpanded.load()));
         const bool gameMetricsPresent = primary.kind == IslandKind::Idle &&
             (g_settings.gameOverlay || Wh_GetIntValue(L"GameOverlayPinned", 0) != 0);
         if (gameMetricsPresent) {
@@ -22754,7 +22818,7 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         if (currentlyHidden && !g_settings.unhideOnHover) {
             isHoverExpanded = false;
-        } else if (isHoverExpanded || hoverUnhides || pinned || isTransientAlert || unhideGraceActive) {
+        } else if (isHoverExpanded || hoverUnhides || effectivePinned || isTransientAlert || unhideGraceActive) {
             lastInteractionTime = now;
         }
 
@@ -22811,7 +22875,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         const int metricTabIdx = NormalizedTabIndex(g_settings);
         const bool onHardwareMonitorTab = (metricTabIdx == HardwareMonitorTabIndex(g_settings));
         const bool hwMonitorVisible = (primary.kind == IslandKind::Idle || primary.kind == IslandKind::Media) &&
-            !isFullscreen && !gameMetricsPresent && (pinned || isHoverExpanded) && onHardwareMonitorTab;
+            !isFullscreen && !gameMetricsPresent && (effectivePinned || isHoverExpanded) && onHardwareMonitorTab;
         const bool gameOverlayVisible = gameMetricsPresent && !isFullscreen;
         const bool systemMetricsVisible = hwMonitorVisible || gameOverlayVisible;
 
@@ -22832,7 +22896,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         }
 
         if (primary.kind == IslandKind::Idle) {
-            if (!isFullscreen && (pinned || isHoverExpanded)) {
+            if (!isFullscreen && (effectivePinned || isHoverExpanded)) {
                 primary.width = MediaLayout::kExpandedWidth * g_settings.sizeScale;
                 primary.height = MediaLayout::kExpandedHeight * g_settings.sizeScale;
             } else if (primary.width > 0.0f) {
@@ -22864,7 +22928,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             primary.height = GameOverlayLayout::For(compact).height * g_settings.sizeScale;
         }
         if (primary.kind == IslandKind::Media) {
-            if (!isFullscreen && (isHoverExpanded || pinned || recentTrackChange)) {
+            if (!isFullscreen && (isHoverExpanded || effectivePinned || recentTrackChange)) {
                 primary.width = MediaLayout::kExpandedWidth * g_settings.sizeScale;
                 primary.height = MediaLayout::kExpandedHeight * g_settings.sizeScale;
                 // (Immersive lyrics: the island keeps its normal 380px width.)
@@ -23050,10 +23114,10 @@ DWORD WINAPI RenderThreadProc(void*) {
         // Hover or pinned state changes visual elements slightly
         static bool prevHover = false;
         static bool prevPinned = false;
-        if (hover != prevHover || pinned != prevPinned) {
+        if (hover != prevHover || effectivePinned != prevPinned) {
             needsRender = true;
             prevHover = hover;
-            prevPinned = pinned;
+            prevPinned = effectivePinned;
         }
 
         // Activities that animate continuously: the waveform bars, the marquee
@@ -23091,7 +23155,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool mediaShown = primary.kind == IslandKind::Media ||
                                 (secondary && secondary->kind == IslandKind::Media);
         const bool mediaAnimating =
-            mediaShown && (snapshot.media.playing || isHoverExpanded || pinned);
+            mediaShown && (snapshot.media.playing || isHoverExpanded || effectivePinned);
 
         // Transient alert pills. All expire within a few seconds, so treating them as
         // continuous cannot run away.
@@ -23244,12 +23308,12 @@ DWORD WINAPI RenderThreadProc(void*) {
             if (ctrlHoverCT) {
                 renderSettings.pillOpacity = Clamp(renderSettings.pillOpacity * 0.35f, 0.15f, 0.45f);
             } else if (renderSettings.themePreset == ThemePreset::Graphite && Wh_GetIntValue(L"PillOpacityOverride", -1) < 0) {
-                const bool isExpanded = isHoverExpanded || pinned || isTransientAlert || (widthSpring.value > 260.0f);
+                const bool isExpanded = isHoverExpanded || effectivePinned || isTransientAlert || (widthSpring.value > 260.0f);
                 renderSettings.pillOpacity = isExpanded ? 0.98f : 0.88f;
             }
             renderer.Render(snapshot, renderSettings, primary, secondary,
                             widthSpring.value, heightSpring.value, nudgeSpring.value,
-                            hover, pinned, now);
+                            hover, effectivePinned, now);
         }
 
         // --- Zero-CPU parking for auto-hidden states (idle timeout / fullscreen) ---
@@ -23466,6 +23530,8 @@ void StopThreads() {
 
 BOOL WhTool_ModInit() {
     LoadSettings();
+    g_manualDragOffsetX.store(Wh_GetIntValue(L"ManualDragOffsetX", 0), std::memory_order_relaxed);
+    g_manualDragOffsetY.store(Wh_GetIntValue(L"ManualDragOffsetY", 0), std::memory_order_relaxed);
 
     if (!StartThreads()) {
         StopThreads();
