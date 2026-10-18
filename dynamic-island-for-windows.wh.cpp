@@ -8768,6 +8768,22 @@ bool ReadRegQword(HKEY key, const wchar_t* name, uint64_t* out) {
     return true;
 }
 
+// Approximate boot instant as a FILETIME (100 ns since 1601). Used to ignore
+// ConsentStore rows whose LastUsedTimeStart predates this boot — those are the
+// "mic still lit after a crash / power loss" leftovers from #98.
+uint64_t ApproximateBootFileTime() {
+    FILETIME nowFt{};
+    GetSystemTimeAsFileTime(&nowFt);
+    ULARGE_INTEGER nowUi{};
+    nowUi.LowPart = nowFt.dwLowDateTime;
+    nowUi.HighPart = nowFt.dwHighDateTime;
+    const ULONGLONG uptime100ns = GetTickCount64() * 10000ULL;
+    if (nowUi.QuadPart <= uptime100ns) {
+        return 0;
+    }
+    return nowUi.QuadPart - uptime100ns;
+}
+
 // A ConsentStore entry counts as in-use only when Windows has recorded a start
 // and has not yet recorded a stop. Testing LastUsedTimeStop == 0 on its own
 // also matched entries that had never been used at all (both timestamps zero),
@@ -8781,7 +8797,16 @@ bool ConsentStoreEntryInUse(HKEY key) {
 
     uint64_t startTime = 0;
     if (ReadRegQword(key, L"LastUsedTimeStart", &startTime)) {
-        return startTime != 0;
+        if (startTime == 0) {
+            return false;
+        }
+        // Power loss / forced kill never writes LastUsedTimeStop, so a pre-boot
+        // start with Stop==0 would otherwise light the dot forever (#98).
+        static uint64_t bootFileTime = ApproximateBootFileTime();
+        if (bootFileTime != 0 && startTime < bootFileTime) {
+            return false;
+        }
+        return true;
     }
 
     // Stop says "not stopped" but there is no readable start timestamp. This is
@@ -23117,9 +23142,19 @@ DWORD WINAPI RenderThreadProc(void*) {
             needsRender = true;
         }
 
-        // Privacy dots
-        if (snapshot.system.micActive || snapshot.system.cameraActive) {
-            needsRender = true;
+        // Privacy dots are static once lit (#98): forcing a repaint every frame
+        // while mic/camera was active spun the render loop and 1 ms timer for
+        // nothing. Only react when the indicator state itself changes.
+        {
+            static bool prevMicActive = false;
+            static bool prevCamActive = false;
+            const bool micActive = snapshot.system.micActive;
+            const bool camActive = snapshot.system.cameraActive;
+            if (micActive != prevMicActive || camActive != prevCamActive) {
+                needsRender = true;
+                prevMicActive = micActive;
+                prevCamActive = camActive;
+            }
         }
 
         // Idle dashboard clock changes once a minute
