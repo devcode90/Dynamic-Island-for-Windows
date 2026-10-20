@@ -44,8 +44,8 @@ A smooth, interactive overlay for your desktop, inspired by Apple's Dynamic Isla
 
 **🚀 New Features (Added in Latest Update):**
 
-- 🎤 **Live Lyrics:** Switch on "Show lyrics on collapsed island" from the right-click menu to see the current line pan across the pill as it is sung.
-- 📖 **Quick Lookup:** Press `Ctrl+Alt+Space` to open a search box right on the island to instantly find definitions or summaries for words and clipboard text.
+- 🎤 **Live Lyrics:** Switch on "Show lyrics on collapsed island" from the right-click menu to see the current line pan across the pill as it is sung. The line hides while playback is paused, and optionally shows the track title when no synced lyrics are available.
+- 📖 **Quick Lookup:** Press `Ctrl+Alt+Q` to open a search box right on the island to instantly find definitions or summaries for words and clipboard text.
 - 🔀 **Cross-Source Media Switching:** Smoothly swap between active playback controls of multiple media apps simultaneously without opening the apps.
 - 💾 **Lyrics Cache:** Fast, local, and completely private caching of lyrics (via LRCLIB) to ensure instant loading with a tiny disk footprint.
 - 📺 **Full-Screen Autohide:** Smart autohide ensures the island stays completely out of your way during full-screen apps, videos, and gaming.
@@ -92,6 +92,7 @@ Tweak the mod easily from the **Windhawk settings panel**:
 - **Audio Spectrum & Progress Bar:** Choose the audio visualizer next to the album art (Classic Bars, Pulse Orb, Plasma Thread or Peak Matrix) and the look of the song progress bar (Slim, Wavy, Squiggle or Bar).
 - **Track-Change Animations:** Optionally animate the song title, artist, album, cover flip, playback controls and the collapsed pill's cover spin. Off by default, in **Animations & Performance**.
 - **Media Pill Clock:** Optionally show the current time on the left of the collapsed media pill, using the same 12/24-hour and seconds settings as the idle clock.
+- **Collapsed Lyrics Title:** If you use lyrics on the collapsed island, optionally show the track title when no synced lyrics are available. Off by default.
 - **Volume & Brightness Flyouts:** Slider banners appear on the island when the system volume or your laptop screen brightness changes. Both can be switched off in **Modules & Features**.
 - **Modules & Visibility:** Configure media, dashboards, privacy dots, system flyouts, auto-hide idle behavior, and shortcuts.
 - **Process Inclusion (for Notifications):** To use the notification module, you must add `explorer.exe` to the process inclusion list under the **Advanced** tab of the mod settings in Windhawk, then restart the mod.
@@ -120,6 +121,7 @@ Found a bug? Have a cool feature idea? We want to hear from you! Please drop an 
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color extraction, reorganized settings into logical categories, and fixed various UI, media, and theme edge cases.
 - **[David Ravelo (DavidRaveloU) @GitHub](https://github.com/DavidRaveloU)**: Added selectable audio spectrum styles with a live frequency analyzer, new progress bar styles, optional track-change animations for the title, cover flip, playback controls and pill cover spin, an optional clock in the collapsed media pill, and a brightness slider flyout.
 - **[Retr0dev-jpg @GitHub](https://github.com/Retr0dev-jpg)**: Event-driven volume flyout with animated bar and default device switching, plus a calendar that follows the Windows locale for weekday initials and first day of the week (with a Monday/Sunday override).
+- **[3u2t @GitHub](https://github.com/3u2t)**: Fixed the low-volume waveform and spectrum response, made the volume flyout refresh immediately, moved Quick Lookup to Ctrl+Alt+Q, and kept collapsed lyrics compact when lyrics are missing or playback is paused.
 
 ---
 

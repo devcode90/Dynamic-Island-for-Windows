@@ -2,7 +2,7 @@
 // @id              dynamic-island-for-windows
 // @name            Dynamic Island for Windows
 // @description     A living, breathing pill overlay inspired by iPhone's Dynamic Island. Reacts to media, downloads, clipboard, battery, and more.
-// @version         1.3.1
+// @version         1.3.2
 // @author          Himanshu
 // @github          https://github.com/devcode90
 // @include         windhawk.exe
@@ -50,8 +50,8 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **Translucent Backgrounds:** Hex colors accept an alpha channel (`#RRGGBBAA`), so you can make the island see-through while keeping text and icons perfectly crisp.
 - **Your Language:** The island's own labels follow your Windows display language across 12 languages, or you can pick one explicitly.
 - **File Tray:** Drag any file onto the island to park it on a shelf, then click to open it. You can now drag files back out into any folder or app, and remove them one by one. The island itself only references files, it never copies or moves them.
-- **Lyrics on the Collapsed Island:** Switch on "Show lyrics on collapsed island" from the right-click menu and the pill widens to show the current line as it's sung, sliding in with every new line. When there are no synced lyrics it shows the song title instead.
-- **Quick Lookup:** Press **Ctrl+Alt+Space** to open a search box right on the island. Type a word or phrase, press Enter, and get a definition or a short summary. Your clipboard text and recent searches are one click away.
+- **Lyrics on the Collapsed Island:** Switch on "Show lyrics on collapsed island" from the right-click menu and the pill widens to show the current line as it's sung, sliding in with every new line. When no synced lyrics are available, or playback is paused, the pill stays compact by default; turn on "Show title when lyrics are missing" in Mod Settings to show the track title instead while lyrics are unavailable.
+- **Quick Lookup:** Press **Ctrl+Alt+Q** to open a search box right on the island. Type a word or phrase, press Enter, and get a definition or a short summary. Your clipboard text and recent searches are one click away.
 - **Lyrics Sync Offset:** Nudge lyric timing in milliseconds when lyrics feel early or late, with a separate value for Bluetooth audio output that is picked automatically from your default audio device. Set it in Mod Settings or from the right-click menu's "Lyrics sync" submenu.
 - **Typography & Clock Control:** Scale all island text independently of the island's size, choose 12- or 24-hour time, show seconds, and set a custom date pattern — including CJK forms like `yyyy年MM月dd日`.
 
@@ -61,9 +61,9 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 
 - **Hover & Scroll:** Hover over the island to seamlessly expand it. Use your mouse scroll wheel to swipe between the Media, Calendar, Weather, Hardware Monitor, File Tray, and Lyrics tabs.
 - **File Tray:** Enable the File Tray module, then drag files onto the island. It jumps to the shelf to confirm the drop. Click a row to open that file, drag a row out to drop the file into any folder or app, or press the small ✕ on a row to remove just that file. The bin button in the header clears the whole shelf.
-- **Lyrics on the Collapsed Island:** Right-click the island and tick "Show lyrics on collapsed island". This choice is remembered across restarts. Long lines pan across as they are sung.
+- **Lyrics on the Collapsed Island:** Right-click the island and tick "Show lyrics on collapsed island". This choice is remembered across restarts. Long lines pan across as they are sung, and the line disappears while playback is paused. "Show title when lyrics are missing" in Mod Settings brings back the track title when no synced lyrics are available.
 - **Cross-Source Media Switching:** If multiple apps are playing media at the same time, you can smoothly swap between their active playback controls directly from the island without opening the apps.
-- **Quick Lookup:** Press the hotkey (default **Ctrl+Alt+Space**, changeable in the **Shortcuts** tab) to open the search box. Type a word or phrase and press Enter. Up/Down picks a row and Esc closes it. With an empty box it suggests your clipboard text and your recent lookups. Results come from Wiktionary and Wikipedia, with dictionaryapi.dev as a backup. Nothing is sent anywhere until you press Enter, and recent lookups are kept in memory only. Turn it off under Modules > "Quick Lookup (hotkey)".
+- **Quick Lookup:** Press the hotkey (default **Ctrl+Alt+Q**, changeable in the **Shortcuts** tab) to open the search box. Type a word or phrase and press Enter. Up/Down picks a row and Esc closes it. With an empty box it suggests your clipboard text and your recent lookups. Results come from Wiktionary and Wikipedia, with dictionaryapi.dev as a backup. Nothing is sent anywhere until you press Enter, and recent lookups are kept in memory only. Turn it off under Modules > "Quick Lookup (hotkey)".
 - **Right-Click Menu:** Right-click the island to access Theme presets, Transparency settings, collapsed-island lyrics, and to pin the island open.
 - **⚠️ Right-click choices are per-session:** The right-click menu is a quick way to try things out, not a place to configure the mod. **Theme**, **shape style** (Pill / Notch / Windows 11) and **pin open** are all re-applied from your Windhawk settings whenever the mod restarts — so a reboot, a mod update, or toggling the mod off and on will discard them. Anything you want to keep, set in the **Mod Settings** tab instead. (Transparency and Expand-on-hover do persist, but the settings tab is still the reliable place for them.)
 - **Windhawk Settings:** Visit the Mod Settings tab to change the island's Position, Size Scale, Refresh Rate (Target FPS), Animation Style (Smooth/Default/Bouncy/Snappy), Animation Speed, and toggle specific modules. You can also perfectly align the island using the `Offset X` and `Offset Y` settings, and select exactly which monitor the island should appear on (including a "Follow Mouse" mode!).
@@ -100,6 +100,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color sampling, reorganized settings, and addressed various UI/media edge cases.
 - **[David Ravelo (DavidRaveloU) @GitHub](https://github.com/DavidRaveloU)**: Added selectable audio spectrum styles with a live frequency analyzer, new progress bar styles, optional track-change animations for the title, cover flip, playback controls and pill cover spin, an optional clock in the collapsed media pill, and a brightness slider flyout.
 - **[Retr0dev-jpg @GitHub](https://github.com/Retr0dev-jpg)**: Event-driven volume flyout with animated bar and default device switching, plus a calendar that follows the Windows locale for weekday initials and first day of the week (with a Monday/Sunday override).
+- **[3u2t @GitHub](https://github.com/3u2t)**: Fixed the low-volume waveform and spectrum response, made the volume flyout refresh immediately, moved Quick Lookup to Ctrl+Alt+Q, and kept collapsed lyrics compact when lyrics are missing or playback is paused.
 
 ### 🤝 Contributing
 We love community contributions! To ensure high-quality updates, please follow these rules:
@@ -442,6 +443,9 @@ We love community contributions! To ensure high-quality updates, please follow t
   - LyricsNeighborLinesVisible: false
     $name: Show neighboring lyric lines clearly
     $description: By default the lines above and below the active line are only a faint ghost. Turn this on to make them clearly readable.
+  - CollapsedLyricsTitle: false
+    $name: Show title when lyrics are missing
+    $description: When "Show lyrics on collapsed island" is on and the current track has no synced lyrics, show the track title instead of leaving the slot empty. The slot still hides while playback is paused.
   - LyricsCache: true
     $name: Lyrics cache (disk)
     $description: Instant lyrics, less load on LRCLIB, tiny disk use, clearable anytime. Stored in %LOCALAPPDATA%\DynamicIslandForWindows\lyrics. Turn off to stop all lyrics disk reads and writes.
@@ -552,9 +556,9 @@ We love community contributions! To ensure high-quality updates, please follow t
       - alt_shift: Alt + Shift
       - win_alt: Win + Alt
       - ctrl_alt_shift: Ctrl + Alt + Shift
-  - LookupKey: "Space"
+  - LookupKey: "Q"
     $name: Quick Lookup hotkey key
-    $description: 'Type Space, or a single A-Z or 0-9 key. Falls back to Space if left blank or invalid.'
+    $description: 'Type a single A-Z or 0-9 key. Falls back to Q if left blank or invalid.'
   $name: Shortcuts & Hotkeys
 */
 // ==/WindhawkModSettings==
@@ -1166,7 +1170,7 @@ struct Settings {
     // Quick Lookup: hotkey-triggered dictionary / Wikipedia card.
     bool quickLookup = true;
     UINT lookupModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
-    UINT lookupVk = VK_SPACE;
+    UINT lookupVk = 'Q';
     bool bluetoothIndicator = true;
     bool bluetoothShowBattery = true;
     D2D1_COLOR_F privacyDotsMicHex = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f); // #FF9500
@@ -1186,6 +1190,7 @@ struct Settings {
     int lyricsOffsetMs = 0;      // Modules.LyricsOffsetMs, speakers / wired, ms
     int lyricsOffsetBtMs = 0;    // Modules.LyricsOffsetBluetoothMs, Bluetooth output, ms
     bool collapsedLyrics = false;  // lyrics inside the collapsed media pill (right-click toggle)
+    bool collapsedLyricsTitle = false;
     bool lyricsPinnedFirst = false;  // Lyrics tab is the first tab of the expanded media view (right-click toggle)
     bool lyricsCache = true;       // Modules.LyricsCache
     int lyricsCacheMaxMB = 25;     // Modules.LyricsCacheMaxMB; 0 = disk cache off
@@ -2922,8 +2927,7 @@ void LoadSettings() {
     }
     next.lookupModifiers |= MOD_NOREPEAT;
 
-    // "Space", or a single A-Z / 0-9 key; anything else falls back to Space.
-    next.lookupVk = VK_SPACE;
+    next.lookupVk = 'Q';
     {
         std::wstring keyStr = GetStringSettingCopy(L"Shortcuts.LookupKey");
         const size_t keyFirst = keyStr.find_first_not_of(L" \t\r\n\"'");
@@ -3071,6 +3075,7 @@ void LoadSettings() {
     next.expandOnHover = localExpandOnHover >= 0 ? (localExpandOnHover != 0) : (Wh_GetIntSetting(L"Behavior.ExpandOnHover") != 0);
     // Right-click toggle; stored with Wh_SetIntValue so it survives restarts.
     next.collapsedLyrics = Wh_GetIntValue(L"CollapsedLyrics", 0) != 0;
+    next.collapsedLyricsTitle = Wh_GetIntSetting(L"Modules.CollapsedLyricsTitle") != 0;
     next.lyricsPinnedFirst = Wh_GetIntValue(L"LyricsPinnedFirst", 0) != 0;
     {
         // Right-click choice wins until the Mod Settings value is changed.
@@ -6232,11 +6237,10 @@ struct SpectrumAnalyzer {
             peak = std::max(peak, amp);
         }
         agc = std::max(peak, agc * 0.9985f);
-        const float norm = 1.0f / std::max(agc, 0.02f);
+        const float norm = 1.0f / std::max(agc, 0.002f);
+        const float presence = Clamp((peak - 0.0005f) / 0.003f, 0.0f, 1.0f);
         for (int b = 0; b < kSpectrumBands; ++b) {
-            float v = std::sqrt(Clamp(raw[b] * norm, 0.0f, 1.0f));
-            // Silence must stay silent even though the auto-gain is boosted.
-            v *= Clamp(peak * 40.0f, 0.0f, 1.0f);
+            const float v = std::sqrt(Clamp(raw[b] * norm, 0.0f, 1.0f)) * presence;
             smooth[b] += (v > smooth[b] ? 0.65f : 0.14f) * (v - smooth[b]);
         }
     }
@@ -6301,8 +6305,16 @@ void DecayAndPublishSpectrum() {
     }
 }
 
+float g_waveformPeak = 0.005f;
+
 void PushWaveformSample(float amplitude) {
     std::lock_guard lock(g_stateMutex);
+
+    amplitude = Clamp(amplitude, 0.0f, 1.0f);
+    g_waveformPeak = amplitude > g_waveformPeak ? amplitude
+                                                : std::max(0.005f, g_waveformPeak * 0.9995f);
+    const float gate = Clamp((amplitude - 0.001f) / 0.01f, 0.0f, 1.0f);
+    amplitude = gate * Clamp(amplitude / g_waveformPeak, 0.0f, 1.0f);
 
     float lastVal = 0.0f;
     if (g_state.waveformWrite > 0) {
@@ -8376,6 +8388,10 @@ void ApplyVolumeReading(float level, bool muted, bool canSurface) {
             g_state.volume.deviceName = L"System audio";
             g_state.volume.expiresAt = NowSeconds() + 1.8;
         }
+    }
+
+    if (HWND hwnd = g_hwnd) {
+        PostMessageW(hwnd, WM_NULL, 0, 0);
     }
 
     // Only the first step nudges; nudging on every step made the pill bounce.
@@ -11440,14 +11456,17 @@ std::wstring WidestDigitForm(std::wstring text) {
 // Width of the collapsed media pill while it carries a lyric line (content px).
 constexpr float kCollapsedLyricsWidth = 320.0f;
 
-// True when the collapsed pill should be widened for lyrics. "fetching" counts
-// too, so the pill does not shrink and regrow on every track change.
-bool CollapsedLyricsActive(const SharedState& state, const Settings& settings) {
-    // Stays wide for as long as media is available. If there are no lyrics to
-    // show, DrawCollapsedLyrics shows the media title instead.
-    return settings.collapsedLyrics && settings.media && state.media.available;
+bool CollapsedLyricsUsable(const SharedState& state) {
+    return state.lyrics.hasData && state.lyrics.synced && !state.lyrics.lines.empty() &&
+           state.lyrics.matchedTitle == state.media.title &&
+           state.lyrics.matchedArtist == state.media.artist;
 }
 
+bool CollapsedLyricsActive(const SharedState& state, const Settings& settings) {
+    return settings.collapsedLyrics && settings.media && state.media.available &&
+           state.media.playing &&
+           (CollapsedLyricsUsable(state) || settings.collapsedLyricsTitle);
+}
 // One pre-built lyric line. Built once when the line changes, then reused every
 // frame, so animating it costs a DrawTextLayout and nothing else.
 struct CollapsedLyricLine {
@@ -11455,7 +11474,7 @@ struct CollapsedLyricLine {
     ComPtr<IDWriteTextLayout> layout;
     float width = 0.0f;
     float height = 0.0f;
-    bool isTitle = false;  // true when this is the media-title fallback, not a lyric line
+    bool isTitle = false;
 };
 
 class Renderer {
@@ -15849,7 +15868,7 @@ class Renderer {
                 if (lyricsAlpha > 0.01f) {
                     const float textLeft = artRect.right + 10.0f;
                     const float textRight = waveRect.left - 10.0f;
-                    DrawCollapsedLyrics(state,
+                    DrawCollapsedLyrics(state, settings,
                                         D2D1::RectF(textLeft, rect.top + 4.0f, textRight, rect.bottom - 4.0f),
                                         now, lyricsAlpha);
                 }
@@ -16344,7 +16363,6 @@ class Renderer {
         out.layout.Reset();
         out.width = 0.0f;
         out.height = 0.0f;
-        out.isTitle = false;
         if (!dwriteFactory_ || text.empty()) {
             return;
         }
@@ -16593,7 +16611,7 @@ class Renderer {
 
     // Draws the current synced lyric line inside `area`. When the line changes,
     // the old one slides up and fades out while the new one rises in from below.
-    void DrawCollapsedLyrics(const SharedState& state, D2D1_RECT_F area, double now, float alpha) {
+    void DrawCollapsedLyrics(const SharedState& state, const Settings& settings, D2D1_RECT_F area, double now, float alpha) {
         IDWriteTextFormat* fmt = textFormat_.Get();
         if (!fmt || !dwriteFactory_ || alpha <= 0.01f) {
             return;
@@ -16605,28 +16623,23 @@ class Renderer {
 
         const auto& lines = state.lyrics.lines;
 
-        // Lyrics only count if they belong to the track that is playing right now.
-        // This also stops the previous song's lyrics showing while the lyrics
-        // thread has not noticed the track change yet.
-        const bool lyricsUsable =
-            state.lyrics.hasData && state.lyrics.synced && !lines.empty() &&
-            state.lyrics.matchedTitle == state.media.title &&
-            state.lyrics.matchedArtist == state.media.artist;
+        const bool lyricsUsable = CollapsedLyricsUsable(state);
+        if (!lyricsUsable && !settings.collapsedLyricsTitle) {
+            return;
+        }
 
-        int idx = -1;  // -1 = before the first line, or no usable lyrics
+        int idx = -1;
         int64_t posMs = 0;
         if (lyricsUsable) {
-            // Same position math as the Lyrics tab, including the lookahead nudge.
             double posSec = state.media.positionTicks / 10000000.0;
             if (state.media.playing && state.media.lastUpdatedTicks > 0) {
                 posSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
             }
             if (state.media.playing) {
                 posSec += LyricsLookaheadSec();
-                            }
-                            posMs = std::max<int64_t>(0, static_cast<int64_t>(posSec * 1000.0));
+            }
+            posMs = std::max<int64_t>(0, static_cast<int64_t>(posSec * 1000.0));
 
-            // Binary search for the last line whose timestamp has passed.
             int lo = 0;
             int hi = static_cast<int>(lines.size());
             while (lo < hi) {
@@ -16640,10 +16653,7 @@ class Renderer {
             idx = lo - 1;
         }
 
-        // The media title is only a fallback for when there are no usable lyrics
-        // (still loading, not found, unsynced). Once lyrics are usable, the intro
-        // and instrumental gaps show the note glyph, as before.
-        constexpr int kTitleKey = -3;  // distinct from idx == -1 (before the first line)
+        constexpr int kTitleKey = -3;
         const bool showTitle = !lyricsUsable;
         const int showIdx = showTitle ? kTitleKey : idx;
 
@@ -16651,13 +16661,11 @@ class Renderer {
         if (fallback.empty()) fallback = state.media.sourceName;
         if (fallback.empty()) fallback = Loc(L"Media");
 
-        // Rebuild layouts only when what is shown actually changed.
         const bool trackChanged = state.media.title != collapsedLyricTitle_ ||
                                   state.media.artist != collapsedLyricArtist_;
         const bool fallbackTextChanged = showTitle && collapsedLyricCur_.text != fallback;
         if (trackChanged || showIdx != collapsedLyricIdx_ || fallbackTextChanged) {
             if (trackChanged || collapsedLyricIdx_ == -2) {
-                // New track or first draw: snap, no animation.
                 collapsedLyricPrev_ = CollapsedLyricLine{};
                 collapsedLyricAnimStart_ = now - 10.0;
             } else {
@@ -16696,7 +16704,7 @@ class Renderer {
             if (p.width <= availW) {
                 x = area.left + (availW - p.width) * 0.5f;
             } else if (!p.isTitle) {
-                x = area.left - (p.width - availW);  // lyric rests at its panned end
+                x = area.left - (p.width - availW);
             }
             const float y = cy - p.height * 0.5f - e * kSlidePx;
             textBrush_->SetOpacity(alpha * (1.0f - Clamp(t * 1.6f, 0.0f, 1.0f)) * 0.9f);
@@ -16707,20 +16715,18 @@ class Renderer {
         // Incoming / current line.
         {
             const CollapsedLyricLine& c = collapsedLyricCur_;
-            float x = area.left + (availW - c.width) * 0.5f;  // centred when it fits
+            float x = area.left + (availW - c.width) * 0.5f;
             const float overflow = c.width - availW;
-            float titleCycle = 0.0f;  // > 0 only when the title is scrolling as a marquee
+            float titleCycle = 0.0f;
             if (overflow > 0.0f) {
                 if (c.isTitle) {
-                    // Long title: scroll it in a loop, like the other marquees.
                     titleCycle = c.width + 38.0f;
                     x = area.left - std::fmod(static_cast<float>(now) * 30.0f, titleCycle);
-                } else if (showIdx >= 0) {
-                    // Long lyric: start at the left edge and pan across as it is sung.
-                    const int64_t startMs = lines[showIdx].timeMs;
+                } else if (idx >= 0) {
+                    const int64_t startMs = lines[idx].timeMs;
                     int64_t endMs = startMs + 4000;
-                    if (showIdx + 1 < static_cast<int>(lines.size())) {
-                        endMs = lines[showIdx + 1].timeMs;
+                    if (idx + 1 < static_cast<int>(lines.size())) {
+                        endMs = lines[idx + 1].timeMs;
                     } else if (state.media.endTicks > 0) {
                         endMs = state.media.endTicks / 10000;
                     }
