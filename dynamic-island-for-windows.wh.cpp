@@ -23314,9 +23314,13 @@ DWORD WINAPI RenderThreadProc(void*) {
         widthSpring.target = targetWidth;
         heightSpring.target = targetHeight;
 
-        if (justUnhidden || (unhideGraceActive && widthSpring.value < 0.5f && targetWidth > 1.0f)) {
-            widthSpring.Reset(targetWidth);
-            heightSpring.Reset(targetHeight);
+        // Reveal with the same spring collapse the hide path uses (#106).
+        // Snapping to the full target here made the island pop in after a
+        // smooth shrink-to-park. Starting from a collapsed silhouette lets
+        // Step() grow it back the same way it hid.
+        if (justUnhidden && targetWidth > 1.0f) {
+            widthSpring.Reset(0.0f);
+            heightSpring.Reset(0.0f);
             nudgeSpring.Reset(0.0f);
         }
 
