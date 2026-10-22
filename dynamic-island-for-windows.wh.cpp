@@ -9124,8 +9124,107 @@ bool IsDeviceActiveViaRegistry(const wchar_t* capability, std::wstring* outAppNa
     return isActive;
 }
 
+// Collects the process ids that have a capture session in the Active state on
+// any active recording device, i.e. a microphone stream that is open and
+// running right now. Returns false only when Core Audio itself can't be
+// queried, so the caller can tell "nothing is recording" from "couldn't check".
+bool GetActiveCaptureProcessIds(std::vector<DWORD>* outPids) {
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator)))) {
+        return false;
+    }
+
+    // Devices are enumerated afresh on every poll, so a microphone that is
+    // plugged in after the mod started is covered too.
+    ComPtr<IMMDeviceCollection> devices;
+    if (FAILED(enumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &devices))) {
+        return false;
+    }
+
+    UINT deviceCount = 0;
+    if (FAILED(devices->GetCount(&deviceCount))) {
+        return false;
+    }
+
+    for (UINT i = 0; i < deviceCount; i++) {
+        ComPtr<IMMDevice> device;
+        if (FAILED(devices->Item(i, &device))) continue;
+
+        ComPtr<IAudioSessionManager2> manager;
+        if (FAILED(device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
+                                    reinterpret_cast<void**>(manager.GetAddressOf())))) {
+            continue;
+        }
+
+        ComPtr<IAudioSessionEnumerator> sessions;
+        if (FAILED(manager->GetSessionEnumerator(&sessions))) continue;
+
+        int sessionCount = 0;
+        if (FAILED(sessions->GetCount(&sessionCount))) continue;
+
+        for (int j = 0; j < sessionCount; j++) {
+            ComPtr<IAudioSessionControl> control;
+            if (FAILED(sessions->GetSession(j, &control))) continue;
+
+            AudioSessionState state = AudioSessionStateInactive;
+            if (FAILED(control->GetState(&state)) || state != AudioSessionStateActive) continue;
+
+            ComPtr<IAudioSessionControl2> control2;
+            if (FAILED(control.As(&control2))) continue;
+            if (control2->IsSystemSoundsSession() == S_OK) continue;
+
+            // Sessions shared by several processes report no single pid; they
+            // still mean the microphone is open, just without a name to show.
+            DWORD pid = 0;
+            if (control2->GetProcessId(&pid) != S_OK) pid = 0;
+            outPids->push_back(pid);
+        }
+    }
+    return true;
+}
+
+// Turns a process id into the same display name the registry path produces,
+// by feeding its image path through CleanActiveAppName in the ConsentStore
+// "C:#dir#app.exe" form.
+std::wstring AppNameFromProcessId(DWORD pid) {
+    if (pid == 0) return L"";
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return L"";
+    wchar_t path[MAX_PATH * 2];
+    DWORD size = ARRAYSIZE(path);
+    const BOOL ok = QueryFullProcessImageNameW(process, 0, path, &size);
+    CloseHandle(process);
+    if (!ok) return L"";
+    std::wstring raw(path, size);
+    std::replace(raw.begin(), raw.end(), L'\\', L'#');
+    return CleanActiveAppName(raw);
+}
+
+// The ConsentStore timestamps only say when an app last started and stopped
+// using the microphone. When an app crashes or the PC loses power mid-use, the
+// stop is never written and the entry looks "in use" forever, so the registry
+// alone kept the orange dot lit for apps that weren't even running. The
+// microphone now counts as in use only while some process actually has a
+// running capture stream, and the name shown is that process's.
 bool IsMicrophoneActive(std::wstring* outAppName = nullptr) {
-    return IsDeviceActiveViaRegistry(L"microphone", outAppName);
+    std::vector<DWORD> capturePids;
+    if (!GetActiveCaptureProcessIds(&capturePids)) {
+        // Core Audio unavailable: fall back to the registry rather than going blind.
+        return IsDeviceActiveViaRegistry(L"microphone", outAppName);
+    }
+    if (capturePids.empty()) {
+        return false;
+    }
+    if (outAppName) {
+        for (DWORD pid : capturePids) {
+            std::wstring name = AppNameFromProcessId(pid);
+            if (!name.empty()) {
+                *outAppName = name;
+                break;
+            }
+        }
+    }
+    return true;
 }
 
 bool IsCameraActive(std::wstring* outAppName = nullptr) {
