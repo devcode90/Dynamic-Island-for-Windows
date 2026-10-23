@@ -509,8 +509,8 @@ We love community contributions! To ensure high-quality updates, please follow t
     $name: File Tray remembers items (disk)
     $description: Keeps the tray's contents across restarts, in the mod's storage folder. Only file paths and pasted text snippets are stored, never copies of your files. Turn off to stop all disk reads and writes and delete the saved list.
   - MediaExpandBlocklist: ""
-    $name: Never auto-expand for these apps
-    $description: 'Comma-separated list of app or site names that should never make the island expand on a track change, while still updating quietly in the collapsed pill. Matched loosely against the media source and title, for example: chrome, tiktok, youtube.'
+    $name: Ignore media from these apps
+    $description: 'Comma-separated app or site names that should not put the island into media mode (and never auto-expand on track change). Matched loosely against the media source, AUMID and title — .exe suffixes are optional. Examples: firefox, chrome.exe, youtube, tiktok.'
   - GameOverlayShowFps: true
     $name: Game overlay - show FPS
     $description: Include the frame rate in the game overlay strip.
@@ -3055,7 +3055,7 @@ void LoadSettings() {
     next.fileTrayMaxItems = ClampInt(Wh_GetIntSetting(L"Modules.FileTrayMaxItems"), 1, 25);
     next.fileTrayPersist = Wh_GetIntSetting(L"Modules.FileTrayPersist") != 0;
 
-    // ── Media auto-expand exclusions (#62) ───────────────────────────────────
+    // ── Media source exclusions (#62 / #114) ─────────────────────────────────
     next.mediaExpandBlocklist.clear();
     {
         const std::wstring raw = GetStringSettingCopy(L"Modules.MediaExpandBlocklist");
@@ -3072,7 +3072,22 @@ void LoadSettings() {
                 // case-insensitive without re-lowering on every frame.
                 std::transform(entry.begin(), entry.end(), entry.begin(),
                                [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
-                next.mediaExpandBlocklist.push_back(std::move(entry));
+                // Users commonly paste "firefox.exe" / full paths (#114). Strip a
+                // trailing .exe/.com and keep only the basename so those forms
+                // still match the friendly source name and AUMID.
+                const size_t slash = entry.find_last_of(L"\\/");
+                if (slash != std::wstring::npos && slash + 1 < entry.size()) {
+                    entry = entry.substr(slash + 1);
+                }
+                if (entry.size() > 4) {
+                    const std::wstring_view ext(entry.c_str() + (entry.size() - 4), 4);
+                    if (ext == L".exe" || ext == L".com") {
+                        entry.resize(entry.size() - 4);
+                    }
+                }
+                if (!entry.empty()) {
+                    next.mediaExpandBlocklist.push_back(std::move(entry));
+                }
             }
             if (comma == std::wstring::npos) {
                 break;
@@ -4696,11 +4711,11 @@ bool WindowLooksLikeMediaSource(HWND hwnd, const std::wstring& sourceLower) {
            (base.find(L"vlc") != std::wstring::npos && sourceLower.find(L"vlc") != std::wstring::npos);
 }
 
-// #62: short-form video feeds change "track" every few seconds, which turned
-// auto-expand into a constant popup. A blocklist entry is matched loosely
-// against the friendly source name, the raw AUMID and the title, so a single
-// entry like "tiktok" catches both the desktop app and a browser tab. The
-// collapsed pill still updates -- only the expansion is suppressed.
+// #62 / #114: short-form video feeds and browser noise should not take over the
+// island. A blocklist entry is matched loosely against the friendly source name,
+// the raw AUMID and the title, so a single entry like "tiktok" or "firefox.exe"
+// catches both the desktop app and a browser tab. Blocked sources are skipped
+// for media mode entirely (and therefore never auto-expand).
 //
 // Reads the blocklist under g_settingsMutex rather than taking a Settings
 // reference: the caller is the render loop, and walking a std::vector<std::wstring>
@@ -20911,7 +20926,11 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
          state.timer.active)) {
         activities.push_back(IslandKind::Timer);
     }
-    if (settings.media && state.media.available) {
+    // Blocklisted sources stay off the island entirely (#114). Auto-expand was
+    // already gated on MediaExpandBlocked, but with MediaAutoExpand off by
+    // default that gate never fired — so "firefox.exe" in the list looked like
+    // a no-op while the pill still switched to music mode.
+    if (settings.media && state.media.available && !MediaExpandBlocked(state.media)) {
         activities.push_back(IslandKind::Media);
     }
 
