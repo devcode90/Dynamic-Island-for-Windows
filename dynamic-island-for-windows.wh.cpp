@@ -97,7 +97,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - Suggestions for UI/UX or new integrations are always welcome.
 
 ### Credits
-- **[Sarthak Singh (sarthakaksh) @GitHub](https://github.com/sarthakaksh)**: Major feature overhaul including smoothing animations, right-click focus timer, lyrics for songs, quick lookup, Cross-Source Media Switching, hover clock, robust media controls, zero-CPU instant hide shortcut, Bluetooth battery integration, image clipboard thumbnails, and full-screen autohide fixes.
+- **[Sarthak Singh (sarthakaksh) @GitHub](https://github.com/sarthakaksh)**: Major feature overhaul including smoothing animations, right-click focus timer, strip mode, lyrics for songs, quick lookup, Cross-Source Media Switching, hover clock, robust media controls, zero-CPU instant hide shortcut, Bluetooth battery integration, image clipboard thumbnails, and full-screen autohide fixes.
 - **[ciizerr @GitHub](https://github.com/ciizerr)**: Improved the UI by refining layout alignment, fixing dashboard scaling, and enhancing calendar and weather module integration.
 - **[ChrisSch-dev @GitHub](https://github.com/ChrisSch-dev)**: Added album title support, word wrapping for weather descriptions, sleep resume fixes, and various performance/movement stability improvements.
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color sampling, reorganized settings, and addressed various UI/media edge cases.
@@ -159,6 +159,18 @@ We love community contributions! To ensure high-quality updates, please follow t
       - default: Default (Apple Pill)
       - w11: Windows 11 (Rounded Box)
       - notch: macOS Notch (Top Edge Flush)
+  - StripMode: false
+    $name: Strip mode
+    $description: Rests the island as a thin strip that uses almost no resources. Hover over it to open the island in the shape chosen above. Also available in the right-click menu under Shape style.
+  - StripSensitivity: medium
+    $name: Strip mode hover sensitivity
+    $description: How close the cursor has to get to the strip before the island opens. Minimum means the cursor must be exactly on the strip. Maximum opens it as soon as the cursor comes near. Medium is the default. Only used when Strip mode is on.
+    $options:
+      - minimum: Minimum - exactly on the strip
+      - low: Low
+      - medium: Medium (Default)
+      - high: High
+      - maximum: Maximum - opens when the cursor is near
   - ProgressStyle: slim
     $name: Progress bar style
     $description: Look of the song progress bar in the expanded media player. Wavy and Squiggle animate while music is playing and flatten when paused.
@@ -505,6 +517,13 @@ We love community contributions! To ensure high-quality updates, please follow t
   - FileTrayMaxItems: 10
     $name: File Tray capacity
     $description: 1 to 25. How many files the shelf keeps before the oldest one drops off.
+  - FileTrayNavigation: pager
+    $name: File Tray navigation
+    $description: "How to reach files that do not fit on the shelf. Page buttons adds a small < 1/4 > pager to the header. Mouse wheel scrolling lets the wheel scroll the list and shows a thin scrollbar. With wheel scrolling off, the wheel over the shelf switches tabs as usual."
+    $options:
+      - pager: Page buttons only (default)
+      - scroll: Mouse wheel scrolling only
+      - both: Page buttons and mouse wheel scrolling
   - FileTrayPersist: true
     $name: File Tray remembers items (disk)
     $description: Keeps the tray's contents across restarts, in the mod's storage folder. Only file paths and pasted text snippets are stored, never copies of your files. Turn off to stop all disk reads and writes and delete the saved list.
@@ -793,6 +812,19 @@ namespace FileTrayLayout {
     constexpr float kClearBtnTop = 16.0f;      // bin top edge, measured from the content top
     constexpr float kPasteBtnGap = 4.0f;       // gap between the paste button and the bin
 
+    // Pager ("<  2/4  >") and scrollbar, shown only when more rows exist than fit.
+    constexpr float kPagerBtnSize = 18.0f;
+    constexpr float kPagerLabelW = 34.0f;
+    constexpr float kPagerGapToPaste = 8.0f;
+    constexpr float kScrollbarWidth = 3.0f;
+    constexpr float kScrollbarGap = 5.0f;      // from the rows' right edge to the scrollbar
+
+    // Distance from the content rect's right edge to the pager's right edge.
+    constexpr float PagerRightInset() {
+        return kPadX + kClearBtnSize + kPasteBtnGap + kClearBtnSize + kPagerGapToPaste;
+    }
+    constexpr float PagerWidth() { return kPagerBtnSize * 2.0f + kPagerLabelW; }
+
     constexpr int VisibleRowCapacity(float contentHeight) {
         const float span = contentHeight - kListBottomInset - kListTop + kRowGap;
         const int capacity = static_cast<int>(span / (kRowHeight + kRowGap));
@@ -941,6 +973,26 @@ struct MediaContentPoint {
 };
 
 // The conversion and hit-test helpers live further down, just after Clamp().
+
+// Strip mode: the island rests as a thin strip and opens on hover.
+namespace StripModeLayout {
+    constexpr float kWidth = 64.0f;          // content px, multiplied by sizeScale
+    constexpr float kHeight = 5.0f;
+    constexpr float kHoverPadX = 24.0f;      // hover zone at Medium sensitivity: a 5px strip is hard to hit
+    constexpr float kHoverPadY = 14.0f;
+
+    // Multiplier on the Medium hover zone for each sensitivity level
+    // (0 = Minimum, 1 = Low, 2 = Medium, 3 = High, 4 = Maximum).
+    constexpr float HoverPadScale(int level) {
+        return level <= 0 ? 0.0f
+             : level == 1 ? 0.4f
+             : level == 2 ? 1.0f
+             : level == 3 ? 2.2f
+                          : 4.0f;
+    }
+    constexpr float kContentFadeStart = 10.0f;  // content is invisible below this height
+    constexpr float kContentFadeSpan = 22.0f;   // and fully visible above start + span
+}
 
 enum class IslandKind {
     Idle,
@@ -1204,6 +1256,8 @@ struct Settings {
     bool autoDpiScale = true;
     bool w11Style = false;
     bool notchStyle = false;
+    bool stripMode = false;  // thin resting strip, opens on hover (independent of the shape)
+    int stripSensitivity = 2;  // 0 = Minimum, 1 = Low, 2 = Medium, 3 = High, 4 = Maximum
     // Color customization
     ThemePreset themePreset = ThemePreset::Obsidian;
     D2D1_COLOR_F pillBgColor = D2D1::ColorF(0.031f, 0.031f, 0.039f, 1.0f); // #08080A
@@ -1246,6 +1300,8 @@ struct Settings {
     bool fileTrayModule = false;
     int fileTrayMaxItems = 10;
     bool fileTrayPersist = true;   // Modules.FileTrayPersist
+    bool fileTrayPager = true;     // Modules.FileTrayNavigation: show the < 1/4 > pager
+    bool fileTrayScroll = false;   // Modules.FileTrayNavigation: wheel scrolling + scrollbar
 
     // ── Media auto-expand exclusions (#62) ───────────────────────────────────
     std::vector<std::wstring> mediaExpandBlocklist;
@@ -1704,7 +1760,10 @@ HANDLE g_mediaRefreshEvent = nullptr;              // wakes MediaThreadProc
 std::atomic<int> g_hoveredSourceSlot{-1};
 std::atomic<int> g_pressedSourceSlot{-1};
 std::atomic<int> g_hoveredFileTrayRow = -1;  // row index under the cursor on the File Tray card
-std::atomic<int> g_hoveredFileTrayAction = -1;  // -2 = bin button, >=0 = cut button of that row
+std::atomic<int> g_hoveredFileTrayAction = -1;  // -2 = bin, -3 = paste, -4 = previous page, -5 = next page, >=0 = cut button of that row
+std::atomic<int> g_fileTrayScroll{0};           // index of the first visible row (newest-first order)
+std::atomic<bool> g_fileTrayPagerOn{true};      // Modules.FileTrayNavigation: pager shown
+std::atomic<bool> g_fileTrayWheelOn{false};     // Modules.FileTrayNavigation: wheel scroll + scrollbar
 std::atomic<bool> g_trayDragOver{false};      // a file drag from outside is hovering the island
 std::atomic<bool> g_trayInternalDrag{false};  // a drag that started from the tray itself is running
 std::atomic<int> g_tabEdgeBump{0};            // +1 / -1: wheel or swipe pushed past the last / first tab
@@ -2275,6 +2334,79 @@ float MediaScrubFractionUnbounded(const MediaContentPoint& rawPt) {
     return Clamp((Clamp(pt.x, barLeft, barRight) - barLeft) / (barRight - barLeft), 0.0f, 1.0f);
 }
 
+// ── File Tray scrolling / paging ─────────────────────────────────────────────
+// Rows at rest in the 184px expanded island. Scroll limits and page size use this
+// fixed value so they never follow the island's resize animation.
+int FileTrayRestCapacity() {
+    return FileTrayLayout::VisibleRowCapacity(MediaLayout::kExpandedHeight);
+}
+
+int FileTrayMaxScroll(int itemCount) {
+    return std::max(0, itemCount - FileTrayRestCapacity());
+}
+
+// Stored offset, clamped to what the current item count allows.
+int FileTrayScrollOffset(int itemCount) {
+    return ClampInt(g_fileTrayScroll.load(std::memory_order_relaxed), 0,
+                    FileTrayMaxScroll(itemCount));
+}
+
+// Returns true when the offset actually changed.
+bool FileTrayScrollBy(int itemCount, int deltaRows) {
+    const int current = FileTrayScrollOffset(itemCount);
+    const int next = ClampInt(current + deltaRows, 0, FileTrayMaxScroll(itemCount));
+    g_fileTrayScroll.store(next, std::memory_order_relaxed);
+    return next != current;
+}
+
+void FileTrayPageBy(int itemCount, int pages) {
+    FileTrayScrollBy(itemCount, pages * FileTrayRestCapacity());
+}
+
+int FileTrayPageCount(int itemCount) {
+    const int cap = FileTrayRestCapacity();
+    return std::max(1, (itemCount + cap - 1) / cap);
+}
+
+// Page the last visible row falls on, so the last page is reachable at any offset.
+int FileTrayCurrentPage(int itemCount, int offset) {
+    const int cap = FileTrayRestCapacity();
+    return ClampInt((offset + cap + cap - 1) / cap, 1, FileTrayPageCount(itemCount));
+}
+
+// 0 = previous page button, 1 = next page button, -1 = neither (or no overflow).
+int FileTrayPagerHitTest(const MediaContentPoint& pt, int itemCount) {
+    if (!g_fileTrayPagerOn.load(std::memory_order_relaxed) ||
+        !pt.valid || pt.height <= MediaLayout::kExpandedMinHeight ||
+        itemCount <= FileTrayRestCapacity()) {
+        return -1;
+    }
+    constexpr float kSlop = 3.0f;
+    const float size = FileTrayLayout::kPagerBtnSize;
+    const float right = pt.width - FileTrayLayout::PagerRightInset();
+    const float top = FileTrayLayout::kClearBtnTop + (FileTrayLayout::kClearBtnSize - size) * 0.5f;
+    if (pt.y < top - kSlop || pt.y > top + size + kSlop) {
+        return -1;
+    }
+    const float nextLeft = right - size;
+    const float prevLeft = right - FileTrayLayout::PagerWidth();
+    if (pt.x >= nextLeft - kSlop && pt.x <= right + kSlop) return 1;
+    if (pt.x >= prevLeft - kSlop && pt.x <= prevLeft + size + kSlop) return 0;
+    return -1;
+}
+
+// True over the row list and its scrollbar, but not the header or the pagination dots.
+bool FileTrayListHitTest(const MediaContentPoint& pt) {
+    if (!pt.valid || pt.height <= MediaLayout::kExpandedMinHeight) {
+        return false;
+    }
+    const float right = pt.width - FileTrayLayout::kPadX + FileTrayLayout::kScrollbarGap +
+                        FileTrayLayout::kScrollbarWidth + 2.0f;
+    return pt.x >= FileTrayLayout::kPadX && pt.x <= right &&
+           pt.y >= FileTrayLayout::kListTop &&
+           pt.y <= pt.height - FileTrayLayout::kListBottomInset;
+}
+
 // Index of the File Tray row under a content-space point, or -1. Rows are drawn
 // newest-first, so index 0 is the most recently dropped file.
 int FileTrayRowAtContentPoint(const MediaContentPoint& pt, int itemCount) {
@@ -2299,7 +2431,8 @@ int FileTrayRowAtContentPoint(const MediaContentPoint& pt, int itemCount) {
     }
 
     const int capacity = FileTrayLayout::VisibleRowCapacity(pt.height);
-    if (index < 0 || index >= capacity || index >= itemCount) {
+    const int remaining = itemCount - FileTrayScrollOffset(itemCount);
+    if (index < 0 || index >= capacity || index >= remaining) {
         return -1;
     }
     return index;
@@ -3054,6 +3187,22 @@ void LoadSettings() {
     next.fileTrayModule = Wh_GetIntSetting(L"Modules.FileTrayModule") != 0;
     next.fileTrayMaxItems = ClampInt(Wh_GetIntSetting(L"Modules.FileTrayMaxItems"), 1, 25);
     next.fileTrayPersist = Wh_GetIntSetting(L"Modules.FileTrayPersist") != 0;
+    {
+        // "pager" (default, also used for an unknown value), "scroll" or "both".
+        const std::wstring nav = GetStringSettingCopy(L"Modules.FileTrayNavigation");
+        if (EqualsNoCase(nav, L"scroll")) {
+            next.fileTrayPager = false;
+            next.fileTrayScroll = true;
+        } else if (EqualsNoCase(nav, L"both")) {
+            next.fileTrayPager = true;
+            next.fileTrayScroll = true;
+        } else {
+            next.fileTrayPager = true;
+            next.fileTrayScroll = false;
+        }
+        g_fileTrayPagerOn.store(next.fileTrayPager, std::memory_order_relaxed);
+        g_fileTrayWheelOn.store(next.fileTrayScroll, std::memory_order_relaxed);
+    }
 
     // ── Media auto-expand exclusions (#62) ───────────────────────────────────
     next.mediaExpandBlocklist.clear();
@@ -3170,6 +3319,30 @@ void LoadSettings() {
     // A bottom-anchored island cannot be a top-edge macOS notch.
     if (IsBottomPosition(next.position)) {
         next.notchStyle = false;
+    }
+
+    // Strip mode: right-click choice wins until the Mod Settings value is changed.
+    {
+        const int stripSetting = Wh_GetIntSetting(L"Appearance.StripMode") != 0 ? 1 : 0;
+        int stripOverride = Wh_GetIntValue(L"StripModeOverride", -1);
+        if (stripOverride >= 0 && Wh_GetIntValue(L"StripModeOverrideBase", -1) != stripSetting) {
+            Wh_SetIntValue(L"StripModeOverride", -1);
+            stripOverride = -1;
+        }
+        next.stripMode = stripOverride >= 0 ? (stripOverride != 0) : (stripSetting != 0);
+
+        const std::wstring stripSens = GetStringSettingCopy(L"Appearance.StripSensitivity");
+        if (EqualsNoCase(stripSens, L"minimum")) {
+            next.stripSensitivity = 0;
+        } else if (EqualsNoCase(stripSens, L"low")) {
+            next.stripSensitivity = 1;
+        } else if (EqualsNoCase(stripSens, L"high")) {
+            next.stripSensitivity = 3;
+        } else if (EqualsNoCase(stripSens, L"maximum")) {
+            next.stripSensitivity = 4;
+        } else {
+            next.stripSensitivity = 2;
+        }
     }
 
     // Color settings — check local theme override first, then settings YAML.
@@ -11281,6 +11454,10 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         }
         CheckMenuRadioItem(shapeMenu, kShapeMenuIdBase, kShapeMenuIdBase + 2,
                            kShapeMenuIdBase + static_cast<UINT>(currentShape), MF_BYCOMMAND);
+        // Strip mode is a plain on/off toggle, not one of the three shapes.
+        AppendMenuW(shapeMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(shapeMenu, MF_STRING | (g_settings.stripMode ? MF_CHECKED : 0),
+                    kShapeMenuIdBase + 3, L"Strip mode");
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(shapeMenu), L"Shape style");
     }
     const int activeExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1) >= 0
@@ -11487,6 +11664,14 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             LoadSettings();
             g_layoutDirty = true;
             TriggerNudge();
+            break;
+        }
+        case kShapeMenuIdBase + 3: {
+            const int stripSetting = Wh_GetIntSetting(L"Appearance.StripMode") != 0 ? 1 : 0;
+            Wh_SetIntValue(L"StripModeOverride", g_settings.stripMode ? 0 : 1);
+            Wh_SetIntValue(L"StripModeOverrideBase", stripSetting);
+            LoadSettings();
+            g_layoutDirty = true;
             break;
         }
         case 11: {
@@ -12760,12 +12945,25 @@ class Renderer {
         } else if (!settings.w11Style) {
             radius = std::min(radius, 44.0f * settings.sizeScale);
         }
+        // A radius larger than half the height breaks on a thin strip.
+        radius = std::min(radius, std::min(w, h) * 0.5f);
+
+        // Strip mode: content fades in as the island grows out of the strip.
+        const float contentAlpha = settings.stripMode
+            ? SmoothStep01((h / std::max(0.05f, settings.sizeScale) - StripModeLayout::kContentFadeStart) /
+                           StripModeLayout::kContentFadeSpan)
+            : 1.0f;
         if (pillCount_ < DwmBackdrop::kMaxPills) {
             pillRects_[pillCount_] = rect;
             pillRadii_[pillCount_] = radius;
             ++pillCount_;
         }
-        DrawSoftShadow(rect, radius);
+        if (contentAlpha > 0.01f) {
+            const float savedOpacity = settingsOpacity_;
+            settingsOpacity_ = savedOpacity * contentAlpha;
+            DrawSoftShadow(rect, radius);
+            settingsOpacity_ = savedOpacity;
+        }
 
         DrawPillSurface(rect, radius, activity.kind, settings);
 
@@ -12795,7 +12993,21 @@ class Renderer {
         float unH = (rect.bottom - rect.top) * invScale;
         D2D1_RECT_F unscaledRect = D2D1::RectF(pillCenter.x - unW * 0.5f, pillCenter.y - unH * 0.5f, pillCenter.x + unW * 0.5f, pillCenter.y + unH * 0.5f);
 
-        switch (activity.kind) {
+        // The strip itself draws no content; it fades in while the island opens.
+        const bool drawContent = contentAlpha > 0.01f;
+        ID2D1Layer* stripFadeLayer = nullptr;
+        if (drawContent && contentAlpha < 0.995f) {
+            stripFadeLayer = AcquireLayer();
+            if (stripFadeLayer) {
+                target_->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
+                                                          D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                                                          D2D1::IdentityMatrix(), contentAlpha, nullptr,
+                                                          D2D1_LAYER_OPTIONS_NONE),
+                                   stripFadeLayer);
+            }
+        }
+
+        if (drawContent) switch (activity.kind) {
             case IslandKind::Media:
                 DrawMedia(state, unscaledRect, settings, now);
                 break;
@@ -12844,7 +13056,12 @@ class Renderer {
         // ── Apple-style privacy indicator dots ───────────────────────────────
         // Green dot = camera in use, Orange dot = mic in use.
         // Drawn in top-right corner of pill, outside content area.
-        DrawPrivacyDots(state, settings, unscaledRect, now);
+        if (drawContent) {
+            DrawPrivacyDots(state, settings, unscaledRect, now);
+        }
+        if (stripFadeLayer) {
+            target_->PopLayer();
+        }
 
         target_->SetTransform(oldTransform);
     }
@@ -14018,6 +14235,65 @@ class Renderer {
                           brush.Get(), stroke, round.Get());
     }
 
+    // Round chevron button for the File Tray pager. dir: -1 = previous, +1 = next.
+    void DrawTrayPagerButton(D2D1_POINT_2F c, float size, int dir, bool enabled, bool hovered) {
+        if (enabled && hovered) {
+            if (ID2D1SolidColorBrush* bg =
+                    AcquireBrush(WithAlpha(material_.accent, 0.20f * settingsOpacity_))) {
+                target_->FillEllipse(D2D1::Ellipse(c, size * 0.5f, size * 0.5f), bg);
+            }
+        }
+
+        D2D1_COLOR_F ink = enabled ? (hovered ? material_.accent : material_.textSecondary)
+                                   : WithAlpha(material_.textSecondary, 0.30f);
+        ink.a *= settingsOpacity_;
+        ID2D1SolidColorBrush* brush = AcquireBrush(ink);
+        if (!brush) {
+            return;
+        }
+
+        const float r = size * 0.22f;
+        const float stroke = std::max(1.3f, size * 0.09f);
+        const float d = static_cast<float>(dir);
+        const D2D1_POINT_2F tip = D2D1::Point2F(c.x + d * r * 0.6f, c.y);
+        const D2D1_POINT_2F a = D2D1::Point2F(c.x - d * r * 0.6f, c.y - r * 1.3f);
+        const D2D1_POINT_2F b = D2D1::Point2F(c.x - d * r * 0.6f, c.y + r * 1.3f);
+        target_->DrawLine(a, tip, brush, stroke, RoundStroke());
+        target_->DrawLine(tip, b, brush, stroke, RoundStroke());
+    }
+
+    // "<  2/4  >" in the File Tray header, shown only when rows overflow.
+    void DrawTrayPager(D2D1_RECT_F rect, float midY, float scale, int total, int offset) {
+        const int pages = FileTrayPageCount(total);
+        const int page = FileTrayCurrentPage(total, offset);
+        const int action = g_hoveredFileTrayAction.load(std::memory_order_relaxed);
+
+        const float btn = FileTrayLayout::kPagerBtnSize * scale;
+        const float labelW = FileTrayLayout::kPagerLabelW * scale;
+        const float right = rect.right - FileTrayLayout::PagerRightInset() * scale;
+
+        const D2D1_POINT_2F nextC = D2D1::Point2F(right - btn * 0.5f, midY);
+        const D2D1_POINT_2F prevC = D2D1::Point2F(
+            right - FileTrayLayout::PagerWidth() * scale + btn * 0.5f, midY);
+        DrawTrayPagerButton(prevC, btn, -1, offset > 0, action == -4);
+        DrawTrayPagerButton(nextC, btn, 1, offset < FileTrayMaxScroll(total), action == -5);
+
+        if (smallTextFormat_) {
+            wchar_t label[24] = {};
+            swprintf_s(label, L"%d/%d", page, pages);
+            const D2D1_RECT_F labelRect = D2D1::RectF(right - btn - labelW, midY - 9.0f * scale,
+                                                      right - btn, midY + 9.0f * scale);
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            textBrush_->SetOpacity(0.90f);
+            target_->DrawTextW(label, static_cast<UINT32>(wcslen(label)), smallTextFormat_.Get(),
+                               labelRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            textBrush_->SetOpacity(0.96f);
+        }
+    }
+
     // File Tray (#33): a shelf for files dragged onto the island. Rows are built
     // from the shared DrawCard primitive so the shelf matches every other
     // dashboard, with the real Explorer icon for each file.
@@ -14051,8 +14327,14 @@ class Renderer {
             wchar_t countBuf[48] = {};
             swprintf_s(countBuf, L"%zu %s", total,
                        Loc(total == 1 ? L"item" : L"items"));
+            const bool pagerOn = settings.fileTrayPager &&
+                                 static_cast<int>(total) > FileTrayRestCapacity();
+            const float countRight = pagerOn
+                ? rect.right - (FileTrayLayout::PagerRightInset() +
+                                FileTrayLayout::PagerWidth() + 8.0f) * scale
+                : pasteBox.left - 8.0f * scale;
             const D2D1_RECT_F countRect = D2D1::RectF(headerRect.left, headerRect.top,
-                                                      pasteBox.left - 8.0f * scale, headerRect.bottom);
+                                                      countRight, headerRect.bottom);
             smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
             mutedBrush_->SetOpacity(0.75f);
             target_->DrawTextW(countBuf, static_cast<UINT32>(wcslen(countBuf)),
@@ -14064,6 +14346,10 @@ class Renderer {
         DrawTrayPasteButton(pasteBox, g_hoveredFileTrayAction.load(std::memory_order_relaxed) == -3);
         DrawTrayBinButton(clearBox, total > 0,
                           g_hoveredFileTrayAction.load(std::memory_order_relaxed) == -2);
+        if (settings.fileTrayPager && static_cast<int>(total) > FileTrayRestCapacity()) {
+            DrawTrayPager(rect, (clearBox.top + clearBox.bottom) * 0.5f, scale,
+                          static_cast<int>(total), FileTrayScrollOffset(static_cast<int>(total)));
+        }
 
         const float listTop = rect.top + FileTrayLayout::kListTop * scale;
         const float listBottom = rect.bottom - FileTrayLayout::kListBottomInset * scale;
@@ -14101,9 +14387,11 @@ class Renderer {
         const float rowGap = FileTrayLayout::kRowGap * scale;
         const int capacity = FileTrayLayout::VisibleRowCapacity((rect.bottom - rect.top) / scale);
 
-        // Newest first: the file just dropped is the one the user wants.
+        // Newest first: the file just dropped is the one the user wants. Rows
+        // scrolled past (scrollOffset of them) are skipped.
+        const int scrollOffset = FileTrayScrollOffset(static_cast<int>(total));
         int drawn = 0;
-        for (auto it = state.fileTrayItems.rbegin();
+        for (auto it = state.fileTrayItems.rbegin() + scrollOffset;
              it != state.fileTrayItems.rend() && drawn < capacity; ++it, ++drawn) {
             const FileTrayItem& item = *it;
             const float rowTop = listTop + drawn * (rowH + rowGap);
@@ -14172,17 +14460,35 @@ class Renderer {
             }
         }
 
-        // "+N more" when the shelf holds more than fits.
-        if (static_cast<int>(total) > capacity && smallTextFormat_) {
-            wchar_t moreBuf[32] = {};
-            swprintf_s(moreBuf, L"+%d", static_cast<int>(total) - capacity);
-            const D2D1_RECT_F moreRect = D2D1::RectF(rect.left + padX, listBottom - 12.0f * scale,
-                                                      rect.right - padX, listBottom);
-            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-            mutedBrush_->SetOpacity(0.65f);
-            target_->DrawTextW(moreBuf, static_cast<UINT32>(wcslen(moreBuf)), smallTextFormat_.Get(),
-                               moreRect, mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        // Scrollbar on the right edge, only while some rows are out of view.
+        if (settings.fileTrayScroll && static_cast<int>(total) > FileTrayRestCapacity()) {
+            const int totalRows = static_cast<int>(total);
+            const float trackH = static_cast<float>(capacity) * rowH +
+                                 static_cast<float>(capacity - 1) * rowGap;
+            const float barX = rect.right - padX + FileTrayLayout::kScrollbarGap * scale;
+            const float barW = FileTrayLayout::kScrollbarWidth * scale;
+            const D2D1_RECT_F track = D2D1::RectF(barX, listTop, barX + barW, listTop + trackH);
+
+            if (ID2D1SolidColorBrush* trackBrush = AcquireBrush(material_.raisedStrong)) {
+                target_->FillRoundedRectangle(D2D1::RoundedRect(track, barW * 0.5f, barW * 0.5f),
+                                              trackBrush);
+            }
+
+            const float thumbH = std::max(14.0f * scale,
+                                          trackH * static_cast<float>(capacity) /
+                                              static_cast<float>(totalRows));
+            const int maxScroll = FileTrayMaxScroll(totalRows);
+            const float t = maxScroll > 0
+                ? static_cast<float>(scrollOffset) / static_cast<float>(maxScroll)
+                : 0.0f;
+            const float thumbTop = track.top + (trackH - thumbH) * t;
+            if (ID2D1SolidColorBrush* thumbBrush =
+                    AcquireBrush(WithAlpha(material_.accent, 0.80f * settingsOpacity_))) {
+                target_->FillRoundedRectangle(
+                    D2D1::RoundedRect(D2D1::RectF(track.left, thumbTop, track.right, thumbTop + thumbH),
+                                      barW * 0.5f, barW * 0.5f),
+                    thumbBrush);
+            }
         }
 
         textBrush_->SetOpacity(0.96f);
@@ -21412,6 +21718,8 @@ void AddPathsToFileTrayCore(const std::vector<std::wstring>& paths) {
         return;
     }
 
+    g_fileTrayScroll.store(0, std::memory_order_relaxed);  // show the newest file
+
     std::lock_guard lock(g_stateMutex);
     for (auto& item : added) {
         // Re-dropping a file promotes the existing entry instead of duplicating it.
@@ -21527,6 +21835,8 @@ void AddTextToFileTray(const std::wstring& rawText) {
     item.text = std::move(text);
     item.name = preview.empty() ? std::wstring(L"Text") : preview;
 
+    g_fileTrayScroll.store(0, std::memory_order_relaxed);  // show the newest snippet
+
     std::lock_guard lock(g_stateMutex);
     auto& items = g_state.fileTrayItems;
     // Pasting the same snippet again promotes it instead of duplicating it.
@@ -21608,6 +21918,208 @@ DWORD PickTrayDropEffect(DWORD allowed) {
     return DROPEFFECT_NONE;
 }
 
+// For non-file drags (browser images / links / text). Nothing is ever deleted from
+// the source for these, so MOVE is harmless and some apps only offer it.
+DWORD PickTrayDropEffectAny(DWORD allowed) {
+    if (allowed & DROPEFFECT_COPY) return DROPEFFECT_COPY;
+    if (allowed & DROPEFFECT_LINK) return DROPEFFECT_LINK;
+    if (allowed & DROPEFFECT_MOVE) return DROPEFFECT_MOVE;
+    return DROPEFFECT_NONE;
+}
+
+// ── Non-Explorer drops (Brave / Chrome / Edge / Firefox ...) ─────────────────
+CLIPFORMAT TrayFmtFileDescriptorW() {
+    static const CLIPFORMAT f = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW"));
+    return f;
+}
+CLIPFORMAT TrayFmtFileContents() {
+    static const CLIPFORMAT f = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileContents"));
+    return f;
+}
+CLIPFORMAT TrayFmtInetUrlW() {
+    static const CLIPFORMAT f = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"UniformResourceLocatorW"));
+    return f;
+}
+
+// True when the drag carries something the tray can keep. *realFiles is set only
+// for genuine CF_HDROP files (those are never allowed to be "moved").
+bool TrayDataAcceptable(IDataObject* data, bool* realFiles) {
+    *realFiles = false;
+    if (!data) return false;
+
+    FORMATETC fmt = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+    if (data->QueryGetData(&fmt) == S_OK) {
+        *realFiles = true;
+        return true;
+    }
+    fmt.cfFormat = TrayFmtFileDescriptorW();      // images dragged out of a browser
+    if (data->QueryGetData(&fmt) == S_OK) return true;
+    fmt.cfFormat = TrayFmtInetUrlW();             // dragged links
+    if (data->QueryGetData(&fmt) == S_OK) return true;
+    fmt.cfFormat = CF_UNICODETEXT;                // dragged text selections
+    if (data->QueryGetData(&fmt) == S_OK) return true;
+    return false;
+}
+
+std::wstring SanitizeDroppedFileName(std::wstring name) {
+    name = BaseNameFromPath(name);
+    for (wchar_t& c : name) {
+        if (c < 0x20 || wcschr(L"<>:\"/\\|?*", c) != nullptr) c = L'_';
+    }
+    while (!name.empty() && (name.back() == L' ' || name.back() == L'.')) name.pop_back();
+    if (name.empty()) name = L"dropped-file";
+    if (name.size() > 120) name.resize(120);
+    return name;
+}
+
+HANDLE CreateUniqueDroppedFile(const std::wstring& dir, const std::wstring& name,
+                               std::wstring* outPath) {
+    const size_t dot = name.find_last_of(L'.');
+    const bool hasExt = dot != std::wstring::npos && dot > 0;
+    const std::wstring stem = hasExt ? name.substr(0, dot) : name;
+    const std::wstring ext = hasExt ? name.substr(dot) : std::wstring();
+
+    for (int n = 0; n < 1000; ++n) {
+        const std::wstring suffix = n ? (L" (" + std::to_wstring(n) + L")") : std::wstring();
+        const std::wstring candidate = dir + L"\\" + stem + suffix + ext;
+        HANDLE h = CreateFileW(candidate.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                               FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            *outPath = candidate;
+            return h;
+        }
+        const DWORD err = GetLastError();
+        if (err != ERROR_FILE_EXISTS && err != ERROR_ALREADY_EXISTS) break;
+    }
+    return INVALID_HANDLE_VALUE;
+}
+
+bool WriteMediumToFile(STGMEDIUM& medium, HANDLE file) {
+    constexpr uint64_t kMaxBytes = 512ull * 1024 * 1024;
+    uint64_t total = 0;
+
+    if (medium.tymed == TYMED_ISTREAM && medium.pstm) {
+        LARGE_INTEGER zero = {};
+        medium.pstm->Seek(zero, STREAM_SEEK_SET, nullptr);
+        std::vector<BYTE> buffer(64 * 1024);
+        for (;;) {
+            ULONG got = 0;
+            const HRESULT hr = medium.pstm->Read(buffer.data(), static_cast<ULONG>(buffer.size()), &got);
+            if (got > 0) {
+                DWORD written = 0;
+                if (!WriteFile(file, buffer.data(), got, &written, nullptr) || written != got) return false;
+                total += got;
+                if (total > kMaxBytes) return false;
+            }
+            if (hr != S_OK || got == 0) break;
+        }
+        return total > 0;
+    }
+
+    if (medium.tymed == TYMED_HGLOBAL && medium.hGlobal) {
+        const SIZE_T size = GlobalSize(medium.hGlobal);
+        if (size == 0 || size > kMaxBytes) return false;
+        void* src = GlobalLock(medium.hGlobal);
+        if (!src) return false;
+        DWORD written = 0;
+        const BOOL ok = WriteFile(file, src, static_cast<DWORD>(size), &written, nullptr);
+        GlobalUnlock(medium.hGlobal);
+        return ok && written == size;
+    }
+    return false;
+}
+
+// Browser images have no file on disk, so they are saved into the mod's storage
+// folder (filetray\dropped) and the saved path goes on the shelf like any file.
+bool ExtractVirtualFilePaths(IDataObject* data, std::vector<std::wstring>* out) {
+    if (!data || !out) return false;
+
+    FORMATETC descFmt = {TrayFmtFileDescriptorW(), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+    STGMEDIUM descMedium = {};
+    if (FAILED(data->GetData(&descFmt, &descMedium))) return false;
+
+    std::vector<std::wstring> names;
+    std::vector<bool> skip;
+    if (descMedium.hGlobal) {
+        const SIZE_T size = GlobalSize(descMedium.hGlobal);
+        auto* group = static_cast<FILEGROUPDESCRIPTORW*>(GlobalLock(descMedium.hGlobal));
+        if (group && size >= sizeof(UINT)) {
+            const UINT maxFit = size >= sizeof(FILEGROUPDESCRIPTORW)
+                ? static_cast<UINT>(1 + (size - sizeof(FILEGROUPDESCRIPTORW)) / sizeof(FILEDESCRIPTORW))
+                : 0;
+            const UINT count = std::min<UINT>(group->cItems, std::min<UINT>(maxFit, 16));
+            for (UINT i = 0; i < count; ++i) {
+                const FILEDESCRIPTORW& fd = group->fgd[i];
+                wchar_t nameBuf[MAX_PATH + 1] = {};
+                wcsncpy_s(nameBuf, fd.cFileName, MAX_PATH);
+                names.push_back(nameBuf);
+                skip.push_back((fd.dwFlags & FD_ATTRIBUTES) &&
+                               (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY));
+            }
+        }
+        if (group) GlobalUnlock(descMedium.hGlobal);
+    }
+    ReleaseStgMedium(&descMedium);
+    if (names.empty()) return false;
+
+    wchar_t storagePath[MAX_PATH] = {};
+    if (!Wh_GetModStoragePath(storagePath, ARRAYSIZE(storagePath))) return false;
+    const std::wstring dir = std::wstring(storagePath) + L"\\filetray\\dropped";
+    SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+
+    for (size_t i = 0; i < names.size(); ++i) {
+        if (skip[i]) continue;
+
+        FORMATETC contentFmt = {TrayFmtFileContents(), nullptr, DVASPECT_CONTENT,
+                                static_cast<LONG>(i), TYMED_ISTREAM | TYMED_HGLOBAL};
+        STGMEDIUM content = {};
+        if (FAILED(data->GetData(&contentFmt, &content))) continue;
+
+        std::wstring savedPath;
+        HANDLE file = CreateUniqueDroppedFile(dir, SanitizeDroppedFileName(names[i]), &savedPath);
+        if (file != INVALID_HANDLE_VALUE) {
+            const bool ok = WriteMediumToFile(content, file);
+            CloseHandle(file);
+            if (ok) {
+                out->push_back(savedPath);
+            } else {
+                DeleteFileW(savedPath.c_str());
+            }
+        }
+        ReleaseStgMedium(&content);
+    }
+    return !out->empty();
+}
+
+// Dragged link or selected text -> a text snippet on the shelf.
+bool ExtractDropText(IDataObject* data, std::wstring* out) {
+    if (!data || !out) return false;
+
+    const CLIPFORMAT formats[2] = {TrayFmtInetUrlW(), CF_UNICODETEXT};
+    for (CLIPFORMAT cf : formats) {
+        FORMATETC fmt = {cf, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        STGMEDIUM medium = {};
+        if (FAILED(data->GetData(&fmt, &medium))) continue;
+
+        std::wstring text;
+        if (medium.hGlobal) {
+            const SIZE_T maxChars = GlobalSize(medium.hGlobal) / sizeof(wchar_t);
+            const auto* p = static_cast<const wchar_t*>(GlobalLock(medium.hGlobal));
+            if (p) {
+                text.assign(p, wcsnlen_s(p, maxChars));
+                GlobalUnlock(medium.hGlobal);
+            }
+        }
+        ReleaseStgMedium(&medium);
+
+        if (!text.empty()) {
+            *out = std::move(text);
+            return true;
+        }
+    }
+    return false;
+}
+
 // Receives drags while they are still hovering, which is what lets the island
 // expand onto the File Tray *before* the drop.
 class TrayDropTarget final : public IDropTarget {
@@ -21631,9 +22143,10 @@ class TrayDropTarget final : public IDropTarget {
 
     STDMETHODIMP DragEnter(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
         accept_ = false;
+        realFiles_ = false;
         if (!g_trayInternalDrag.load() && TrayModuleEnabled() && data) {
-            FORMATETC fmt = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-            accept_ = (data->QueryGetData(&fmt) == S_OK);
+            // Explorer files, browser images (virtual files), links and text.
+            accept_ = TrayDataAcceptable(data, &realFiles_);
         }
 
         if (accept_) {
@@ -21647,7 +22160,7 @@ class TrayDropTarget final : public IDropTarget {
             TriggerNudge();
         }
         if (effect) {
-            *effect = accept_ ? PickTrayDropEffect(*effect) : DROPEFFECT_NONE;
+            *effect = accept_ ? PickEffect(*effect) : DROPEFFECT_NONE;
         }
         return S_OK;
     }
@@ -21657,13 +22170,14 @@ class TrayDropTarget final : public IDropTarget {
             g_idleTab = tab_;  // stay on the tray while the island expands
         }
         if (effect) {
-            *effect = accept_ ? PickTrayDropEffect(*effect) : DROPEFFECT_NONE;
+            *effect = accept_ ? PickEffect(*effect) : DROPEFFECT_NONE;
         }
         return S_OK;
     }
 
     STDMETHODIMP DragLeave() override {
         accept_ = false;
+        realFiles_ = false;
         g_trayDragOver = false;
         g_layoutDirty = true;
         return S_OK;
@@ -21671,11 +22185,29 @@ class TrayDropTarget final : public IDropTarget {
 
     STDMETHODIMP Drop(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
         std::vector<std::wstring> paths;
-        const bool ok = accept_ && ExtractDropPaths(data, &paths);
+        std::wstring text;
+        bool gotFiles = false;
+        bool gotText = false;
+
+        if (accept_ && data) {
+            gotFiles = ExtractDropPaths(data, &paths);               // Explorer
+            if (!gotFiles) {
+                paths.clear();
+                gotFiles = ExtractVirtualFilePaths(data, &paths);    // browser images
+            }
+            if (!gotFiles) {
+                gotText = ExtractDropText(data, &text);              // links / text
+            }
+        }
         accept_ = false;
 
-        if (ok) {
-            AddPathsToFileTray(paths);
+        if (gotFiles || gotText) {
+            if (gotFiles) {
+                AddPathsToFileTray(paths);
+            } else {
+                AddTextToFileTray(text);
+                SaveFileTray();
+            }
             const int tab = FileTrayTabIndex(GetSettingsCopy());
             if (tab >= 0) {
                 g_idleTab = tab;
@@ -21683,17 +22215,25 @@ class TrayDropTarget final : public IDropTarget {
             g_clickExpanded = true;
             g_layoutDirty = true;
             TriggerNudge();
-            if (effect) *effect = PickTrayDropEffect(*effect);
+            if (effect) *effect = PickEffect(*effect);
         } else if (effect) {
             *effect = DROPEFFECT_NONE;
         }
+        realFiles_ = false;
         g_trayDragOver = false;
         return S_OK;
     }
 
    private:
+    // Real files are never "moved" (the source would delete them); browser
+    // content has nothing to delete, so any effect is fine there.
+    DWORD PickEffect(DWORD allowed) const {
+        return realFiles_ ? PickTrayDropEffect(allowed) : PickTrayDropEffectAny(allowed);
+    }
+
     std::atomic<LONG> refs_{1};
     bool accept_ = false;
+    bool realFiles_ = false;
     int tab_ = -1;
 };
 
@@ -22106,7 +22646,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         s_trayPressPt.x = xPos;
                         s_trayPressPt.y = yPos;
                         s_trayPressPath =
-                            g_state.fileTrayItems[static_cast<size_t>(count - 1 - row)].path;
+                            g_state.fileTrayItems[static_cast<size_t>(
+                                count - 1 - (row + FileTrayScrollOffset(count)))].path;
                     }
                 }
 
@@ -22233,10 +22774,13 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 }
                 const MediaContentPoint trayPt = MediaContentFromClient(xPos, yPos);
                 hoveredRow = FileTrayRowAtContentPoint(trayPt, static_cast<int>(trayCount));
+                const int pagerHit = FileTrayPagerHitTest(trayPt, static_cast<int>(trayCount));
                 if (trayCount > 0 && FileTrayClearHitTest(trayPt)) {
                     hoveredAction = -2;
                 } else if (FileTrayPasteHitTest(trayPt)) {
                     hoveredAction = -3;
+                } else if (pagerHit >= 0) {
+                    hoveredAction = pagerHit == 0 ? -4 : -5;
                 } else if (hoveredRow >= 0 && FileTrayRemoveHitTest(trayPt, hoveredRow)) {
                     hoveredAction = hoveredRow;
                 }
@@ -22409,6 +22953,21 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     const bool wasPressed = s_trayPressActive;
                     s_trayPressActive = false;
 
+                    {
+                        int pagerCount = 0;
+                        {
+                            std::lock_guard lock(g_stateMutex);
+                            pagerCount = static_cast<int>(g_state.fileTrayItems.size());
+                        }
+                        const int pagerHit = FileTrayPagerHitTest(cp, pagerCount);
+                        if (pagerHit >= 0) {
+                            FileTrayPageBy(pagerCount, pagerHit == 0 ? -1 : 1);
+                            g_hoveredFileTrayRow = -1;
+                            g_layoutDirty = true;
+                            return 0;
+                        }
+                    }
+
                     if (FileTrayPasteHitTest(cp)) {
                         PasteIntoFileTray(hwnd);
                         g_layoutDirty = true;
@@ -22427,8 +22986,9 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         } else {
                             const int row = FileTrayRowAtContentPoint(cp, count);
                             if (row >= 0) {
-                                // Rows render newest-first, so map back from the end.
-                                const size_t index = static_cast<size_t>(count - 1 - row);
+                                // Rows render newest-first and may be scrolled, so map back from the end.
+                                const size_t index = static_cast<size_t>(
+                                    count - 1 - (row + FileTrayScrollOffset(count)));
                                 if (FileTrayRemoveHitTest(cp, row)) {
                                     g_state.fileTrayItems.erase(
                                         g_state.fileTrayItems.begin() + static_cast<std::ptrdiff_t>(index));
@@ -22550,6 +23110,57 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             const ULONGLONG wheelNow = GetTickCount64();
             const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
             if (delta == 0) return 0;
+
+            // File Tray: with the cursor over the list, the wheel scrolls it row by row.
+            // At the top / bottom edge the list swallows leftover inertia of the same
+            // gesture; a fresh gesture there falls through and switches tabs as usual.
+            // Over the header or the pagination dots the wheel always switches tabs.
+            if (g_fileTrayWheelOn.load(std::memory_order_relaxed) &&
+                g_settings.fileTrayModule &&
+                NormalizedTabIndex(g_settings) == FileTrayTabIndex(g_settings)) {
+                POINT wheelPt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ScreenToClient(hwnd, &wheelPt);
+                const MediaContentPoint wheelCp = MediaContentFromClient(wheelPt.x, wheelPt.y);
+
+                int trayCount = 0;
+                {
+                    std::lock_guard lock(g_stateMutex);
+                    trayCount = static_cast<int>(g_state.fileTrayItems.size());
+                }
+
+                if (trayCount > FileTrayRestCapacity() && FileTrayListHitTest(wheelCp)) {
+                    static int s_trayWheelAccum = 0;
+                    static ULONGLONG s_trayGestureTick = 0;
+
+                    const int dir = delta > 0 ? -1 : 1;  // wheel up = toward the newest files
+                    const int offset = FileTrayScrollOffset(trayCount);
+                    const bool canScroll =
+                        dir < 0 ? offset > 0 : offset < FileTrayMaxScroll(trayCount);
+
+                    if (canScroll) {
+                        s_trayGestureTick = wheelNow;
+                        if (s_trayWheelAccum != 0 && ((delta > 0) != (s_trayWheelAccum > 0))) {
+                            s_trayWheelAccum = 0;
+                        }
+                        s_trayWheelAccum += delta;
+                        const int steps = abs(s_trayWheelAccum) / WHEEL_DELTA;
+                        if (steps > 0) {
+                            s_trayWheelAccum -=
+                                (s_trayWheelAccum > 0 ? 1 : -1) * steps * WHEEL_DELTA;
+                            FileTrayScrollBy(trayCount, dir * steps);
+                            g_hoveredFileTrayRow = FileTrayRowAtContentPoint(wheelCp, trayCount);
+                            g_hoveredFileTrayAction = -1;
+                            g_layoutDirty = true;
+                        }
+                        return 0;
+                    }
+                    if (wheelNow - s_trayGestureTick < 300) {
+                        s_trayGestureTick = wheelNow;  // inertia of the gesture that hit the edge
+                        return 0;
+                    }
+                    s_trayWheelAccum = 0;  // fresh gesture at the edge: fall through to tab switching
+                }
+            }
 
             // New gesture (pause, or direction change): forget the leftover.
             if (wheelNow - s_lastWheelEvent > 220 ||
@@ -22990,7 +23601,8 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool pinned = g_pinnedExpanded.load();
 
         if (primary.kind != previousPrimary) {
-            if (primary.kind != IslandKind::Idle) {
+            if (primary.kind != IslandKind::Idle &&
+                !(g_settings.stripMode && primary.kind == IslandKind::Media)) {
                 nudgeSpring.value = -6.0f;
                 nudgeSpring.velocity = 0.0f;
                 nudgeSpring.target = 0.0f;
@@ -23018,7 +23630,22 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         bool hover = false;
         if (widthSpring.value > 1.0f && heightSpring.value > 1.0f) {
-            hover = PtInRect(&pillRect, cursor) != FALSE;
+            RECT hoverRect = pillRect;
+            if (g_settings.stripMode) {
+                // Padding follows the chosen sensitivity while the island is still strip-sized,
+                // and eases back to the Medium margin as it opens so it can't flicker shut mid-expand.
+                const float stripH = StripModeLayout::kHeight * g_settings.sizeScale;
+                const float openH = MediaLayout::kExpandedHeight * g_settings.sizeScale;
+                const float openT = Clamp((heightSpring.value - stripH) / std::max(1.0f, openH - stripH), 0.0f, 1.0f);
+                const float padMul = StripModeLayout::HoverPadScale(g_settings.stripSensitivity) * (1.0f - openT) + openT;
+                const int padX = static_cast<int>(std::lround(StripModeLayout::kHoverPadX * g_settings.sizeScale * padMul));
+                const int padY = static_cast<int>(std::lround(StripModeLayout::kHoverPadY * g_settings.sizeScale * padMul));
+                hoverRect.left -= padX;
+                hoverRect.right += padX;
+                hoverRect.top -= padY;
+                hoverRect.bottom += padY;
+            }
+            hover = PtInRect(&hoverRect, cursor) != FALSE;
         } else if (g_settings.unhideOnHover) {
             RECT dockRect = GetIslandDockRect();
             hover = PtInRect(&dockRect, cursor) != FALSE;
@@ -23132,6 +23759,10 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool camIndicatorActive = snapshot.system.cameraActive && g_settings.privacyDots && g_settings.privacyDotsCam;
         const bool privacyActive = micIndicatorActive || camIndicatorActive;
 
+        // Strip mode: rest as a thin strip unless something needs the full island.
+        const bool stripActive = g_settings.stripMode && !hover && !pinned && !isTransientAlert &&
+                                 !privacyActive && !snapshot.timer.justFinished;
+
         // Whether any surface that actually draws CPU / RAM / disk / GPU / network
         // figures is on screen: the in-game overlay, or the idle dashboard's
         // Hardware Monitor tab while expanded (hovered or pinned) and scrolled into
@@ -23144,7 +23775,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool onHardwareMonitorTab = (metricTabIdx == HardwareMonitorTabIndex(g_settings));
         const bool hwMonitorVisible = (primary.kind == IslandKind::Idle || primary.kind == IslandKind::Media) &&
             !isFullscreen && !gameMetricsPresent && (pinned || isHoverExpanded) && onHardwareMonitorTab;
-        const bool gameOverlayVisible = gameMetricsPresent && !isFullscreen;
+        const bool gameOverlayVisible = gameMetricsPresent && !isFullscreen && !stripActive;
         const bool systemMetricsVisible = hwMonitorVisible || gameOverlayVisible;
 
         if (g_settings.brightness && !pollBusy && now >= nextBrightnessPoll) {
@@ -23152,7 +23783,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             nextBrightnessPoll = now + 0.25;
         }
 
-        if (!pollBusy && now >= nextSystemPoll) {
+        if (!pollBusy && !stripActive && now >= nextSystemPoll) {
             const bool needGpuStats = gameOverlayVisible || hwMonitorVisible;
             const bool needNetStats = hwMonitorVisible;  // net is only ever drawn in the HW dashboard
 
@@ -23224,6 +23855,12 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
         }
 
+        if (stripActive && primary.width > 0.0f) {
+            primary.width = StripModeLayout::kWidth * g_settings.sizeScale;
+            primary.height = StripModeLayout::kHeight * g_settings.sizeScale;
+            secondary.reset();
+        }
+
         const bool fullscreenSuppressed =
             isFullscreen && !g_fullscreenOverrideVisible.load(std::memory_order_relaxed);
         if ((isHidden || fullscreenSuppressed) && !privacyActive && !pinned && !isHoverExpanded && !isTransientAlert) {
@@ -23233,7 +23870,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         }
 
         const bool mediaWaveformVisible =
-            g_settings.media && snapshot.media.playing &&
+            g_settings.media && snapshot.media.playing && !stripActive &&
             ((primary.kind == IslandKind::Media && primary.width > 1.0f && primary.height > 1.0f) ||
              (secondary && secondary->kind == IslandKind::Media && secondary->width > 1.0f && secondary->height > 1.0f));
         g_audioCaptureNeeded.store(mediaWaveformVisible, std::memory_order_relaxed);
@@ -23330,7 +23967,8 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool ctrlHeld = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool ctrlHoverCT = hover && ctrlHeld && !g_lookupUi.open;
 
-        SetClickThrough(hwnd, (primary.kind == IslandKind::Idle && !draggingOrHover && !pinned) || ctrlHoverCT);
+        SetClickThrough(hwnd, (primary.kind == IslandKind::Idle && !draggingOrHover && !pinned) ||
+                                  stripActive || ctrlHoverCT);
 
         // Check if animating structurally
         if (std::abs(widthSpring.velocity) > 0.01f || std::abs(widthSpring.target - widthSpring.value) > 0.01f ||
@@ -23431,7 +24069,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool mediaShown = primary.kind == IslandKind::Media ||
                                 (secondary && secondary->kind == IslandKind::Media);
         const bool mediaAnimating =
-            mediaShown && (snapshot.media.playing || isHoverExpanded || pinned);
+            mediaShown && !stripActive && (snapshot.media.playing || isHoverExpanded || pinned);
 
         // Transient alert pills. All expire within a few seconds, so treating them as
         // continuous cannot run away.
@@ -23464,9 +24102,9 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         // Idle dashboard clock changes once a minute
         static SYSTEMTIME prevTime = {};
-        const bool clockOnScreen =
-            primary.kind == IslandKind::Idle ||
-            (primary.kind == IslandKind::Media && g_settings.mediaPillClock);
+        const bool clockOnScreen = !stripActive &&
+            (primary.kind == IslandKind::Idle ||
+             (primary.kind == IslandKind::Media && g_settings.mediaPillClock));
         if (clockOnScreen && !isHidden) {
             SYSTEMTIME local = {};
             GetLocalTime(&local);
@@ -23495,7 +24133,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         int shownSecond = -1;
         const bool timerShown = primary.kind == IslandKind::Timer ||
                                (secondary && secondary->kind == IslandKind::Timer);
-        if (timerShown && snapshot.timer.running) {
+        if (timerShown && !stripActive && snapshot.timer.running) {
             shownSecond = static_cast<int>(std::ceil(snapshot.timer.endsAt - now));
         } else if (clockOnScreen && g_settings.showSeconds && !isHidden) {
             SYSTEMTIME st = {};
@@ -23675,9 +24313,8 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         if (!needsRender) {
             // Nothing changed on screen, so poll at ~60Hz rather than the target
-            // frame rate. Accuracy does not matter here -- this is a poll interval,
-            // not frame pacing -- so it runs at whatever resolution is in effect.
-            WaitForSingleObject(g_stopEvent, 16);
+            // frame rate. A settled strip only needs to notice the cursor, so ~20Hz.
+            WaitForSingleObject(g_stopEvent, (stripActive && !springsAnimating) ? 50 : 16);
             nextFrameTarget = std::chrono::steady_clock::now();
         } else if (springsAnimating && g_settings.targetFps <= 0 && SUCCEEDED(DwmFlush())) {
             // Auto FPS while the island is resizing: block until DWM's next
