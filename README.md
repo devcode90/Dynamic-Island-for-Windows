@@ -136,7 +136,7 @@ Found a bug? Have a cool feature idea? We want to hear from you! Please drop an 
 
 ## 🙌 Shoutouts
 
-- **[Sarthak Singh (sarthakaksh)](https://github.com/sarthakaksh)**: Major feature overhaul including smoothing animations, lyrics for songs, quick lookup, Cross-Source Media Switching, the right-click focus timer, hover clock, robust media controls, zero-CPU instant hide shortcut, Bluetooth battery integration, image clipboard thumbnails, and full-screen autohide fixes.
+- **[Sarthak Singh (sarthakaksh)](https://github.com/sarthakaksh)**: Major feature overhaul including smoothing animations, strip mode, lyrics for songs, quick lookup, Cross-Source Media Switching, the right-click focus timer, hover clock, robust media controls, zero-CPU instant hide shortcut, Bluetooth battery integration, image clipboard thumbnails, and full-screen autohide fixes.
 - **[ciizerr](https://github.com/ciizerr)**: Massive thanks for fixing UI alignments, smoothing out the dashboard sizing, and polishing the calendar and weather tabs.
 - **[ChrisSch-dev @GitHub](https://github.com/ChrisSch-dev)**: Added album title support, word wrapping for weather descriptions, sleep resume fixes, and various performance/movement stability improvements.
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color extraction, reorganized settings into logical categories, and fixed various UI, media, and theme edge cases.
