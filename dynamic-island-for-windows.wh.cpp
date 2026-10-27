@@ -12063,7 +12063,9 @@ class Renderer {
         // True while the island is collapsing to nothing (auto-hide / fullscreen).
         islandHiding_ = primary.width < 1.0f && primary.height < 1.0f && !secondary;
 
-        const float hoverScale = (settings.expandOnHover && ((hover && !gameMetricsPresent) || pinned)) ? 1.025f : 1.0f;
+        // Subtle hover scale even in expand-on-click mode (#100): without it the
+        // island gave no feedback that it was interactive until clicked.
+        const float hoverScale = ((hover && !gameMetricsPresent) || pinned) ? 1.025f : 1.0f;
         const float scale = hoverScale;
         hoverScale_ = scale;
 
@@ -23653,7 +23655,8 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         // A file drag hovering over the island counts as hover, so it expands onto
         // the File Tray even with "Expand on hover" turned off.
-        if (g_trayDragOver.load(std::memory_order_relaxed)) {
+        const bool trayDragOver = g_trayDragOver.load(std::memory_order_relaxed);
+        if (trayDragOver) {
             hover = true;
         }
 
@@ -23704,7 +23707,10 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
         }
 
-        bool isHoverExpanded = g_settings.expandOnHover ? hover : (hover && g_clickExpanded.load());
+        // Expand-on-click still opens for a File Tray drag (#100): requiring
+        // g_clickExpanded left the shelf with no expand animation at all.
+        bool isHoverExpanded = g_settings.expandOnHover ? hover
+                                                       : (hover && (g_clickExpanded.load() || trayDragOver));
         const bool gameMetricsPresent = primary.kind == IslandKind::Idle &&
             (g_settings.gameOverlay || g_gameOverlayPinned.load());
         if (gameMetricsPresent) {
