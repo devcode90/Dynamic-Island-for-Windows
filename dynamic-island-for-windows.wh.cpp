@@ -2223,6 +2223,52 @@ const wchar_t* Loc(const wchar_t* english) {
         {L"Wind", {nullptr, L"Vent", L"Viento", L"Wind", L"Vento", L"Vento", L"Ветер", L"Rüzgar", L"हवा", L"风速", L"風", L"바람"}},
         {L"Feels Like", {nullptr, L"Ressenti", L"Sensación", L"Gefühlt", L"Sensação", L"Percepita", L"Ощущается", L"Hissedilen", L"महसूस", L"体感", L"体感", L"체감"}},
         {L"Humidity", {nullptr, L"Humidité", L"Humedad", L"Luftfeuchte", L"Umidade", L"Umidità", L"Влажность", L"Nem", L"नमी", L"湿度", L"湿度", L"습도"}},
+        {L"Sunny", {nullptr, L"Ensoleillé", L"Soleado", L"Sonnig", L"Ensolarado", L"Soleggiato", L"Солнечно", L"Güneşli", L"धूप", L"晴", L"晴れ", L"맑음"}},
+        {L"Partly cloudy", {nullptr, L"Partiellement nuageux", L"Parcialmente nublado", L"Teilweise bewölkt", L"Parcialmente nublado", L"Parzialmente nuvoloso", L"Переменная облачность", L"Parçalı bulutlu", L"आंशिक बादल", L"局部多云", L"晴れ時々曇り", L"구름 조금"}},
+        {L"Cloudy", {nullptr, L"Nuageux", L"Nublado", L"Bewölkt", L"Nublado", L"Nuvoloso", L"Облачно", L"Bulutlu", L"बादल", L"多云", L"曇り", L"흐림"}},
+        {L"Overcast", {nullptr, L"Couvert", L"Cubierto", L"Bedeckt", L"Encoberto", L"Coperto", L"Пасмурно", L"Kapalı", L"घने बादल", L"阴", L"くもり", L"흐림"}},
+        {L"Mist", {nullptr, L"Brume", L"Neblina", L"Leichter Nebel", L"Névoa", L"Nebbia", L"Дымка", L"Sis", L"धुंध", L"薄雾", L"もや", L"옅은 안개"}},
+        {L"Patchy rain possible", {nullptr, L"Pluie éparse possible", L"Posible lluvia dispersa", L"Stellenweise Regen möglich", L"Possível chuva irregular", L"Pioviggine possibile", L"Возможен местами дождь", L"Yer yer yağmur olabilir", L"कहीं-कहीं बारिश संभव", L"局部可能有雨", L"所により雨", L"곳곳 비 가능"}},
+        {L"Patchy snow possible", {nullptr, L"Neige éparse possible", L"Posible nieve dispersa", L"Stellenweise Schnee möglich", L"Possível neve irregular", L"Neve possibile", L"Возможен местами снег", L"Yer yer kar olabilir", L"कहीं-कहीं बर्फ संभव", L"局部可能有雪", L"所により雪", L"곳곳 눈 가능"}},
+        {L"Patchy sleet possible", {nullptr, L"Grésil éparse possible", L"Posible aguanieve dispersa", L"Stellenweise Schneeregen möglich", L"Possível granizo irregular", L"Nevischio possibile", L"Возможен местами мокрый снег", L"Yer yer sulu kar olabilir", L"कहीं-कहीं ओले संभव", L"局部可能有雨夹雪", L"所によりみぞれ", L"곳곳 진눈깨비 가능"}},
+        {L"Patchy freezing drizzle possible", {nullptr, L"Grésil verglaçant éparse possible", L"Posible llovizna helada dispersa", L"Stellenweise gefrierender Nieselregen möglich", L"Possível garoa congelante irregular", L"Pioggerella gelata possibile", L"Возможна местами ледяная морось", L"Yer yer dondurucu çisenti olabilir", L"कहीं-कहीं जमी बूंदाबांदी", L"局部可能有冻毛毛雨", L"所により着氷性の霧雨", L"곳곳 어는 이슬비 가능"}},
+        {L"Thundery outbreaks possible", {nullptr, L"Orages possibles", L"Posibles tormentas", L"Gewitter möglich", L"Trovoadas possíveis", L"Temporali possibili", L"Возможны грозы", L"Gök gürültülü fırtınalar olabilir", L"गरज संभव", L"可能有雷暴", L"所により雷雨", L"곳곳 천둥번개 가능"}},
+        {L"Blowing snow", {nullptr, L"Neige soufflée", L"Nieve sopladora", L"Schneetreiben", L"Neve soprada", L"Neve soffiata", L"Позёмок", L"Tipi kar", L"उड़ती बर्फ", L"吹雪", L"吹雪", L"날리는 눈"}},
+        {L"Blizzard", {nullptr, L"Blizzard", L"Ventisca", L"Schneesturm", L"Nevasca", L"Bufera di neve", L"Метель", L"Kar fırtınası", L"बर्फ़ीला तूफ़ान", L"暴风雪", L"猛吹雪", L"눈보라"}},
+        {L"Fog", {nullptr, L"Brouillard", L"Niebla", L"Nebel", L"Nevoeiro", L"Nebbia", L"Туман", L"Sis", L"कोहरा", L"雾", L"霧", L"안개"}},
+        {L"Freezing fog", {nullptr, L"Brouillard givrant", L"Niebla helada", L"Gefrierender Nebel", L"Nevoeiro congelante", L"Nebbia gelata", L"Ледяной туман", L"Dondurucu sis", L"जमी कोहरा", L"冻雾", L"着氷性の霧", L"어는 안개"}},
+        {L"Patchy light drizzle", {nullptr, L"Grisaille légère éparse", L"Llovizna ligera dispersa", L"Stellenweise leichter Nieselregen", L"Garoa leve irregular", L"Pioggerella leggera", L"Местами слабая морось", L"Yer yer hafif çisenti", L"कहीं-कहीं हल्की बूंदाबांदी", L"局部小毛毛雨", L"所により弱い霧雨", L"곳곳 약한 이슬비"}},
+        {L"Light drizzle", {nullptr, L"Grisaille légère", L"Llovizna ligera", L"Leichter Nieselregen", L"Garoa leve", L"Pioggerella leggera", L"Слабая морось", L"Hafif çisenti", L"हल्की बूंदाबांदी", L"小毛毛雨", L"弱い霧雨", L"약한 이슬비"}},
+        {L"Freezing drizzle", {nullptr, L"Grisaille verglaçante", L"Llovizna helada", L"Gefrierender Nieselregen", L"Garoa congelante", L"Pioggerella gelata", L"Ледяная морось", L"Dondurucu çisenti", L"जमी बूंदाबांदी", L"冻毛毛雨", L"着氷性の霧雨", L"어는 이슬비"}},
+        {L"Heavy freezing drizzle", {nullptr, L"Forte grisaille verglaçante", L"Llovizna helada intensa", L"Starker gefrierender Nieselregen", L"Garoa congelante forte", L"Pioggerella gelata intensa", L"Сильная ледяная морось", L"Şiddetli dondurucu çisenti", L"भारी जमी बूंदाबांदी", L"大冻毛毛雨", L"強い着氷性の霧雨", L"강한 어는 이슬비"}},
+        {L"Patchy light rain", {nullptr, L"Pluie faible éparse", L"Lluvia ligera dispersa", L"Stellenweise leichter Regen", L"Chuva fraca irregular", L"Pioggia leggera", L"Местами слабый дождь", L"Yer yer hafif yağmur", L"कहीं-कहीं हल्की बारिश", L"局部小雨", L"所により弱い雨", L"곳곳 약한 비"}},
+        {L"Light rain", {nullptr, L"Pluie faible", L"Lluvia ligera", L"Leichter Regen", L"Chuva fraca", L"Pioggia leggera", L"Слабый дождь", L"Hafif yağmur", L"हल्की बारिश", L"小雨", L"弱い雨", L"약한 비"}},
+        {L"Moderate rain at times", {nullptr, L"Pluie modérée par moments", L"Lluvia moderada a intervalos", L"Zeitweise mäßiger Regen", L"Chuva moderada por vezes", L"Pioggia moderata a tratti", L"Временами умеренный дождь", L"Zaman zaman orta şiddette yağmur", L"कभी-कभी मध्यम बारिश", L"时有中雨", L"時々並の雨", L"때때로 보통 비"}},
+        {L"Moderate rain", {nullptr, L"Pluie modérée", L"Lluvia moderada", L"Mäßiger Regen", L"Chuva moderada", L"Pioggia moderata", L"Умеренный дождь", L"Orta şiddette yağmur", L"मध्यम बारिश", L"中雨", L"並の雨", L"보통 비"}},
+        {L"Heavy rain at times", {nullptr, L"Forte pluie par moments", L"Lluvia intensa a intervalos", L"Zeitweise starker Regen", L"Chuva forte por vezes", L"Pioggia intensa a tratti", L"Временами сильный дождь", L"Zaman zaman şiddetli yağmur", L"कभी-कभी तेज़ बारिश", L"时有大雨", L"時々強い雨", L"때때로 강한 비"}},
+        {L"Heavy rain", {nullptr, L"Forte pluie", L"Lluvia intensa", L"Starker Regen", L"Chuva forte", L"Pioggia intensa", L"Сильный дождь", L"Şiddetli yağmur", L"तेज़ बारिश", L"大雨", L"強い雨", L"강한 비"}},
+        {L"Light freezing rain", {nullptr, L"Pluie verglaçante faible", L"Lluvia helada ligera", L"Leichter gefrierender Regen", L"Chuva congelante fraca", L"Pioggia gelata leggera", L"Слабый ледяной дождь", L"Hafif dondurucu yağmur", L"हल्की जमी बारिश", L"小冻雨", L"弱い着氷性の雨", L"약한 어는 비"}},
+        {L"Moderate or heavy freezing rain", {nullptr, L"Pluie verglaçante modérée ou forte", L"Lluvia helada moderada o intensa", L"Mäßiger oder starker gefrierender Regen", L"Chuva congelante moderada ou forte", L"Pioggia gelata moderata o intensa", L"Умеренный или сильный ледяной дождь", L"Orta veya şiddetli dondurucu yağmur", L"मध्यम या तेज़ जमी बारिश", L"中到大冻雨", L"並から強い着氷性の雨", L"보통 또는 강한 어는 비"}},
+        {L"Light sleet", {nullptr, L"Grésil faible", L"Aguanieve ligera", L"Leichter Schneeregen", L"Granizo fraco", L"Nevischio leggero", L"Слабый мокрый снег", L"Hafif sulu kar", L"हल्की ओले", L"小雨夹雪", L"弱いみぞれ", L"약한 진눈깨비"}},
+        {L"Moderate or heavy sleet", {nullptr, L"Grésil modéré ou fort", L"Aguanieve moderada o intensa", L"Mäßiger oder starker Schneeregen", L"Granizo moderado ou forte", L"Nevischio moderato o intenso", L"Умеренный или сильный мокрый снег", L"Orta veya şiddetli sulu kar", L"मध्यम या तेज़ ओले", L"中到大雨夹雪", L"並から強いみぞれ", L"보통 또는 강한 진눈깨비"}},
+        {L"Patchy light snow", {nullptr, L"Neige faible éparse", L"Nieve ligera dispersa", L"Stellenweise leichter Schneefall", L"Neve fraca irregular", L"Neve leggera", L"Местами слабый снег", L"Yer yer hafif kar", L"कहीं-कहीं हल्की बर्फ", L"局部小雪", L"所により弱い雪", L"곳곳 약한 눈"}},
+        {L"Light snow", {nullptr, L"Neige faible", L"Nieve ligera", L"Leichter Schneefall", L"Neve fraca", L"Neve leggera", L"Слабый снег", L"Hafif kar", L"हल्की बर्फ", L"小雪", L"弱い雪", L"약한 눈"}},
+        {L"Patchy moderate snow", {nullptr, L"Neige modérée éparse", L"Nieve moderada dispersa", L"Stellenweise mäßiger Schneefall", L"Neve moderada irregular", L"Neve moderata", L"Местами умеренный снег", L"Yer yer orta şiddette kar", L"कहीं-कहीं मध्यम बर्फ", L"局部中雪", L"所により並の雪", L"곳곳 보통 눈"}},
+        {L"Moderate snow", {nullptr, L"Neige modérée", L"Nieve moderada", L"Mäßiger Schneefall", L"Neve moderada", L"Neve moderata", L"Умеренный снег", L"Orta şiddette kar", L"मध्यम बर्फ", L"中雪", L"並の雪", L"보통 눈"}},
+        {L"Patchy heavy snow", {nullptr, L"Forte neige éparse", L"Nieve intensa dispersa", L"Stellenweise starker Schneefall", L"Neve forte irregular", L"Neve intensa", L"Местами сильный снег", L"Yer yer şiddetli kar", L"कहीं-कहीं तेज़ बर्फ", L"局部大雪", L"所により強い雪", L"곳곳 강한 눈"}},
+        {L"Heavy snow", {nullptr, L"Forte neige", L"Nieve intensa", L"Starker Schneefall", L"Neve forte", L"Neve intensa", L"Сильный снег", L"Şiddetli kar", L"तेज़ बर्फ", L"大雪", L"強い雪", L"강한 눈"}},
+        {L"Ice pellets", {nullptr, L"Grésil", L"Granizo", L"Eisregen", L"Granizo", L"Granuli di ghiaccio", L"Ледяная крупа", L"Buz taneleri", L"बर्फ के गोले", L"冰粒", L"あられ", L"얼음 알갱이"}},
+        {L"Light rain shower", {nullptr, L"Averse de pluie faible", L"Chubasco ligero", L"Leichter Regenschauer", L"Pancada de chuva fraca", L"Rovescio leggero", L"Слабый ливневый дождь", L"Hafif sağanak", L"हल्की बौछार", L"小阵雨", L"弱いにわか雨", L"약한 소나기"}},
+        {L"Moderate or heavy rain shower", {nullptr, L"Averse de pluie modérée ou forte", L"Chubasco moderado o intenso", L"Mäßiger oder starker Regenschauer", L"Pancada de chuva moderada ou forte", L"Rovescio moderato o intenso", L"Умеренный или сильный ливневый дождь", L"Orta veya şiddetli sağanak", L"मध्यम या तेज़ बौछार", L"中到大阵雨", L"並から強いにわか雨", L"보통 또는 강한 소나기"}},
+        {L"Torrential rain shower", {nullptr, L"Averse torrentielle", L"Chubasco torrencial", L"Regenschauer der Starkregen", L"Pancada torrencial", L"Rovescio torrenziale", L"Сильнейший ливневый дождь", L"Şiddetli sağanak yağmur", L"मूसलधार बौछार", L"暴雨", L"激しいにわか雨", L"폭우"}},
+        {L"Light sleet showers", {nullptr, L"Averses de grésil faibles", L"Chubascos de aguanieve ligeros", L"Leichte Schneeregenschauer", L"Pancadas de granizo fracas", L"Rovesci di nevischio leggeri", L"Слабые ливни с мокрым снегом", L"Hafif sulu kar sağanağı", L"हल्की ओलावृष्टि", L"小阵性雨夹雪", L"弱いみぞれのにわか", L"약한 진눈깨비 소나기"}},
+        {L"Moderate or heavy sleet showers", {nullptr, L"Averses de grésil modérées ou fortes", L"Chubascos de aguanieve moderados o intensos", L"Mäßige oder starke Schneeregenschauer", L"Pancadas de granizo moderadas ou fortes", L"Rovesci di nevischio moderati o intensi", L"Умеренные или сильные ливни с мокрым снегом", L"Orta veya şiddetli sulu kar sağanağı", L"मध्यम या तेज़ ओलावृष्टि", L"中到大阵性雨夹雪", L"並から強いみぞれのにわか", L"보통 또는 강한 진눈깨비 소나기"}},
+        {L"Light snow showers", {nullptr, L"Averses de neige faibles", L"Chubascos de nieve ligeros", L"Leichte Schneeschauer", L"Pancadas de neve fracas", L"Rovesci di neve leggeri", L"Слабые снегопады", L"Hafif kar sağanağı", L"हल्की बर्फबारी", L"小阵雪", L"弱いにわか雪", L"약한 눈 소나기"}},
+        {L"Moderate or heavy snow showers", {nullptr, L"Averses de neige modérées ou fortes", L"Chubascos de nieve moderados o intensos", L"Mäßige oder starke Schneeschauer", L"Pancadas de neve moderadas ou fortes", L"Rovesci di neve moderati o intensi", L"Умеренные или сильные снегопады", L"Orta veya şiddetli kar sağanağı", L"मध्यम या तेज़ बर्फबारी", L"中到大阵雪", L"並から強いにわか雪", L"보통 또는 강한 눈 소나기"}},
+        {L"Patchy light rain with thunder", {nullptr, L"Pluie faible éparse avec tonnerre", L"Lluvia ligera dispersa con truenos", L"Stellenweise leichter Regen mit Gewitter", L"Chuva fraca irregular com trovoadas", L"Pioggia leggera con temporali", L"Местами слабый дождь с грозой", L"Yer yer hafif yağmur ve gök gürültüsü", L"कहीं-कहीं हल्की बारिश और गरज", L"局部小雷阵雨", L"所により弱い雷雨", L"곳곳 약한 천둥번개 비"}},
+        {L"Moderate or heavy rain with thunder", {nullptr, L"Pluie modérée ou forte avec tonnerre", L"Lluvia moderada o intensa con truenos", L"Mäßiger oder starker Regen mit Gewitter", L"Chuva moderada ou forte com trovoadas", L"Pioggia moderata o intensa con temporali", L"Умеренный или сильный дождь с грозой", L"Orta veya şiddetli yağmur ve gök gürültüsü", L"मध्यम या तेज़ बारिश और गरज", L"中到大雷阵雨", L"並から強い雷雨", L"보통 또는 강한 천둥번개 비"}},
+        {L"Patchy light snow with thunder", {nullptr, L"Neige faible éparse avec tonnerre", L"Nieve ligera dispersa con truenos", L"Stellenweise leichter Schneefall mit Gewitter", L"Neve fraca irregular com trovoadas", L"Neve leggera con temporali", L"Местами слабый снег с грозой", L"Yer yer hafif kar ve gök gürültüsü", L"कहीं-कहीं हल्की बर्फ और गरज", L"局部小雷阵雪", L"所により弱い雷を伴う雪", L"곳곳 약한 천둥번개 눈"}},
+        {L"Moderate or heavy snow with thunder", {nullptr, L"Neige modérée ou forte avec tonnerre", L"Nieve moderada o intensa con truenos", L"Mäßiger oder starker Schneefall mit Gewitter", L"Neve moderada ou forte com trovoadas", L"Neve moderata o intensa con temporali", L"Умеренный или сильный снег с грозой", L"Orta veya şiddetli kar ve gök gürültüsü", L"मध्यम या तेज़ बर्फ और गरज", L"中到大雷阵雪", L"並から強い雷を伴う雪", L"보통 또는 강한 천둥번개 눈"}},
         {L"Drag files here", {nullptr, L"Déposez des fichiers ici", L"Arrastra archivos aquí", L"Dateien hierher ziehen", L"Arraste arquivos aqui", L"Trascina i file qui", L"Перетащите файлы сюда", L"Dosyaları buraya sürükleyin", L"फ़ाइलें यहाँ खींचें", L"将文件拖到此处", L"ここにファイルをドラッグ", L"여기에 파일을 끌어다 놓으세요"}},
         {L"No devices", {nullptr, L"Aucun appareil", L"Sin dispositivos", L"Keine Geräte", L"Nenhum dispositivo", L"Nessun dispositivo", L"Нет устройств", L"Cihaz yok", L"कोई डिवाइस नहीं", L"无设备", L"デバイスなし", L"장치 없음"}},
         {L"item", {nullptr, L"élément", L"elemento", L"Element", L"item", L"elemento", L"элемент", L"öğe", L"आइटम", L"项", L"項目", L"항목"}},
@@ -12833,31 +12879,125 @@ enum class WeatherVisual {
     Unknown,
 };
 
-// Groupings mirror GetWeatherIconAndText so both stay keyed off the same WWO
-// weather codes.
-WeatherVisual WeatherVisualFromCode(int code) {
+struct WeatherCodeMeta {
+    WeatherVisual visual;
+    const wchar_t* descKey;
+};
+
+// Single lookup for WWO / wttr.in weather codes: vector icon grouping and the
+// English Loc() key for the condition text stay in sync.
+static WeatherCodeMeta WeatherMetaForCode(int code) {
     switch (code) {
         case 113:
-            return WeatherVisual::Clear;
+            return {WeatherVisual::Clear, L"Sunny"};
         case 116:
-            return WeatherVisual::PartlyCloudy;
-        case 119: case 122:
-            return WeatherVisual::Cloudy;
-        case 143: case 248: case 260:
-            return WeatherVisual::Fog;
-        case 200: case 386: case 389: case 392: case 395:
-            return WeatherVisual::Storm;
-        case 176: case 263: case 266: case 281: case 284: case 293: case 296:
-        case 299: case 302: case 305: case 308: case 311: case 314: case 353:
-        case 356: case 359:
-            return WeatherVisual::Rain;
-        case 179: case 182: case 185: case 227: case 230: case 317: case 320:
-        case 323: case 326: case 329: case 332: case 335: case 338: case 350:
-        case 362: case 365: case 368: case 371:
-            return WeatherVisual::Snow;
+            return {WeatherVisual::PartlyCloudy, L"Partly cloudy"};
+        case 119:
+            return {WeatherVisual::Cloudy, L"Cloudy"};
+        case 122:
+            return {WeatherVisual::Cloudy, L"Overcast"};
+        case 143:
+            return {WeatherVisual::Fog, L"Mist"};
+        case 248:
+            return {WeatherVisual::Fog, L"Fog"};
+        case 260:
+            return {WeatherVisual::Fog, L"Freezing fog"};
+        case 200:
+            return {WeatherVisual::Storm, L"Thundery outbreaks possible"};
+        case 176:
+            return {WeatherVisual::Rain, L"Patchy rain possible"};
+        case 263:
+            return {WeatherVisual::Rain, L"Patchy light drizzle"};
+        case 266:
+            return {WeatherVisual::Rain, L"Light drizzle"};
+        case 281:
+            return {WeatherVisual::Rain, L"Freezing drizzle"};
+        case 284:
+            return {WeatherVisual::Rain, L"Heavy freezing drizzle"};
+        case 293:
+            return {WeatherVisual::Rain, L"Patchy light rain"};
+        case 296:
+            return {WeatherVisual::Rain, L"Light rain"};
+        case 299:
+            return {WeatherVisual::Rain, L"Moderate rain at times"};
+        case 302:
+            return {WeatherVisual::Rain, L"Moderate rain"};
+        case 305:
+            return {WeatherVisual::Rain, L"Heavy rain at times"};
+        case 308:
+            return {WeatherVisual::Rain, L"Heavy rain"};
+        case 311:
+            return {WeatherVisual::Rain, L"Light freezing rain"};
+        case 314:
+            return {WeatherVisual::Rain, L"Moderate or heavy freezing rain"};
+        case 353:
+            return {WeatherVisual::Rain, L"Light rain shower"};
+        case 356:
+            return {WeatherVisual::Rain, L"Moderate or heavy rain shower"};
+        case 359:
+            return {WeatherVisual::Rain, L"Torrential rain shower"};
+        case 386:
+            return {WeatherVisual::Storm, L"Patchy light rain with thunder"};
+        case 389:
+            return {WeatherVisual::Storm, L"Moderate or heavy rain with thunder"};
+        case 179:
+            return {WeatherVisual::Snow, L"Patchy snow possible"};
+        case 182:
+            return {WeatherVisual::Snow, L"Patchy sleet possible"};
+        case 185:
+            return {WeatherVisual::Snow, L"Patchy freezing drizzle possible"};
+        case 227:
+            return {WeatherVisual::Snow, L"Blowing snow"};
+        case 230:
+            return {WeatherVisual::Snow, L"Blizzard"};
+        case 317:
+            return {WeatherVisual::Snow, L"Light sleet"};
+        case 320:
+            return {WeatherVisual::Snow, L"Moderate or heavy sleet"};
+        case 323:
+            return {WeatherVisual::Snow, L"Patchy light snow"};
+        case 326:
+            return {WeatherVisual::Snow, L"Light snow"};
+        case 329:
+            return {WeatherVisual::Snow, L"Patchy moderate snow"};
+        case 332:
+            return {WeatherVisual::Snow, L"Moderate snow"};
+        case 335:
+            return {WeatherVisual::Snow, L"Patchy heavy snow"};
+        case 338:
+            return {WeatherVisual::Snow, L"Heavy snow"};
+        case 350:
+            return {WeatherVisual::Snow, L"Ice pellets"};
+        case 362:
+            return {WeatherVisual::Snow, L"Light sleet showers"};
+        case 365:
+            return {WeatherVisual::Snow, L"Moderate or heavy sleet showers"};
+        case 368:
+            return {WeatherVisual::Snow, L"Light snow showers"};
+        case 371:
+            return {WeatherVisual::Snow, L"Moderate or heavy snow showers"};
+        case 392:
+            return {WeatherVisual::Storm, L"Patchy light snow with thunder"};
+        case 395:
+            return {WeatherVisual::Storm, L"Moderate or heavy snow with thunder"};
         default:
-            return WeatherVisual::Unknown;
+            return {WeatherVisual::Unknown, nullptr};
     }
+}
+
+WeatherVisual WeatherVisualFromCode(int code) {
+    return WeatherMetaForCode(code).visual;
+}
+
+static std::wstring LocalizedWeatherDescription(int code, const std::wstring& wttrFallback) {
+    const wchar_t* key = WeatherMetaForCode(code).descKey;
+    if (key) {
+        return std::wstring(Loc(key));
+    }
+    if (!wttrFallback.empty()) {
+        return wttrFallback;
+    }
+    return std::wstring(Loc(L"Unknown"));
 }
 
 // Cache for DrawKaraokeLetterPop: the layout and per-cluster hit rects only
@@ -14428,6 +14568,7 @@ class Renderer {
             case 179: case 182: case 185: case 227: case 230: case 317: case 320: case 323: case 326: case 329: case 332: case 335: case 338: case 350: case 362: case 365: case 368: case 371: icon = L"❄️"; break;
             default: icon = L"🌡️"; break;
         }
+        text = LocalizedWeatherDescription(code, text);
     }
 
     static int GetDaysInMonth(int year, int month) {
