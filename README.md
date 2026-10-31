@@ -61,7 +61,7 @@ A smooth, interactive overlay for your desktop, inspired by Apple's Dynamic Isla
 **🚀 New Features (Added in Latest Update):**
 
 - 🎤 **Live Lyrics:** Switch on "Show lyrics on collapsed island" from the right-click menu to see the current line pan across the pill as it is sung.
-- 🎵 **Song Recognition (Shazam):** Identify any track playing on your desktop in seconds — the island listens to your system audio and displays the song title, artist, and cover art with zero API keys required.
+- 🎶 **Song Recognition (Shazam):** Identify any track playing on your desktop in seconds — the island listens to your system audio and displays the song title, artist, and cover art with zero API keys required.
 - 📖 **Quick Lookup:** Once enabled under Modules, press `Ctrl+Alt+Space` to open a search box right on the island to instantly find definitions or summaries for words and clipboard text.
 - 🔀 **Cross-Source Media Switching:** Smoothly swap between active playback controls of multiple media apps simultaneously without opening the apps.
 - 💾 **Lyrics Cache:** Fast, local caching of lyrics retrieved from LRCLIB (sending title, artist, album, and duration to look up matching tracks) stored in the mod's storage folder with a tiny disk footprint.
