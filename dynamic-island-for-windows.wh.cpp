@@ -57,12 +57,15 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **Quick Lookup:** Once enabled under Modules, press **Ctrl+Alt+Space** to open a search box right on the island. Type a word or phrase, press Enter, and get a definition or a short summary. Your clipboard text and recent searches are one click away.
 - **Lyrics Sync Offset:** Nudge lyric timing in milliseconds when lyrics feel early or late, with a separate value for Bluetooth audio output that is picked automatically from your default audio device. Set it in Mod Settings or from the right-click menu's "Lyrics sync" submenu.
 - **Typography & Clock Control:** Scale all island text independently of the island's size, choose 12- or 24-hour time, show seconds, and set a custom date pattern — including CJK forms like `yyyy年MM月dd日`.
+- **Keyboard Layout Indicator:** When you switch the input language, a small pill pops up for a moment with the language code on a keycap and the language's own name (e.g. `RU  Русский`). The collapsed island also keeps a muted badge with the current code (e.g. `EN`) on its left, next to the clock or the album cover.
+- **Remembers Your Last Tab:** The island reopens on the tab you were last looking at instead of jumping back to the first one, even after the track changes.
 
 ---
 
 ## ⚙️ Usage & Settings
 
-- **Hover & Scroll:** Hover over the island to seamlessly expand it. Use your mouse scroll wheel to swipe between the Media, Calendar, Weather, Hardware Monitor, File Tray, and Lyrics tabs.
+- **Hover & Scroll:** Hover over the island to seamlessly expand it. Use your mouse scroll wheel to swipe between the Media, Calendar, Weather, Hardware Monitor, File Tray, and Lyrics tabs. The next time the island expands it opens on the tab you left it on (until the mod restarts). If that tab is gone by then — for example the Lyrics tab after the music stopped — it opens on the nearest remaining one. Prefer the old behaviour? Turn off **Modules > Remember last tab** and the island always starts from the first tab.
+- **Keyboard Layout:** The popup works with every way of switching (Alt+Shift, Win+Space, the taskbar language menu). It does not appear when the layout only changes because you moved to another window that remembers its own layout; the badge still follows it. Turn the whole feature off with **Modules > Keyboard layout indicator**, or just one part with **Modules > Keyboard layout popup** / **Modules > Keyboard layout badge**; with both parts off, the layout is not checked at all.
 - **File Tray:** Enable the File Tray module, then drag files onto the island. It jumps to the shelf to confirm the drop. Click a row to open that file, drag a row out to drop the file into any folder or app, or press the small ✕ on a row to remove just that file. The bin button in the header clears the whole shelf.
 - **Lyrics on the Collapsed Island:** Right-click the island and tick "Show lyrics on collapsed island". This choice is remembered across restarts. Long lines pan across as they are sung.
 - **Cross-Source Media Switching:** If multiple apps are playing media at the same time, you can smoothly swap between their active playback controls directly from the island without opening the apps.
@@ -104,6 +107,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color sampling, reorganized settings, and addressed various UI/media edge cases.
 - **[David Ravelo (DavidRaveloU) @GitHub](https://github.com/DavidRaveloU)**: Added selectable audio spectrum styles with a live frequency analyzer, new progress bar styles, optional track-change animations for the title, cover flip, playback controls and pill cover spin, an optional clock in the collapsed media pill, and a brightness slider flyout.
 - **[Retr0dev-jpg @GitHub](https://github.com/Retr0dev-jpg)**: Event-driven volume flyout with animated bar and default device switching, plus a calendar that follows the Windows locale for weekday initials and first day of the week (with a Monday/Sunday override).
+- **[StasEdward @GitHub](https://github.com/StasEdward)**: Added a keyboard layout indicator (a popup on layout switch and a language badge on the collapsed island), and made the island reopen on the last tab you used.
 
 ### 🤝 Contributing
 We love community contributions! To ensure high-quality updates, please follow these rules:
@@ -389,6 +393,18 @@ We love community contributions! To ensure high-quality updates, please follow t
   - CapsLock: true
     $name: Caps Lock module
     $description: Shows an indicator when Caps Lock or Num Lock state changes.
+  - KeyboardLayout: true
+    $name: Keyboard layout indicator
+    $description: Master toggle for showing the keyboard layout (input language) on the island. Turn off to hide both the popup and the badge below; the layout is then not checked at all.
+  - KeyboardLayoutPopup: true
+    $name: Keyboard layout popup
+    $description: Briefly shows the new input language (e.g. "RU  Русский") when you switch the keyboard layout. Not shown when the layout only changes because you moved to another window. Requires "Keyboard layout indicator".
+  - KeyboardLayoutBadge: true
+    $name: Keyboard layout badge
+    $description: Always shows the current input language code (e.g. "EN") on the left of the collapsed island, next to the clock or the album cover. Requires "Keyboard layout indicator".
+  - RememberLastTab: true
+    $name: Remember last tab
+    $description: The island reopens on the tab you were last looking at, and a track change does not move it. Turn off to always start from the first tab (media or clock) every time the island expands.
   - Battery: true
     $name: Battery module
     $description: Shows an alert when your laptop battery is running low.
@@ -1034,6 +1050,7 @@ enum class IslandKind {
     Brightness,
     BatteryLow,
     CapsLock,
+    KeyboardLayout,
     Device,
     Bluetooth,
     Timer,
@@ -1246,6 +1263,10 @@ struct Settings {
     // The activity gate is the one that actually hides the pill; the others stop
     // the work leading up to it.
     bool capsLock = true;
+    bool keyboardLayoutPopup = true;  // Modules.KeyboardLayoutPopup: pill on a real layout switch
+    bool keyboardLayoutBadge = true;  // Modules.KeyboardLayoutBadge: "EN" in the collapsed island
+    // Both of the above already include the Modules.KeyboardLayout master toggle.
+    bool rememberLastTab = true;      // Modules.RememberLastTab: keep g_idleTab across collapse / track change
     bool timerEnabled = true;
     bool hideShowHotkeyEnabled = true;
     UINT hideShowModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
@@ -1465,6 +1486,16 @@ struct CapsLockSnapshot {
     bool numOn = false;
     bool isNumEvent = false;
     double expiresAt = 0.0;
+};
+
+// Current input language of the foreground window. code / name are always kept
+// current (the collapsed badge reads them); active / expiresAt drive the popup
+// pill, which only shows on a real switch, not on a window change.
+struct KeyboardLayoutSnapshot {
+    bool active = false;
+    double expiresAt = 0.0;
+    std::wstring code;  // "EN", "RU", ...
+    std::wstring name;  // "English", "Русский", ... (in the language itself)
 };
 
 struct TimerSnapshot {
@@ -1706,6 +1737,7 @@ struct SharedState {
     VolumeSnapshot volume;
     BrightnessSnapshot brightness;
     CapsLockSnapshot capsLock;
+    KeyboardLayoutSnapshot keyboardLayout;
     TimerSnapshot timer;
     DeviceSnapshot device;
     BluetoothDeviceSnapshot bluetoothDevice;
@@ -2036,8 +2068,11 @@ int ActiveTabCount(const Settings& settings) {
 
 int NormalizedTabIndex(const Settings& settings) {
     const int total = std::max(1, ActiveTabCount(settings));
+    // Clamp rather than wrap: the remembered tab survives collapse, and if the tab
+    // set shrank meanwhile (e.g. the Lyrics tab went away with the music) the
+    // island should reopen on the nearest tab, not jump back to the first.
     const int raw = g_idleTab.load(std::memory_order_relaxed);
-    return ((raw % total) + total) % total;
+    return std::clamp(raw, 0, total - 1);
 }
 
 // Tab order is always: primary, calendar, weather?, hardware?, file tray?
@@ -3169,6 +3204,12 @@ void LoadSettings() {
     next.battery = Wh_GetIntSetting(L"Modules.Battery") != 0;
     next.progress = Wh_GetIntSetting(L"Modules.Progress") != 0;
     next.capsLock = Wh_GetIntSetting(L"Modules.CapsLock") != 0;
+    {
+        const bool keyboardLayout = Wh_GetIntSetting(L"Modules.KeyboardLayout") != 0;
+        next.keyboardLayoutPopup = keyboardLayout && Wh_GetIntSetting(L"Modules.KeyboardLayoutPopup") != 0;
+        next.keyboardLayoutBadge = keyboardLayout && Wh_GetIntSetting(L"Modules.KeyboardLayoutBadge") != 0;
+    }
+    next.rememberLastTab = Wh_GetIntSetting(L"Modules.RememberLastTab") != 0;
     next.timerEnabled = Wh_GetIntSetting(L"Modules.TimerModule") != 0;
 
     next.hideShowHotkeyEnabled = Wh_GetIntSetting(L"Shortcuts.HideShowHotkeyEnabled") != 0;
@@ -5847,7 +5888,10 @@ DWORD WINAPI MediaThreadProc(void*) {
             if (isDifferentTrack) {
                 next.titleChangedAt = NowSeconds();
                 trackJustChanged = true;
-                g_idleTab = 0;
+                // With "Remember last tab" on, the island keeps the tab the user picked.
+                if (!g_settings.rememberLastTab) {
+                    g_idleTab = 0;
+                }
             }
 
             if (g_state.media.art &&
@@ -8814,6 +8858,64 @@ void UpdateBatterySnapshot() {
     }
 
     if (triggerAlert) {
+        TriggerNudge();
+    }
+}
+
+// Polled from the render loop. GetKeyboardLayout of the foreground thread catches
+// every way of switching (Alt+Shift, Win+Space, the taskbar language menu), which
+// the low-level keyboard hook alone would not. The layout is per thread, so a
+// change that comes with a new foreground window is just the user moving to an
+// app that remembers its own layout: the badge follows it, but no popup.
+void UpdateKeyboardLayout() {
+    static HWND s_lastForeground = nullptr;
+    static HKL s_lastLayout = nullptr;
+
+    HWND foreground = GetForegroundWindow();
+    if (!foreground || foreground == g_hwnd) {
+        return;
+    }
+    const DWORD thread = GetWindowThreadProcessId(foreground, nullptr);
+    const HKL layout = GetKeyboardLayout(thread);
+    if (!layout) {
+        return;
+    }
+
+    const bool sameWindow = foreground == s_lastForeground;
+    const bool firstPoll = s_lastLayout == nullptr;
+    s_lastForeground = foreground;
+    if (layout == s_lastLayout) {
+        return;
+    }
+    s_lastLayout = layout;
+
+    // Low word of the HKL is the input language.
+    const LANGID lang = LOWORD(reinterpret_cast<UINT_PTR>(layout));
+    wchar_t localeName[LOCALE_NAME_MAX_LENGTH] = {};
+    wchar_t iso[16] = {};
+    wchar_t nativeName[128] = {};
+    if (LCIDToLocaleName(MAKELCID(lang, SORT_DEFAULT), localeName, ARRAYSIZE(localeName), 0) > 0) {
+        GetLocaleInfoEx(localeName, LOCALE_SISO639LANGNAME, iso, ARRAYSIZE(iso));
+        GetLocaleInfoEx(localeName, LOCALE_SNATIVELANGUAGENAME, nativeName, ARRAYSIZE(nativeName));
+    }
+    std::wstring code = iso[0] ? iso : L"??";
+    CharUpperBuffW(code.data(), static_cast<DWORD>(code.size()));
+    std::wstring name = nativeName[0] ? nativeName : code;
+    // Some languages (Russian, Ukrainian, ...) report their native name in lowercase.
+    CharUpperBuffW(name.data(), 1);
+
+    const bool popup = !firstPoll && sameWindow && g_settings.keyboardLayoutPopup;
+    {
+        std::lock_guard lock(g_stateMutex);
+        g_state.keyboardLayout.code = std::move(code);
+        g_state.keyboardLayout.name = std::move(name);
+        if (popup) {
+            g_state.keyboardLayout.active = true;
+            g_state.keyboardLayout.expiresAt = NowSeconds() + 2.5;
+        }
+    }
+    g_layoutDirty = true;
+    if (popup) {
         TriggerNudge();
     }
 }
@@ -12894,8 +12996,10 @@ struct MarqueeLayoutCache {
 // island; DrawIdleDashboard uses the per-slot widths to place the clock, divider
 // and weather reading inside it.
 struct IdleStripMetrics {
+    float layoutWidth = 0.0f;  // keyboard layout badge ("EN"), left of the clock
     float clockWidth = 0.0f;
     float weatherWidth = 0.0f;
+    bool hasLayout = false;
     bool hasWeather = false;
     bool hasPrivacy = false;
     float totalWidth = IdleStripLayout::kMinWidth;
@@ -12934,8 +13038,9 @@ struct SwapTextState {
 };
 
 struct MediaPillMetrics {
-    float clockWidth = 0.0f;
-    float sectionWidth = 0.0f;                       // clock + divider block on the left
+    float layoutWidth = 0.0f;                        // keyboard layout badge text, 0 when hidden
+    float clockWidth = 0.0f;                         // 0 when the clock is off
+    float sectionWidth = 0.0f;                       // [badge |] [clock |] block on the left
     float totalWidth = MediaPillLayout::kBaseWidth;  // content space, before sizeScale
 };
 
@@ -13297,11 +13402,21 @@ class Renderer {
                 MeasureTextWidthCached(WidestDigitForm(label), fmt, idleWeatherWidthCache_);
         }
 
+        metrics.hasLayout = settings.keyboardLayoutBadge && !state.keyboardLayout.code.empty();
+        if (metrics.hasLayout) {
+            metrics.layoutWidth =
+                MeasureTextWidthCached(state.keyboardLayout.code, fmt, layoutBadgeWidthCache_);
+        }
+
         metrics.hasPrivacy =
             (state.system.micActive && settings.privacyDots && settings.privacyDotsMic) ||
             (state.system.cameraActive && settings.privacyDots && settings.privacyDotsCam);
 
         float total = IdleStripLayout::kPadX * 2.0f + metrics.clockWidth;
+        if (metrics.hasLayout) {
+            total += metrics.layoutWidth + IdleStripLayout::kSlotGap * 2.0f +
+                     IdleStripLayout::kDividerWidth;
+        }
         if (metrics.hasWeather) {
             total += IdleStripLayout::kSlotGap * 2.0f + IdleStripLayout::kDividerWidth +
                      metrics.weatherWidth;
@@ -13320,24 +13435,34 @@ class Renderer {
     // width. Measured in the widest-digit form so the width does not wobble as
     // the digits change.
     MediaPillMetrics MeasureMediaPill(const SharedState& state, const Settings& settings) {
-        (void)state;
         MediaPillMetrics metrics;
-        if (!settings.mediaPillClock) {
+        const bool hasLayout = settings.keyboardLayoutBadge && !state.keyboardLayout.code.empty();
+        if (!settings.mediaPillClock && !hasLayout) {
             return metrics;
         }
 
         EnsureTextFormats(settings.sizeScale, settings.fontFamily, settings.textScale);
         IDWriteTextFormat* fmt = idleTextFormat_ ? idleTextFormat_.Get() : smallTextFormat_.Get();
 
-        SYSTEMTIME local = {};
-        GetLocalTime(&local);
-        const std::wstring clock = FormatIslandTime(local, settings.clockFollowSystem,
-                                                    settings.use24HourClock, settings.showSeconds);
-        metrics.clockWidth =
-            MeasureTextWidthCached(WidestDigitForm(clock), fmt, idleClockWidthCache_);
-
-        float section = MediaPillLayout::kClockPadLeft + metrics.clockWidth +
-                        MediaPillLayout::kSlotGap + MediaPillLayout::kDividerWidth;
+        // Each slot is "text, gap, divider"; the cover follows the last divider.
+        float section = MediaPillLayout::kClockPadLeft;
+        if (hasLayout) {
+            metrics.layoutWidth =
+                MeasureTextWidthCached(state.keyboardLayout.code, fmt, layoutBadgeWidthCache_);
+            section += metrics.layoutWidth + MediaPillLayout::kSlotGap + MediaPillLayout::kDividerWidth;
+        }
+        if (settings.mediaPillClock) {
+            SYSTEMTIME local = {};
+            GetLocalTime(&local);
+            const std::wstring clock = FormatIslandTime(local, settings.clockFollowSystem,
+                                                        settings.use24HourClock, settings.showSeconds);
+            metrics.clockWidth =
+                MeasureTextWidthCached(WidestDigitForm(clock), fmt, idleClockWidthCache_);
+            if (hasLayout) {
+                section += MediaPillLayout::kSlotGap;
+            }
+            section += metrics.clockWidth + MediaPillLayout::kSlotGap + MediaPillLayout::kDividerWidth;
+        }
         section = std::ceil(section / MediaPillLayout::kWidthQuantum) * MediaPillLayout::kWidthQuantum;
         metrics.sectionWidth = section;
         metrics.totalWidth = MediaPillLayout::kBaseWidth + section;
@@ -13356,6 +13481,7 @@ class Renderer {
     };
     TextWidthCache idleClockWidthCache_;
     TextWidthCache idleWeatherWidthCache_;
+    TextWidthCache layoutBadgeWidthCache_;
 
     float MeasureTextWidthCached(const std::wstring& text, IDWriteTextFormat* fmt,
                                  TextWidthCache& cache) {
@@ -13459,6 +13585,7 @@ class Renderer {
         // width measured against the old ones is stale.
         idleClockWidthCache_.valid = false;
         idleWeatherWidthCache_.valid = false;
+        layoutBadgeWidthCache_.valid = false;
 
         textFormat_ = nullptr;
         smallTextFormat_ = nullptr;
@@ -14070,6 +14197,9 @@ class Renderer {
                 break;
             case IslandKind::CapsLock:
                 DrawCapsLock(state, unscaledRect);
+                break;
+            case IslandKind::KeyboardLayout:
+                DrawKeyboardLayout(state, unscaledRect);
                 break;
             case IslandKind::Device:
                 DrawDevice(state, unscaledRect);
@@ -16525,6 +16655,10 @@ class Renderer {
                 rect.right - IdleStripLayout::kPadX * scale - privacyReserve;
 
             float blockWidth = idleMetrics.clockWidth;
+            if (idleMetrics.hasLayout) {
+                blockWidth += idleMetrics.layoutWidth +
+                              (IdleStripLayout::kSlotGap * 2.0f + IdleStripLayout::kDividerWidth) * scale;
+            }
             if (idleMetrics.hasWeather) {
                 blockWidth += (IdleStripLayout::kSlotGap * 2.0f +
                                IdleStripLayout::kDividerWidth) * scale +
@@ -16537,6 +16671,38 @@ class Renderer {
             const float slack = std::max(0.0f, (innerRight - innerLeft) - blockWidth);
             float slotX = innerLeft + slack * 0.5f;
 
+            // Advances slotX past "gap, divider, gap".
+            ComPtr<ID2D1SolidColorBrush> divider;
+            auto drawDivider = [&]() {
+                slotX += IdleStripLayout::kSlotGap * scale;
+                if (!divider) {
+                    target_->CreateSolidColorBrush(
+                        WithAlpha(material_.hairline, material_.hairline.a * settingsOpacity_),
+                        &divider);
+                }
+                if (divider) {
+                    const float divW = IdleStripLayout::kDividerWidth * scale;
+                    const float divTop = rect.top + IdleStripLayout::kDividerInsetY * scale;
+                    const float divBottom = rect.bottom - IdleStripLayout::kDividerInsetY * scale;
+                    target_->FillRoundedRectangle(
+                        D2D1::RoundedRect(D2D1::RectF(slotX, divTop, slotX + divW, divBottom),
+                                          divW * 0.5f, divW * 0.5f), divider.Get());
+                }
+                slotX += (IdleStripLayout::kDividerWidth + IdleStripLayout::kSlotGap) * scale;
+            };
+
+            // Keyboard layout badge, muted so the clock stays the main read.
+            if (idleMetrics.hasLayout) {
+                const std::wstring& code = state.keyboardLayout.code;
+                const D2D1_RECT_F layoutRect =
+                    D2D1::RectF(slotX, rect.top, slotX + idleMetrics.layoutWidth, rect.bottom);
+                mutedBrush_->SetOpacity(0.85f);
+                target_->DrawTextW(code.c_str(), static_cast<UINT32>(code.size()), idleFmt,
+                                   layoutRect, mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                slotX += idleMetrics.layoutWidth;
+                drawDivider();
+            }
+
             // Each slot is exactly its measured width, and the measurement used the
             // widest-digit form, so the live string is centred inside a box it is
             // guaranteed to fit rather than drifting as the digits change.
@@ -16548,21 +16714,7 @@ class Renderer {
             slotX += idleMetrics.clockWidth;
 
             if (idleMetrics.hasWeather) {
-                slotX += IdleStripLayout::kSlotGap * scale;
-
-                ComPtr<ID2D1SolidColorBrush> divider;
-                target_->CreateSolidColorBrush(
-                    WithAlpha(material_.hairline, material_.hairline.a * settingsOpacity_),
-                    &divider);
-                if (divider) {
-                    const float divW = IdleStripLayout::kDividerWidth * scale;
-                    const float divTop = rect.top + IdleStripLayout::kDividerInsetY * scale;
-                    const float divBottom = rect.bottom - IdleStripLayout::kDividerInsetY * scale;
-                    target_->FillRoundedRectangle(
-                        D2D1::RoundedRect(D2D1::RectF(slotX, divTop, slotX + divW, divBottom),
-                                          divW * 0.5f, divW * 0.5f), divider.Get());
-                }
-                slotX += (IdleStripLayout::kDividerWidth + IdleStripLayout::kSlotGap) * scale;
+                drawDivider();
 
                 wchar_t weatherLabel[32] = {};
                 if (hasWeather) swprintf_s(weatherLabel, L"%s %.0f\x00B0", wIcon.c_str(), state.weather.temperature);
@@ -16624,8 +16776,12 @@ class Renderer {
             }
         }
 
+        // With "Remember last tab" on, g_idleTab survives collapse so the island
+        // reopens on the last tab used.
         if (expandedAlpha <= 0.01f && !g_trayDragOver.load(std::memory_order_relaxed)) {
-            g_idleTab = 0;
+            if (!settings.rememberLastTab) {
+                g_idleTab = 0;
+            }
             ResetTabTransition();
         }
 
@@ -17122,7 +17278,7 @@ class Renderer {
             artBadgeAlpha_ = 0.0f;
         }
         float pillClockSection = 0.0f;
-        if (settings.mediaPillClock && idleTextFormat_) {
+        if (idleTextFormat_) {
             pillClockSection = MeasureMediaPill(state, settings).sectionWidth;
         }
         const D2D1_RECT_F collapsedArtRect = D2D1::RectF(
@@ -17438,8 +17594,12 @@ class Renderer {
         }
 
         // Collapsed UI
+        // With "Remember last tab" on, g_idleTab survives collapse so the island
+        // reopens on the last tab used.
         if (collapsedAlpha > 0.01f && mask && layer && !g_trayDragOver.load(std::memory_order_relaxed)) {
-            g_idleTab = 0;
+            if (!settings.rememberLastTab) {
+                g_idleTab = 0;
+            }
             ResetTabTransition();
             target_->PushLayer(D2D1::LayerParameters(rect, mask.Get(), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::IdentityMatrix(), collapsedAlpha, nullptr, D2D1_LAYER_OPTIONS_NONE), layer);;
 
@@ -17448,7 +17608,7 @@ class Renderer {
             // Optional clock section on the left. Zero wide when the option is
             // off, so the cover sits exactly where it always did.
             MediaPillMetrics pillMetrics;
-            if (settings.mediaPillClock && idleTextFormat_) {
+            if (idleTextFormat_) {
                 pillMetrics = MeasureMediaPill(state, settings);
             }
             const float clockSection = pillMetrics.sectionWidth;
@@ -17492,34 +17652,51 @@ class Renderer {
                 }
             }
 
-            // Clock + divider on the left, same face, size and time format as the
-            // idle strip. On hover the collapsed layer fades out and the normal
-            // player shows.
+            // Layout badge and/or clock, each followed by a divider, on the left;
+            // same face, size and time format as the idle strip. On hover the
+            // collapsed layer fades out and the normal player shows.
             if (clockSection > 0.0f) {
-                SYSTEMTIME local = {};
-                GetLocalTime(&local);
-                const std::wstring clockText = FormatIslandTime(local, settings.clockFollowSystem,
-                                                                settings.use24HourClock,
-                                                                settings.showSeconds);
-                const float clockLeft = rect.left + MediaPillLayout::kClockPadLeft;
-                textBrush_->SetOpacity(0.96f);
-                target_->DrawTextW(clockText.c_str(), static_cast<UINT32>(clockText.size()),
-                                   idleTextFormat_.Get(),
-                                   D2D1::RectF(clockLeft, rect.top, clockLeft + pillMetrics.clockWidth, rect.bottom),
-                                   textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-                textBrush_->SetOpacity(1.0f);
-
+                float slotX = rect.left + MediaPillLayout::kClockPadLeft;
                 ComPtr<ID2D1SolidColorBrush> divider;
                 target_->CreateSolidColorBrush(
                     WithAlpha(material_.hairline, material_.hairline.a * settingsOpacity_), &divider);
-                if (divider) {
-                    const float divX = clockLeft + pillMetrics.clockWidth + MediaPillLayout::kSlotGap;
-                    const float divW = MediaPillLayout::kDividerWidth;
-                    target_->FillRoundedRectangle(
-                        D2D1::RoundedRect(D2D1::RectF(divX, rect.top + MediaPillLayout::kDividerInsetY,
-                                                      divX + divW, rect.bottom - MediaPillLayout::kDividerInsetY),
-                                          divW * 0.5f, divW * 0.5f),
-                        divider.Get());
+                // Draws the divider after a slot of the given width and moves past it.
+                auto endSlot = [&](float slotWidth) {
+                    slotX += slotWidth + MediaPillLayout::kSlotGap;
+                    if (divider) {
+                        const float divW = MediaPillLayout::kDividerWidth;
+                        target_->FillRoundedRectangle(
+                            D2D1::RoundedRect(D2D1::RectF(slotX, rect.top + MediaPillLayout::kDividerInsetY,
+                                                          slotX + divW, rect.bottom - MediaPillLayout::kDividerInsetY),
+                                              divW * 0.5f, divW * 0.5f),
+                            divider.Get());
+                    }
+                    slotX += MediaPillLayout::kDividerWidth + MediaPillLayout::kSlotGap;
+                };
+
+                if (pillMetrics.layoutWidth > 0.0f) {
+                    const std::wstring& code = state.keyboardLayout.code;
+                    mutedBrush_->SetOpacity(0.85f);
+                    target_->DrawTextW(code.c_str(), static_cast<UINT32>(code.size()),
+                                       idleTextFormat_.Get(),
+                                       D2D1::RectF(slotX, rect.top, slotX + pillMetrics.layoutWidth, rect.bottom),
+                                       mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                    endSlot(pillMetrics.layoutWidth);
+                }
+
+                if (pillMetrics.clockWidth > 0.0f) {
+                    SYSTEMTIME local = {};
+                    GetLocalTime(&local);
+                    const std::wstring clockText = FormatIslandTime(local, settings.clockFollowSystem,
+                                                                    settings.use24HourClock,
+                                                                    settings.showSeconds);
+                    textBrush_->SetOpacity(0.96f);
+                    target_->DrawTextW(clockText.c_str(), static_cast<UINT32>(clockText.size()),
+                                       idleTextFormat_.Get(),
+                                       D2D1::RectF(slotX, rect.top, slotX + pillMetrics.clockWidth, rect.bottom),
+                                       textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                    textBrush_->SetOpacity(1.0f);
+                    endSlot(pillMetrics.clockWidth);
                 }
             }
 
@@ -20922,6 +21099,31 @@ class Renderer {
         }
     }
 
+    // Same keycap layout as DrawCapsLock: the language code on the key, the
+    // language's own name beside it.
+    void DrawKeyboardLayout(const SharedState& state, D2D1_RECT_F rect) {
+        if (rect.bottom - rect.top < 24.0f || rect.right - rect.left < 110.0f) return;
+        const float cy = (rect.top + rect.bottom) * 0.5f;
+        const float badgeSz = (rect.bottom - rect.top) - 16.0f;
+        D2D1_RECT_F badge = D2D1::RectF(rect.left + 14, cy - badgeSz * 0.5f,
+                                        rect.left + 14 + badgeSz, cy + badgeSz * 0.5f);
+        const float br = badgeSz * 0.35f;
+
+        ComPtr<ID2D1SolidColorBrush> badgeBg;
+        target_->CreateSolidColorBrush(material_.raisedStrong, &badgeBg);
+        target_->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), badgeBg.Get());
+
+        const std::wstring& code = state.keyboardLayout.code;
+        textBrush_->SetOpacity(0.95f);
+        target_->DrawTextW(code.c_str(), static_cast<UINT32>(code.size()), boldTextFormat_.Get(), badge,
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+
+        const std::wstring& name = state.keyboardLayout.name;
+        D2D1_RECT_F labelRect = D2D1::RectF(badge.right + 14.0f, cy - 9.0f, rect.right - 14.0f, cy + 11.0f);
+        target_->DrawTextW(name.c_str(), static_cast<UINT32>(name.size()), textFormat_.Get(), labelRect,
+                           textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    }
+
     void DrawDevice(const SharedState& state, D2D1_RECT_F rect) {
         if (rect.bottom - rect.top < 24.0f || rect.right - rect.left < 100.0f) return;
         const float cy = (rect.top + rect.bottom) * 0.5f;
@@ -22297,6 +22499,10 @@ Activity ActivityForKind(IslandKind kind, const Settings& settings, const Shared
             activity.width = 180.0f;
             activity.height = 42.0f;
             break;
+        case IslandKind::KeyboardLayout:
+            activity.width = 200.0f;
+            activity.height = 42.0f;
+            break;
         case IslandKind::Device:
             activity.width = 240.0f;
             activity.height = 50.0f;
@@ -22370,6 +22576,10 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
     // handler gate stopped the nudge but the pill was still selected and drawn.
     if (settings.capsLock && state.capsLock.active && now < state.capsLock.expiresAt) {
         activities.push_back(IslandKind::CapsLock);
+    }
+    if (settings.keyboardLayoutPopup && state.keyboardLayout.active &&
+        now < state.keyboardLayout.expiresAt) {
+        activities.push_back(IslandKind::KeyboardLayout);
     }
     if (state.device.active && now < state.device.expiresAt) {
         activities.push_back(IslandKind::Device);
@@ -24588,6 +24798,7 @@ DWORD WINAPI RenderThreadProc(void*) {
     double nextSystemPoll = 0.0;
     double nextBrightnessPoll = 0.0;
     double nextPrivacyPoll = 0.0;
+    double nextKeyboardLayoutPoll = 0.0;
     bool wasManuallyHidden = false;
     bool wasAutoHiddenParked = false;
     bool parkedForFullscreen = false;
@@ -24731,6 +24942,11 @@ DWORD WINAPI RenderThreadProc(void*) {
             UpdatePrivacyIndicators();
             nextPrivacyPoll = now + 2.0;  // poll every 2 s
         }
+        if ((g_settings.keyboardLayoutPopup || g_settings.keyboardLayoutBadge) &&
+            now >= nextKeyboardLayoutPoll) {
+            UpdateKeyboardLayout();  // two cheap user32 calls, fast enough to feel instant
+            nextKeyboardLayoutPoll = now + 0.2;
+        }
 
         bool timerJustCompleted = false;
         SharedState snapshot;
@@ -24767,6 +24983,10 @@ DWORD WINAPI RenderThreadProc(void*) {
             if (g_state.capsLock.active && now >= g_state.capsLock.expiresAt) {
                 g_state.capsLock.active = false;
                 snapshot.capsLock.active = false;
+            }
+            if (g_state.keyboardLayout.active && now >= g_state.keyboardLayout.expiresAt) {
+                g_state.keyboardLayout.active = false;
+                snapshot.keyboardLayout.active = false;
             }
             if (g_state.battery.active && now >= g_state.battery.expiresAt) {
                 g_state.battery.active = false;
@@ -24886,6 +25106,7 @@ DWORD WINAPI RenderThreadProc(void*) {
                                  primary.kind == IslandKind::Brightness ||
                                  primary.kind == IslandKind::BatteryLow ||
                                  primary.kind == IslandKind::CapsLock ||
+                                 primary.kind == IslandKind::KeyboardLayout ||
                                  primary.kind == IslandKind::Device ||
                                  primary.kind == IslandKind::Bluetooth ||
                                  primary.kind == IslandKind::DoNotDisturb ||
@@ -25033,14 +25254,12 @@ DWORD WINAPI RenderThreadProc(void*) {
                 primary.height = MediaLayout::kExpandedHeight * g_settings.sizeScale;
                 // (Immersive lyrics: the island keeps its normal 380px width.)
             } else {
-                // Optional clock section on the left of the collapsed pill.
-                const float clockSection = g_settings.mediaPillClock
-                    ? renderer.MeasureMediaPill(snapshot, g_settings).sectionWidth
-                    : 0.0f;
+                // Optional layout badge / clock section on the left of the collapsed pill.
+                const float clockSection = renderer.MeasureMediaPill(snapshot, g_settings).sectionWidth;
                 if (CollapsedLyricsActive(snapshot, g_settings)) {
                     // Collapsed but carrying lyrics: wider pill, same height.
                     primary.width = (kCollapsedLyricsWidth + clockSection) * g_settings.sizeScale;
-                } else if (g_settings.mediaPillClock) {
+                } else if (clockSection > 0.0f) {
                     primary.width = (MediaPillLayout::kBaseWidth + clockSection) * g_settings.sizeScale;
                 }
             }

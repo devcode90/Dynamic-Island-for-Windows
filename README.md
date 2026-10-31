@@ -54,11 +54,20 @@ A smooth, interactive overlay for your desktop, inspired by Apple's Dynamic Isla
 | :---: | :---: |
 | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/9fdd6610ff4e48928ecde99362a87f1d43afefbe/previews/camera-detected-v2.png" width="200" /> | <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/9fdd6610ff4e48928ecde99362a87f1d43afefbe/previews/mic-detected-v2.png" width="200" /> |
 
+### Keyboard Layout Badge
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/devcode90/Dynamic-Island-for-Windows/main/previews/keyboard-layout.png" alt="Keyboard layout badge on the collapsed island" width="300" style="border-radius: 8px; margin: 10px;"/>
+</p>
+
 ---
 
 ## ✨ What it does
 
 **🚀 New Features (Added in Latest Update):**
+
+- ⌨️ **Keyboard Layout Indicator:** A short popup with the language code and name when you switch the input language, plus an always-on `EN` / `RU` badge on the left of the collapsed island. Each part can be turned off under Modules.
+- 📌 **Remembers Your Last Tab:** The island reopens on the tab you last used instead of jumping back to the first one. Turn off "Remember last tab" under Modules for the old behaviour.
 
 - 🎤 **Live Lyrics:** Switch on "Show lyrics on collapsed island" from the right-click menu to see the current line pan across the pill as it is sung.
 - 🎶 **Song Recognition (Shazam):** Identify any track playing on your desktop in seconds — the island listens to your system audio and displays the song title, artist, and cover art with zero API keys required.
@@ -143,6 +152,7 @@ Found a bug? Have a cool feature idea? We want to hear from you! Please drop an 
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color extraction, reorganized settings into logical categories, and fixed various UI, media, and theme edge cases.
 - **[David Ravelo (DavidRaveloU) @GitHub](https://github.com/DavidRaveloU)**: Added selectable audio spectrum styles with a live frequency analyzer, new progress bar styles, optional track-change animations for the title, cover flip, playback controls and pill cover spin, an optional clock in the collapsed media pill, and a brightness slider flyout.
 - **[Retr0dev-jpg @GitHub](https://github.com/Retr0dev-jpg)**: Event-driven volume flyout with animated bar and default device switching, plus a calendar that follows the Windows locale for weekday initials and first day of the week (with a Monday/Sunday override).
+- **[StasEdward @GitHub](https://github.com/StasEdward)**: Added a keyboard layout indicator (a popup on layout switch and a language badge on the collapsed island), and made the island reopen on the last tab you used.
 
 ---
 
