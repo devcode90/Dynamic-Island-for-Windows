@@ -1804,6 +1804,10 @@ std::atomic<int> g_lyricsEffectiveOffsetBtMs{0};      // Bluetooth output: setti
 // VolumeNotifyClient) so the Bluetooth watcher, which comes earlier in the file, can set it.
 std::atomic<bool> g_volumeEndpointStale{true};
 std::atomic<bool> g_layoutDirty = true;
+// Set whenever the layered surface may no longer match what the renderer thinks is on it
+// (park/unpark, fullscreen toggles, display or DPI changes). The next Render() then repaints
+// the whole stage instead of only the dirty rect, so no stale pixels survive.
+std::atomic<bool> g_forceFullPaint = true;
 std::atomic<bool> g_clickExpanded = false;
 std::atomic<int> g_pressedMediaButton = -1;
 std::atomic<int> g_hoveredMediaButton = -1;
@@ -13038,10 +13042,41 @@ class Renderer {
         const bool sizeChanged = pixelWidth != bitmapWidth_ || pixelHeight != bitmapHeight_;
         const bool moved = stage.origin.x != lastOrigin_.x || stage.origin.y != lastOrigin_.y;
 
+        // Everything DrawPill can touch this frame. With two pills the island draws each one at
+        // its own (target) size while `width` / `height` are the animated spring values, so the
+        // spring size alone under-reports what is actually painted. Using it for the dirty rect
+        // clipped the pills with a hard vertical edge and left old pixels behind (the "duplicated
+        // slice" that showed up when a fullscreen app triggered Do Not Disturb next to the media pill).
+        float extentW = width;
+        float extentH = height;
+        if (secondary) {
+            const float pairGap = 12.0f * settings.sizeScale;
+            extentW = std::max(extentW, primary.width + pairGap + secondary->width);
+            extentH = std::max(extentH, std::max(primary.height, secondary->height));
+        }
+
+        // Structural changes (pill count / kind) and the frame where a size animation settles
+        // always get a clean full repaint.
+        const int layoutSig = (secondary ? 1 : 0) | (static_cast<int>(primary.kind) << 1) |
+                              ((secondary ? static_cast<int>(secondary->kind) + 1 : 0) << 9);
+        const bool structureChanged = layoutSig != lastLayoutSig_;
+        const bool sizeMoving = std::fabs(width - lastDrawW_) > 0.01f ||
+                                std::fabs(height - lastDrawH_) > 0.01f;
+        const bool sizeSettled = !sizeMoving && sizeWasMoving_;
+        const bool forceFull = g_forceFullPaint.exchange(false, std::memory_order_relaxed);
+        // Full-screen apps hand the surface to DWM differently; while the island resizes on top of
+        // one, skip the partial update entirely (animations are short, so this is cheap).
+        const bool fullscreenResize = sizeMoving && g_isFullscreen.load(std::memory_order_relaxed);
+        lastLayoutSig_ = layoutSig;
+        lastDrawW_ = width;
+        lastDrawH_ = height;
+        sizeWasMoving_ = sizeMoving;
+
         // Full repaint when anything about the window itself changed, plus once a
         // second as a safety net (sleep/resume, display changes).
         const bool fullPaint = !kUseDirtyRect || !stageValid_ || sizeChanged || moved ||
-                               alpha != lastAlpha_ || (now - lastFullPaint_) > 1.0;
+                               alpha != lastAlpha_ || (now - lastFullPaint_) > 1.0 ||
+                               forceFull || structureChanged || sizeSettled || fullscreenResize;
 
         if (sizeChanged) {
             if (!CreateBackingBitmap(pixelWidth, pixelHeight)) {
@@ -13065,8 +13100,8 @@ class Renderer {
         RECT bounds;
         bounds.left = std::max(0, static_cast<int>(std::floor(left - kRenderPadX - 4.0f)));
         bounds.top = std::max(0, static_cast<int>(std::floor(top - kRenderPadY - 12.0f)));
-        bounds.right = std::min(pixelWidth, static_cast<int>(std::ceil(left + width + kRenderPadX + 4.0f)));
-        bounds.bottom = std::min(pixelHeight, static_cast<int>(std::ceil(top + height + kRenderPadY + 12.0f)));
+        bounds.right = std::min(pixelWidth, static_cast<int>(std::ceil(left + extentW + kRenderPadX + 4.0f)));
+        bounds.bottom = std::min(pixelHeight, static_cast<int>(std::ceil(top + extentH + kRenderPadY + 12.0f)));
 
         RECT dirty = {0, 0, pixelWidth, pixelHeight};
         if (!fullPaint) {
@@ -22013,6 +22048,10 @@ class Renderer {
     BYTE lastAlpha_ = 0;
     bool stageValid_ = false;
     double lastFullPaint_ = -1e9;
+    int lastLayoutSig_ = -1;        // pill count / kinds of the previous frame
+    float lastDrawW_ = -1.0f;       // spring size of the previous frame
+    float lastDrawH_ = -1.0f;
+    bool sizeWasMoving_ = false;    // previous frame was still resizing
 
     // Pills drawn this frame, in client px, for the DWM backdrop windows (#59).
     D2D1_RECT_F pillRects_[DwmBackdrop::kMaxPills] = {};
@@ -22541,7 +22580,9 @@ LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lParam) {
             HWND hwnd = g_hwnd;
             RECT dockRect = GetIslandDockRect();
             if (hwnd && PtInRect(&dockRect, info->pt)) {
-                g_autoHiddenParked = false;
+                if (!g_isFullscreen.load(std::memory_order_relaxed)) {
+                    g_autoHiddenParked = false;
+                }
                 PostMessageW(hwnd, WM_APP_MOUSE_WAKE, 0, 0);
             }
         }
@@ -24392,6 +24433,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_DPICHANGED:
         case WM_DISPLAYCHANGE: {
             g_layoutDirty = true;
+            g_forceFullPaint = true;
             PostMessageW(hwnd, WM_APP_NEW_EVENT, 0, 0);
             return 0;
         }
@@ -24626,6 +24668,7 @@ DWORD WINAPI RenderThreadProc(void*) {
                 // lingering render/animation work this frame.
                 ShowWindow(hwnd, SW_HIDE);
                 DwmBackdrop::HideAll();
+                g_forceFullPaint = true;
                 g_audioCaptureNeeded.store(false, std::memory_order_relaxed);
                 wasManuallyHidden = true;
             }
@@ -24669,6 +24712,8 @@ DWORD WINAPI RenderThreadProc(void*) {
                         g_autoHiddenParked = false;
                     } else if (g_fullscreenOverrideVisible.load()) {
                         g_autoHiddenParked = false;
+                    }else {
+                        g_autoHiddenParked = true;
                     }
                 } else {
                     MsgWaitForMultipleObjects(1, &g_stopEvent, FALSE, INFINITE, QS_ALLINPUT);
@@ -24688,6 +24733,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             lastInteractionTime = NowSeconds();
             g_layoutDirty = true;
+            g_forceFullPaint = true;
             previousFrame = std::chrono::steady_clock::now();
             nextFrameTarget = previousFrame;
         }
@@ -24702,6 +24748,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             lastInteractionTime = NowSeconds();
             g_layoutDirty = true;
+            g_forceFullPaint = true;
             previousFrame = std::chrono::steady_clock::now();
             nextFrameTarget = previousFrame;
         }
@@ -24941,6 +24988,12 @@ DWORD WINAPI RenderThreadProc(void*) {
                 // island this time.
                 g_fullscreenOverrideVisible = false;
             }
+            if (isFullscreen != newFullscreen) {
+                // DWM re-plans the surface when a fullscreen app starts or stops; never trust a
+                // partial update across that boundary.
+                g_forceFullPaint = true;
+                g_layoutDirty = true;
+            }
             isFullscreen = newFullscreen;
             g_isFullscreen.store(isFullscreen, std::memory_order_relaxed);
             lastFullscreenCheck = now;
@@ -25068,7 +25121,7 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         const bool fullscreenSuppressed =
             isFullscreen && !g_fullscreenOverrideVisible.load(std::memory_order_relaxed);
-        if ((isHidden || fullscreenSuppressed) && !privacyActive && !pinned && !isHoverExpanded && !isTransientAlert) {
+        if ((fullscreenSuppressed || (isHidden && !isHoverExpanded)) && !privacyActive && !pinned && !isTransientAlert) {
             primary.width = 0.0f;
             primary.height = 0.0f;
             secondary.reset();
@@ -25456,6 +25509,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             g_autoHiddenParked = true;
             ShowWindow(hwnd, SW_HIDE);
             DwmBackdrop::HideAll();
+            g_forceFullPaint = true;
             g_audioCaptureNeeded.store(false, std::memory_order_relaxed);
             setHighResTimer(false);
             continue;
