@@ -182,7 +182,7 @@ We love community contributions! To ensure high-quality updates, please follow t
       - bar: Bar (thick bar with a line thumb)
   - SpectrumStyle: bars
     $name: Audio spectrum style
-    $description: Look of the live audio visualizer next to the album art (collapsed pill and expanded player). Pulse Orb, Plasma Thread and Peak Matrix use a real frequency analysis of the system audio, and each plays its own animation when the track changes.
+    $description: Look of the live audio visualizer next to the album art (collapsed pill and expanded player). Every style uses real frequency analysis of the system audio, with each playing its own animation when the track changes.
     $options:
       - bars: Classic Bars
       - led: Peak Matrix
@@ -3129,9 +3129,9 @@ void LoadSettings() {
     } else {
         next.spectrumStyle = SpectrumStyle::Bars;  // default
     }
-    g_spectrumBandsNeeded.store(next.spectrumStyle == SpectrumStyle::Orb ||
-                                    next.spectrumStyle == SpectrumStyle::Plasma,
-                                std::memory_order_relaxed);
+    // Every spectrum style reads the analyzer bands. Classic Bars used to read
+    // the time-domain waveform, but it now maps its bars from bass to treble.
+    g_spectrumBandsNeeded.store(true, std::memory_order_relaxed);
     next.expandedMediaAnim = Wh_GetIntSetting(L"Animations.ExpandedMediaTransitions") != 0;
     next.pillCoverAnim = Wh_GetIntSetting(L"Animations.PillCoverSpin") != 0;
 
@@ -20498,15 +20498,17 @@ class Renderer {
         const float centerY = (rect.top + rect.bottom) * 0.5f;
         const float maxH = (rect.bottom - rect.top) * 0.86f;
 
-        // Use a step size of 4 samples (approx 40ms) so bars aren't identical
-        const size_t step = 4;
-
         const float t = specT_;
         for (size_t i = 0; i < count; ++i) {
-            const size_t offset = (count - i) * step;
-            const size_t source = (state.waveformWrite + state.waveform.size() - offset) %
-                                  state.waveform.size();
-            const float amp = Clamp(state.waveform[source], 0.03f, 1.0f);
+            // The analyzer bands are ordered from bass to treble. Map them in
+            // the same direction as the bars so the left edge is low frequency
+            // and the right edge is high frequency.
+            const float bandFrom = static_cast<float>(i) * kSpectrumBands /
+                                   static_cast<float>(count);
+            const float bandTo = static_cast<float>(i + 1) * kSpectrumBands /
+                                 static_cast<float>(count);
+            const float amp = Clamp(SpecBandRange(state, bandFrom, bandTo),
+                                    0.03f, 1.0f);
             float h = std::max(3.0f, amp * maxH);
             float glow = 0.0f;
 
