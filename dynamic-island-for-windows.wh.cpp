@@ -2,11 +2,11 @@
 // @id              dynamic-island-for-windows
 // @name            Dynamic Island for Windows
 // @description     A living, breathing pill overlay inspired by iPhone's Dynamic Island. Reacts to media, downloads, clipboard, battery, and more.
-// @version         1.4.0
+// @version         1.5.0
 // @author          Himanshu
 // @github          https://github.com/devcode90
 // @include         windhawk.exe
-// @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm
+// @compilerOptions -lole32 -loleaut32 -lshcore -ld2d1 -ldwrite -ldwmapi -lgdi32 -luser32 -lshell32 -lruntimeobject -lwindowscodecs -lsetupapi -lwinhttp -lpdh -lwinmm -lbcrypt
 // @license         MIT
 // ==/WindhawkMod==
 
@@ -52,8 +52,8 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **Translucent Backgrounds:** Hex colors accept an alpha channel (`#RRGGBBAA`), so you can make the island see-through while keeping text and icons perfectly crisp.
 - **Your Language:** The island's own labels follow your Windows display language across 12 languages, or you can pick one explicitly.
 - **File Tray:** Drag any file onto the island to park it on a shelf, then click to open it. You can now drag files back out into any folder or app, and remove them one by one. The island itself only references files, it never copies or moves them.
-- **Lyrics on the Collapsed Island:** Switch on "Show lyrics on collapsed island" from the right-click menu and the pill widens to show the current line as it's sung, sliding in with every new line. When there are no synced lyrics it shows the song title instead.
-- **Song Recognition (Shazam):** Identify any track playing on your desktop in seconds — the island listens to your system audio and displays the song title, artist, and cover art with zero API keys required.
+- **Lyrics on the Collapsed Island:** Turn on "Show lyrics on the collapsed island" (in Mod Settings or the right-click menu) and the pill carries the current line as it is sung, sliding in with every new line. **Dynamic lyric width** (on by default) stretches the pill horizontally to the line and its translation; turning it off pins the pill to the fixed **Lyric width** instead. With no synced lyric yet the pill keeps its normal compact appearance.
+- **Three Lyric Sources:** Auto mode asks LRCLIB, NetEase Cloud Music and QQ Music at the same time, scores candidates with artist as the primary signal, then title and duration, and shows the best match. Turn on **Prefer lyrics with translation** to make the best translated source win even when an untranslated source matches perfectly. Pick a single source under Modules if you prefer. Translated lyric tracks are kept, and both the collapsed pill and the expanded Lyrics page can show the original or the translation first, with the other line smaller and clearly readable underneath.
 - **Quick Lookup:** Once enabled under Modules, press **Ctrl+Alt+Space** to open a search box right on the island. Type a word or phrase, press Enter, and get a definition or a short summary. Your clipboard text and recent searches are one click away.
 - **Lyrics Sync Offset:** Nudge lyric timing in milliseconds when lyrics feel early or late, with a separate value for Bluetooth audio output that is picked automatically from your default audio device. Set it in Mod Settings or from the right-click menu's "Lyrics sync" submenu.
 - **Typography & Clock Control:** Scale all island text independently of the island's size, choose 12- or 24-hour time, show seconds, and set a custom date pattern — including CJK forms like `yyyy年MM月dd日`.
@@ -64,7 +64,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 
 - **Hover & Scroll:** Hover over the island to seamlessly expand it. Use your mouse scroll wheel to swipe between the Media, Calendar, Weather, Hardware Monitor, File Tray, and Lyrics tabs.
 - **File Tray:** Enable the File Tray module, then drag files onto the island. It jumps to the shelf to confirm the drop. Click a row to open that file, drag a row out to drop the file into any folder or app, or press the small ✕ on a row to remove just that file. The bin button in the header clears the whole shelf.
-- **Lyrics on the Collapsed Island:** Right-click the island and tick "Show lyrics on collapsed island". This choice is remembered across restarts. Long lines pan across as they are sung.
+- **Lyrics on the Collapsed Island:** Tick "Show lyrics on collapsed island" in Mod Settings or from the right-click menu. The choice is remembered across restarts. Long lines pan across as they are sung; with translations the secondary line sits underneath in smaller, clearly readable text. Dynamic width follows each line, fixed width keeps the pill stable at your chosen Lyric width.
 - **Cross-Source Media Switching:** If multiple apps are playing media at the same time, you can smoothly swap between their active playback controls directly from the island without opening the apps.
 - **Quick Lookup:** Enable "Quick Lookup (hotkey)" under Modules, then press the hotkey (default **Ctrl+Alt+Space**, changeable in the **Shortcuts** tab) to open the search box. Type a word or phrase and press Enter. Up/Down picks a row and Esc closes it. With an empty box it suggests your clipboard text and your recent lookups. Results come from Wiktionary and Wikipedia, with dictionaryapi.dev as a backup. Nothing is sent anywhere until you press Enter, and recent lookups are kept in memory only.
 - **Right-Click Menu:** Right-click the island to access Theme presets, Transparency settings, collapsed-island lyrics, and to pin the island open.
@@ -78,11 +78,11 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 
 ## 💾 Lyrics Cache
 
-**Why it matters:** instant lyrics, less load on the free LRCLIB server, tiny disk footprint, and you can wipe it anytime.
+**Why it matters:** instant lyrics, less load on the lyric providers, tiny disk footprint, and you can wipe it anytime.
 
-- **Source:** lyrics come from [LRCLIB](https://lrclib.net), a free open-source lyrics database.
+- **Sources:** [LRCLIB](https://lrclib.net), plus NetEase Cloud Music and QQ Music through their public search/lyric endpoints. Auto mode queries all three concurrently and keeps the best-scored match; an explicit source is used strictly on its own.
 - **Where:** inside the mod's storage folder (`lyrics` subfolder), one small file per song.
-- **What's inside:** when fetching lyrics, the title, artist, album, and duration of the track being shown are sent to LRCLIB to look up matching lyrics. The retrieved lyrics and track metadata are then saved locally in the cache on your PC.
+- **What's inside:** when fetching lyrics, the title and artist of the track being shown (and its album and duration for LRCLIB) are sent to the providers to look up matching lyrics. The retrieved lyrics, translations and track metadata are then saved locally in the cache on your PC.
 - **Size & expiry:** capped at 25 MB by default (10 / 25 / 100 MB or Off in settings); the least recently used files are deleted first. Only songs that have lyrics are cached (refreshed after 90 days). Songs without lyrics, and failed requests, are never saved, so they are simply looked up again each time they play.
 - **Turn it off:** Mod Settings > Modules > "Lyrics cache (disk)", or set the size limit to Off. Lyrics are then not read from or written to disk at all.
 - **Clear it:** right-click the island > "Clear lyrics cache" (shows how many songs and how much space it uses).
@@ -98,7 +98,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - Suggestions for UI/UX or new integrations are always welcome.
 
 ### Credits
-- **[Sarthak Singh (sarthakaksh) @GitHub](https://github.com/sarthakaksh)**: Major feature overhaul including smoothing animations, right-click focus timer, strip mode, lyrics for songs, song recognition (Shazam) , quick lookup, Cross-Source Media Switching, hover clock, robust media controls, zero-CPU instant hide shortcut, Bluetooth battery integration, image clipboard thumbnails, and full-screen autohide fixes.
+- **[Sarthak Singh (sarthakaksh) @GitHub](https://github.com/sarthakaksh)**: Major feature overhaul including smoothing animations, right-click focus timer, lyrics for songs, quick lookup, Cross-Source Media Switching, hover clock, robust media controls, zero-CPU instant hide shortcut, Bluetooth battery integration, image clipboard thumbnails, and full-screen autohide fixes.
 - **[ciizerr @GitHub](https://github.com/ciizerr)**: Improved the UI by refining layout alignment, fixing dashboard scaling, and enhancing calendar and weather module integration.
 - **[ChrisSch-dev @GitHub](https://github.com/ChrisSch-dev)**: Added album title support, word wrapping for weather descriptions, sleep resume fixes, and various performance/movement stability improvements.
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color sampling, reorganized settings, and addressed various UI/media edge cases.
@@ -160,18 +160,6 @@ We love community contributions! To ensure high-quality updates, please follow t
       - default: Default (Apple Pill)
       - w11: Windows 11 (Rounded Box)
       - notch: macOS Notch (Top Edge Flush)
-  - StripMode: false
-    $name: Strip mode
-    $description: Rests the island as a thin strip that uses almost no resources. Hover over it to open the island in the shape chosen above. Also available in the right-click menu under Shape style.
-  - StripSensitivity: medium
-    $name: Strip mode hover sensitivity
-    $description: How close the cursor has to get to the strip before the island opens. Minimum means the cursor must be exactly on the strip. Maximum opens it as soon as the cursor comes near. Medium is the default. Only used when Strip mode is on.
-    $options:
-      - minimum: Minimum - exactly on the strip
-      - low: Low
-      - medium: Medium (Default)
-      - high: High
-      - maximum: Maximum - opens when the cursor is near
   - ProgressStyle: slim
     $name: Progress bar style
     $description: Look of the song progress bar in the expanded media player. Wavy and Squiggle animate while music is playing and flatten when paused.
@@ -439,7 +427,7 @@ We love community contributions! To ensure high-quality updates, please follow t
     $description: Adds a lyrics button to the media player controls to toggle an immersive lyrics view over the media tab. Can also be toggled from the right-click menu.
   - Lyrics: false
     $name: Lyrics module
-    $description: Shows synced lyrics for the current track (fetched from LRCLIB, a free open-source lyrics database) while the island is expanded. Scroll to the Lyrics tab to view them.
+    $description: Shows synced lyrics for the current track while the island is expanded. Auto mode scores LRCLIB, NetEase Cloud Music and QQ Music; you can also pin one source under Lyrics source. Scroll to the Lyrics tab to view them.
   - LyricsVisualizer: true
     $name: Show visualizer in Lyrics tab
     $description: Shows a small live audio waveform next to the Lyrics title while a track is playing.
@@ -460,7 +448,7 @@ We love community contributions! To ensure high-quality updates, please follow t
     $description: By default the lines above and below the active line are only a faint ghost. Turn this on to make them clearly readable.
   - LyricsCache: true
     $name: Lyrics cache (disk)
-    $description: Instant lyrics, less load on LRCLIB, tiny disk use, clearable anytime. Stored in the mod's storage folder. Turn off to stop all lyrics disk reads and writes.
+    $description: Instant lyrics, fewer requests to the lyric providers, tiny disk use, clearable anytime. Stored in the mod's storage folder. Turn off to stop all lyrics disk reads and writes.
   - LyricsCacheMaxMB: '25'
     $name: Lyrics cache size limit
     $description: Least recently used files are deleted once the cache grows past this. Off disables the disk cache.
@@ -469,6 +457,32 @@ We love community contributions! To ensure high-quality updates, please follow t
       - '10': 10 MB
       - '25': 25 MB (default)
       - '100': 100 MB
+  - ShowLyricsOnIsland: false
+    $name: Show lyrics on the collapsed island
+    $description: Shows the current synced lyric line (and its translation, when available) inside the collapsed media pill. The right-click menu carries the same switch and stays in sync with this setting. When no synced lyric is available, the pill keeps its normal appearance instead of showing an empty lyric bar.
+  - DynamicLyricWidth: true
+    $name: Dynamic lyric width
+    $description: 'On: the collapsed pill stretches horizontally with the current lyric line (and with its translation when shown), so nothing is cut off. Off: once lyrics are available the pill uses the fixed Lyric width below, which avoids the pill growing and shrinking between lines.'
+  - LyricWidth: 320
+    $name: Fixed lyric width (px)
+    $description: 'Width of the whole collapsed pill while lyrics are shown, in content pixels at 100% scale. Only used when Dynamic lyric width is off. It is multiplied by Size scale and Auto DPI scaling, so 320 stays visually consistent on 1080p, 2K, 4K and mixed-DPI setups. Minimum 160, maximum 880 (the fixed stage width).'
+  - LyricsSource: auto
+    $name: Lyrics source
+    $description: 'Auto queries LRCLIB, NetEase Cloud Music and QQ Music at the same time. Artist is the primary match signal, then title, then duration and synced-lyrics availability. The best match is used. Choose a single source to restrict lookups to it only (no silent fallback).'
+    $options:
+      - auto: Auto (score all sources)
+      - lrclib: LRCLIB
+      - netease: NetEase Cloud Music
+      - qq: QQ Music
+  - PreferTranslatedLyrics: false
+    $name: Prefer lyrics with translation
+    $description: 'Auto mode only. When at least one source returns a translated lyric track, the highest-scored source that has a translation wins even if another source (for example LRCLIB) matches perfectly. If no source has a translation, normal scoring is used. Has no effect when Lyrics source is set to a single provider.'
+  - LyricsTranslationPriority: original
+    $name: Lyrics / translation priority
+    $description: When a lyric has a translation, the collapsed pill and the expanded Lyrics page show the priority line in the normal text colour and the other line smaller and clearly readable underneath. This setting decides which one is the priority line.
+    $options:
+      - original: Original lyrics first
+      - translation: Translation first
   - Language: auto
     $name: Language
     $description: Language for the island's own text labels. Auto follows your Windows display language.
@@ -518,19 +532,12 @@ We love community contributions! To ensure high-quality updates, please follow t
   - FileTrayMaxItems: 10
     $name: File Tray capacity
     $description: 1 to 25. How many files the shelf keeps before the oldest one drops off.
-  - FileTrayNavigation: pager
-    $name: File Tray navigation
-    $description: "How to reach files that do not fit on the shelf. Page buttons adds a small < 1/4 > pager to the header. Mouse wheel scrolling lets the wheel scroll the list and shows a thin scrollbar. With wheel scrolling off, the wheel over the shelf switches tabs as usual."
-    $options:
-      - pager: Page buttons only (default)
-      - scroll: Mouse wheel scrolling only
-      - both: Page buttons and mouse wheel scrolling
   - FileTrayPersist: true
     $name: File Tray remembers items (disk)
     $description: Keeps the tray's contents across restarts, in the mod's storage folder. Only file paths and pasted text snippets are stored, never copies of your files. Turn off to stop all disk reads and writes and delete the saved list.
   - MediaExpandBlocklist: ""
-    $name: Ignore media from these apps
-    $description: 'Comma-separated app or site names that should not put the island into media mode (and never auto-expand on track change). Matched loosely against the media source, AUMID and title — .exe suffixes are optional. Examples: firefox, chrome.exe, youtube, tiktok.'
+    $name: Never auto-expand for these apps
+    $description: 'Comma-separated list of app or site names that should never make the island expand on a track change, while still updating quietly in the collapsed pill. Matched loosely against the media source and title, for example: chrome, tiktok, youtube.'
   - GameOverlayShowFps: true
     $name: Game overlay - show FPS
     $description: Include the frame rate in the game overlay strip.
@@ -549,22 +556,6 @@ We love community contributions! To ensure high-quality updates, please follow t
   - GameOverlayCompact: false
     $name: Game overlay - compact size
     $description: Shrink the game overlay to a narrow strip that fits neatly inside the taskbar area.
-  - SongRecognition: true
-    $name: Song recognition (Shazam)
-    $description: Press the song recognition shortcut (Shortcuts tab) to listen for a few seconds and identify the song. Only an audio fingerprint (frequency peaks, never a recording) is sent to Shazam, and only when you trigger it.
-  - SongRecognitionSource: system
-    $name: Song recognition - audio source
-    $description: What to listen to. System audio hears whatever your speakers or headphones play. Microphone hears music playing around you.
-    $options:
-      - system: System audio (what the PC is playing)
-      - mic: Microphone (music around you)
-  - SongRecognitionSeconds: '8'
-    $name: Song recognition - listening time
-    $description: Longer is more reliable for quiet or noisy audio.
-    $options:
-      - '5': 5 seconds
-      - '8': 8 seconds (default)
-      - '12': 12 seconds (most reliable)
   $name: Modules & Features
 - Shortcuts:
   - HideShowHotkeyEnabled: true
@@ -594,18 +585,6 @@ We love community contributions! To ensure high-quality updates, please follow t
   - LookupKey: "Space"
     $name: Quick Lookup hotkey key
     $description: 'Type Space, or a single A-Z or 0-9 key. Falls back to Space if left blank or invalid.'
-  - SongIdModifiers: ctrl_alt
-    $name: Song recognition hotkey modifiers
-    $description: Modifier keys combined with the song recognition key below.
-    $options:
-      - ctrl_alt: Ctrl + Alt
-      - ctrl_shift: Ctrl + Shift
-      - alt_shift: Alt + Shift
-      - win_alt: Win + Alt
-      - ctrl_alt_shift: Ctrl + Alt + Shift
-  - SongIdKey: "R"
-    $name: Song recognition hotkey key
-    $description: 'A single A-Z or 0-9 key, Space, or F1-F12. Falls back to R if blank or invalid. Press the hotkey again while listening to cancel.'
   $name: Shortcuts & Hotkeys
 */
 // ==/WindhawkModSettings==
@@ -620,6 +599,7 @@ We love community contributions! To ensure high-quality updates, please follow t
 #endif
 
 #include <windows.h>
+#include <bcrypt.h>
 #include <unknwn.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -653,6 +633,7 @@ We love community contributions! To ensure high-quality updates, please follow t
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cwchar>
 #include <cstring>
 #include <memory>
@@ -708,7 +689,6 @@ constexpr UINT WM_APP_APPLY_HOTKEY = WM_APP + 0x447;
 constexpr UINT WM_APP_APPLY_BACKDROP = WM_APP + 0x448;
 constexpr int ID_HIDE_SHOW_HOTKEY = 1;
 constexpr int ID_LOOKUP_HOTKEY = 2;
-constexpr int ID_SONGID_HOTKEY = 3;
 constexpr float kRenderPadX = 28.0f;
 constexpr float kRenderPadY = 22.0f;
 constexpr UINT kClipboardImageThumbMaxDim = 160;  // longer-side cap for the clipboard image thumbnail
@@ -841,19 +821,6 @@ namespace FileTrayLayout {
     constexpr float kClearBtnSize = 24.0f;     // bin button in the header
     constexpr float kClearBtnTop = 16.0f;      // bin top edge, measured from the content top
     constexpr float kPasteBtnGap = 4.0f;       // gap between the paste button and the bin
-
-    // Pager ("<  2/4  >") and scrollbar, shown only when more rows exist than fit.
-    constexpr float kPagerBtnSize = 18.0f;
-    constexpr float kPagerLabelW = 34.0f;
-    constexpr float kPagerGapToPaste = 8.0f;
-    constexpr float kScrollbarWidth = 3.0f;
-    constexpr float kScrollbarGap = 5.0f;      // from the rows' right edge to the scrollbar
-
-    // Distance from the content rect's right edge to the pager's right edge.
-    constexpr float PagerRightInset() {
-        return kPadX + kClearBtnSize + kPasteBtnGap + kClearBtnSize + kPagerGapToPaste;
-    }
-    constexpr float PagerWidth() { return kPagerBtnSize * 2.0f + kPagerLabelW; }
 
     constexpr int VisibleRowCapacity(float contentHeight) {
         const float span = contentHeight - kListBottomInset - kListTop + kRowGap;
@@ -1004,26 +971,6 @@ struct MediaContentPoint {
 
 // The conversion and hit-test helpers live further down, just after Clamp().
 
-// Strip mode: the island rests as a thin strip and opens on hover.
-namespace StripModeLayout {
-    constexpr float kWidth = 64.0f;          // content px, multiplied by sizeScale
-    constexpr float kHeight = 5.0f;
-    constexpr float kHoverPadX = 24.0f;      // hover zone at Medium sensitivity: a 5px strip is hard to hit
-    constexpr float kHoverPadY = 14.0f;
-
-    // Multiplier on the Medium hover zone for each sensitivity level
-    // (0 = Minimum, 1 = Low, 2 = Medium, 3 = High, 4 = Maximum).
-    constexpr float HoverPadScale(int level) {
-        return level <= 0 ? 0.0f
-             : level == 1 ? 0.4f
-             : level == 2 ? 1.0f
-             : level == 3 ? 2.2f
-                          : 4.0f;
-    }
-    constexpr float kContentFadeStart = 10.0f;  // content is invisible below this height
-    constexpr float kContentFadeSpan = 22.0f;   // and fully visible above start + span
-}
-
 enum class IslandKind {
     Idle,
     Media,
@@ -1040,7 +987,6 @@ enum class IslandKind {
     DoNotDisturb,
     Split,
     Lookup,
-    SongId,
 };
 
 enum class BluetoothDeviceCategory {
@@ -1204,6 +1150,15 @@ enum class ContourBorderMode {
     Borderless,
 };
 
+// Which lyric provider(s) the lyrics thread may use. Auto queries all of them
+// and keeps the best-scored candidate; the explicit modes are strict.
+enum class LyricsSource {
+    Auto,
+    Lrclib,
+    Netease,
+    Qq,
+};
+
 struct Settings {
     Position position = Position::TopCenter;
     int targetMonitor = 0;
@@ -1255,13 +1210,6 @@ struct Settings {
     bool quickLookup = false;
     UINT lookupModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
     UINT lookupVk = VK_SPACE;
-
-    // Song recognition (Shazam)
-    bool songRecognition = true;
-    bool songIdUseMic = false;
-    int songIdSeconds = 8;
-    UINT songIdModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
-    UINT songIdVk = 'R';
     bool bluetoothIndicator = true;
     bool bluetoothShowBattery = true;
     D2D1_COLOR_F privacyDotsMicHex = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f); // #FF9500
@@ -1280,11 +1228,18 @@ struct Settings {
     bool lyricsNeighborLinesVisible = false;
     int lyricsOffsetMs = 0;      // Modules.LyricsOffsetMs, speakers / wired, ms
     int lyricsOffsetBtMs = 0;    // Modules.LyricsOffsetBluetoothMs, Bluetooth output, ms
-    bool collapsedLyrics = false;  // lyrics inside the collapsed media pill (right-click toggle)
+    bool collapsedLyrics = false;  // effective on/off: Modules.ShowLyricsOnIsland + right-click override
     bool lyricsPinnedFirst = false;  // Lyrics tab is the first tab of the expanded media view (right-click toggle)
     bool lyricsCache = true;       // Modules.LyricsCache
     int lyricsCacheMaxMB = 25;     // Modules.LyricsCacheMaxMB; 0 = disk cache off
     bool mediaTabLyrics = false;   // lyrics side panel in the expanded media tab
+    // Collapsed-pill lyric presentation (Modules.*). collapsedLyrics above is the
+    // effective on/off state: the Mod Setting plus the persisted right-click override.
+    bool dynamicLyricWidth = true;                  // true = follow the line, false = fixed width
+    int lyricWidth = 320;                           // Modules.LyricWidth, content px at 100%
+    LyricsSource lyricsSource = LyricsSource::Auto; // Modules.LyricsSource
+    bool preferTranslatedLyrics = false;            // Modules.PreferTranslatedLyrics
+    bool lyricsTranslationFirst = false;            // Modules.LyricsTranslationPriority
     int autoHideIdleSeconds = 0;
     bool autoHideFullscreen = true;
     bool borderMergedMode = false;
@@ -1294,8 +1249,6 @@ struct Settings {
     bool autoDpiScale = true;
     bool w11Style = false;
     bool notchStyle = false;
-    bool stripMode = false;  // thin resting strip, opens on hover (independent of the shape)
-    int stripSensitivity = 2;  // 0 = Minimum, 1 = Low, 2 = Medium, 3 = High, 4 = Maximum
     // Color customization
     ThemePreset themePreset = ThemePreset::Obsidian;
     D2D1_COLOR_F pillBgColor = D2D1::ColorF(0.031f, 0.031f, 0.039f, 1.0f); // #08080A
@@ -1338,8 +1291,6 @@ struct Settings {
     bool fileTrayModule = false;
     int fileTrayMaxItems = 10;
     bool fileTrayPersist = true;   // Modules.FileTrayPersist
-    bool fileTrayPager = true;     // Modules.FileTrayNavigation: show the < 1/4 > pager
-    bool fileTrayScroll = false;   // Modules.FileTrayNavigation: wheel scrolling + scrollbar
 
     // ── Media auto-expand exclusions (#62) ───────────────────────────────────
     std::vector<std::wstring> mediaExpandBlocklist;
@@ -1560,6 +1511,10 @@ struct FileTrayItem {
 struct LyricsLine {
     int64_t timeMs = -1;  // -1 for unsynced (plain) lines
     std::wstring text;
+    // Translated counterpart of this line, merged by timestamp. Empty when the
+    // provider returned no translation for the line. The collapsed pill and the
+    // expanded Lyrics page paint it; the side panel stays single-line.
+    std::wstring translation;
 };
 
 // Immutable, shared lyric lines. Same read API as the vector it replaces, so
@@ -1587,8 +1542,13 @@ struct LyricsSnapshot {
     bool synced = false;
     bool notFound = false;
     bool fetching = false;
+    // True when this snapshot was selected under "prefer lyrics with
+    // translation". It is part of the cache match so toggling the preference
+    // cannot keep serving a cached result selected under the other mode.
+    bool translationPreferred = false;
     std::wstring matchedTitle;
     std::wstring matchedArtist;
+    std::wstring source;  // "lrclib" / "netease" / "qq", informational
     LyricsLines lines;
 };
 
@@ -1673,33 +1633,8 @@ struct LookupUiState {
 };
 LookupUiState g_lookupUi;
 
-enum class SongIdStatus {
-    Listening,
-    Matching,
-    Found,
-    NoMatch,
-    NoAudio,
-    Error,
-};
-
-struct SongIdSnapshot {
-    bool active = false;
-    SongIdStatus status = SongIdStatus::Listening;
-    bool micSource = false;
-    float listenSeconds = 8.0f;
-    double startedAt = 0.0;
-    double expiresAt = 0.0;
-    float level = 0.0f;          // live input level, 0..1
-    std::wstring title;
-    std::wstring artist;
-    std::wstring url;            // https page of the track
-    std::wstring message;        // text for the non-found states
-    PixelsRef cover;
-};
-
 struct SharedState {
     MediaSnapshot media;
-    SongIdSnapshot songId;
     std::vector<MediaSourceInfo> mediaSources;  // stable dock order
     ClipboardSnapshot clipboard;
     NotificationSnapshot notification;
@@ -1823,10 +1758,7 @@ HANDLE g_mediaRefreshEvent = nullptr;              // wakes MediaThreadProc
 std::atomic<int> g_hoveredSourceSlot{-1};
 std::atomic<int> g_pressedSourceSlot{-1};
 std::atomic<int> g_hoveredFileTrayRow = -1;  // row index under the cursor on the File Tray card
-std::atomic<int> g_hoveredFileTrayAction = -1;  // -2 = bin, -3 = paste, -4 = previous page, -5 = next page, >=0 = cut button of that row
-std::atomic<int> g_fileTrayScroll{0};           // index of the first visible row (newest-first order)
-std::atomic<bool> g_fileTrayPagerOn{true};      // Modules.FileTrayNavigation: pager shown
-std::atomic<bool> g_fileTrayWheelOn{false};     // Modules.FileTrayNavigation: wheel scroll + scrollbar
+std::atomic<int> g_hoveredFileTrayAction = -1;  // -2 = bin button, >=0 = cut button of that row
 std::atomic<bool> g_trayDragOver{false};      // a file drag from outside is hovering the island
 std::atomic<bool> g_trayInternalDrag{false};  // a drag that started from the tray itself is running
 std::atomic<int> g_tabEdgeBump{0};            // +1 / -1: wheel or swipe pushed past the last / first tab
@@ -2397,79 +2329,6 @@ float MediaScrubFractionUnbounded(const MediaContentPoint& rawPt) {
     return Clamp((Clamp(pt.x, barLeft, barRight) - barLeft) / (barRight - barLeft), 0.0f, 1.0f);
 }
 
-// ── File Tray scrolling / paging ─────────────────────────────────────────────
-// Rows at rest in the 184px expanded island. Scroll limits and page size use this
-// fixed value so they never follow the island's resize animation.
-int FileTrayRestCapacity() {
-    return FileTrayLayout::VisibleRowCapacity(MediaLayout::kExpandedHeight);
-}
-
-int FileTrayMaxScroll(int itemCount) {
-    return std::max(0, itemCount - FileTrayRestCapacity());
-}
-
-// Stored offset, clamped to what the current item count allows.
-int FileTrayScrollOffset(int itemCount) {
-    return ClampInt(g_fileTrayScroll.load(std::memory_order_relaxed), 0,
-                    FileTrayMaxScroll(itemCount));
-}
-
-// Returns true when the offset actually changed.
-bool FileTrayScrollBy(int itemCount, int deltaRows) {
-    const int current = FileTrayScrollOffset(itemCount);
-    const int next = ClampInt(current + deltaRows, 0, FileTrayMaxScroll(itemCount));
-    g_fileTrayScroll.store(next, std::memory_order_relaxed);
-    return next != current;
-}
-
-void FileTrayPageBy(int itemCount, int pages) {
-    FileTrayScrollBy(itemCount, pages * FileTrayRestCapacity());
-}
-
-int FileTrayPageCount(int itemCount) {
-    const int cap = FileTrayRestCapacity();
-    return std::max(1, (itemCount + cap - 1) / cap);
-}
-
-// Page the last visible row falls on, so the last page is reachable at any offset.
-int FileTrayCurrentPage(int itemCount, int offset) {
-    const int cap = FileTrayRestCapacity();
-    return ClampInt((offset + cap + cap - 1) / cap, 1, FileTrayPageCount(itemCount));
-}
-
-// 0 = previous page button, 1 = next page button, -1 = neither (or no overflow).
-int FileTrayPagerHitTest(const MediaContentPoint& pt, int itemCount) {
-    if (!g_fileTrayPagerOn.load(std::memory_order_relaxed) ||
-        !pt.valid || pt.height <= MediaLayout::kExpandedMinHeight ||
-        itemCount <= FileTrayRestCapacity()) {
-        return -1;
-    }
-    constexpr float kSlop = 3.0f;
-    const float size = FileTrayLayout::kPagerBtnSize;
-    const float right = pt.width - FileTrayLayout::PagerRightInset();
-    const float top = FileTrayLayout::kClearBtnTop + (FileTrayLayout::kClearBtnSize - size) * 0.5f;
-    if (pt.y < top - kSlop || pt.y > top + size + kSlop) {
-        return -1;
-    }
-    const float nextLeft = right - size;
-    const float prevLeft = right - FileTrayLayout::PagerWidth();
-    if (pt.x >= nextLeft - kSlop && pt.x <= right + kSlop) return 1;
-    if (pt.x >= prevLeft - kSlop && pt.x <= prevLeft + size + kSlop) return 0;
-    return -1;
-}
-
-// True over the row list and its scrollbar, but not the header or the pagination dots.
-bool FileTrayListHitTest(const MediaContentPoint& pt) {
-    if (!pt.valid || pt.height <= MediaLayout::kExpandedMinHeight) {
-        return false;
-    }
-    const float right = pt.width - FileTrayLayout::kPadX + FileTrayLayout::kScrollbarGap +
-                        FileTrayLayout::kScrollbarWidth + 2.0f;
-    return pt.x >= FileTrayLayout::kPadX && pt.x <= right &&
-           pt.y >= FileTrayLayout::kListTop &&
-           pt.y <= pt.height - FileTrayLayout::kListBottomInset;
-}
-
 // Index of the File Tray row under a content-space point, or -1. Rows are drawn
 // newest-first, so index 0 is the most recently dropped file.
 int FileTrayRowAtContentPoint(const MediaContentPoint& pt, int itemCount) {
@@ -2494,8 +2353,7 @@ int FileTrayRowAtContentPoint(const MediaContentPoint& pt, int itemCount) {
     }
 
     const int capacity = FileTrayLayout::VisibleRowCapacity(pt.height);
-    const int remaining = itemCount - FileTrayScrollOffset(itemCount);
-    if (index < 0 || index >= capacity || index >= remaining) {
+    if (index < 0 || index >= capacity || index >= itemCount) {
         return -1;
     }
     return index;
@@ -2986,45 +2844,6 @@ void ApplyBackdropMaterial(HWND);           // forward declaration; defined afte
 void NotifyKeyboardThreadSettingChanged();  // forward declaration; defined with the keyboard hook
 
 void ApplyLookupHotkey();  // forward declaration; defined with Quick Lookup
-void ApplySongIdHotkey();  // forward declaration; defined with song recognition
-
-UINT ParseHotkeyModifiers(const std::wstring& value) {
-    UINT mods = MOD_CONTROL | MOD_ALT;
-    if (EqualsNoCase(value, L"ctrl_shift")) {
-        mods = MOD_CONTROL | MOD_SHIFT;
-    } else if (EqualsNoCase(value, L"alt_shift")) {
-        mods = MOD_ALT | MOD_SHIFT;
-    } else if (EqualsNoCase(value, L"win_alt")) {
-        mods = MOD_WIN | MOD_ALT;
-    } else if (EqualsNoCase(value, L"ctrl_alt_shift")) {
-        mods = MOD_CONTROL | MOD_ALT | MOD_SHIFT;
-    }
-    return mods | MOD_NOREPEAT;
-}
-
-// "A".."Z", "0".."9", "Space" or "F1".."F12"; anything else -> fallback.
-UINT ParseHotkeyKeyName(std::wstring text, UINT fallback) {
-    const size_t first = text.find_first_not_of(L" \t\r\n\"'");
-    if (first == std::wstring::npos) {
-        return fallback;
-    }
-    text = text.substr(first, text.find_last_not_of(L" \t\r\n\"'") - first + 1);
-    if (EqualsNoCase(text, L"space")) {
-        return VK_SPACE;
-    }
-    if (text.size() == 1) {
-        const wchar_t ch = towupper(text[0]);
-        if ((ch >= L'A' && ch <= L'Z') || (ch >= L'0' && ch <= L'9')) {
-            return static_cast<UINT>(ch);
-        }
-    } else if (text.size() >= 2 && (text[0] == L'F' || text[0] == L'f')) {
-        const int n = _wtoi(text.c_str() + 1);
-        if (n >= 1 && n <= 12) {
-            return static_cast<UINT>(VK_F1 + (n - 1));
-        }
-    }
-    return fallback;
-}
 
 void LoadSettings() {
     Settings next;
@@ -3232,16 +3051,6 @@ void LoadSettings() {
         }
     }
 
-    // ── Song recognition ─────────────────────────────────────────────────────
-    next.songRecognition = Wh_GetIntSetting(L"Modules.SongRecognition") != 0;
-    next.songIdUseMic = EqualsNoCase(GetStringSettingCopy(L"Modules.SongRecognitionSource"), L"mic");
-    {
-        const int secs = _wtoi(GetStringSettingCopy(L"Modules.SongRecognitionSeconds").c_str());
-        next.songIdSeconds = secs > 0 ? ClampInt(secs, 4, 15) : 8;
-    }
-    next.songIdModifiers = ParseHotkeyModifiers(GetStringSettingCopy(L"Shortcuts.SongIdModifiers"));
-    next.songIdVk = ParseHotkeyKeyName(GetStringSettingCopy(L"Shortcuts.SongIdKey"), 'R');
-
     next.bluetoothIndicator = Wh_GetIntSetting(L"Modules.BluetoothIndicator") != 0;
     next.bluetoothShowBattery = Wh_GetIntSetting(L"Modules.BluetoothShowBattery") != 0;
     next.doNotDisturbIndicator = Wh_GetIntSetting(L"Modules.DoNotDisturbIndicator") != 0;
@@ -3299,24 +3108,8 @@ void LoadSettings() {
     next.fileTrayModule = Wh_GetIntSetting(L"Modules.FileTrayModule") != 0;
     next.fileTrayMaxItems = ClampInt(Wh_GetIntSetting(L"Modules.FileTrayMaxItems"), 1, 25);
     next.fileTrayPersist = Wh_GetIntSetting(L"Modules.FileTrayPersist") != 0;
-    {
-        // "pager" (default, also used for an unknown value), "scroll" or "both".
-        const std::wstring nav = GetStringSettingCopy(L"Modules.FileTrayNavigation");
-        if (EqualsNoCase(nav, L"scroll")) {
-            next.fileTrayPager = false;
-            next.fileTrayScroll = true;
-        } else if (EqualsNoCase(nav, L"both")) {
-            next.fileTrayPager = true;
-            next.fileTrayScroll = true;
-        } else {
-            next.fileTrayPager = true;
-            next.fileTrayScroll = false;
-        }
-        g_fileTrayPagerOn.store(next.fileTrayPager, std::memory_order_relaxed);
-        g_fileTrayWheelOn.store(next.fileTrayScroll, std::memory_order_relaxed);
-    }
 
-    // ── Media source exclusions (#62 / #114) ─────────────────────────────────
+    // ── Media auto-expand exclusions (#62) ───────────────────────────────────
     next.mediaExpandBlocklist.clear();
     {
         const std::wstring raw = GetStringSettingCopy(L"Modules.MediaExpandBlocklist");
@@ -3333,22 +3126,7 @@ void LoadSettings() {
                 // case-insensitive without re-lowering on every frame.
                 std::transform(entry.begin(), entry.end(), entry.begin(),
                                [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
-                // Users commonly paste "firefox.exe" / full paths (#114). Strip a
-                // trailing .exe/.com and keep only the basename so those forms
-                // still match the friendly source name and AUMID.
-                const size_t slash = entry.find_last_of(L"\\/");
-                if (slash != std::wstring::npos && slash + 1 < entry.size()) {
-                    entry = entry.substr(slash + 1);
-                }
-                if (entry.size() > 4) {
-                    const std::wstring_view ext(entry.c_str() + (entry.size() - 4), 4);
-                    if (ext == L".exe" || ext == L".com") {
-                        entry.resize(entry.size() - 4);
-                    }
-                }
-                if (!entry.empty()) {
-                    next.mediaExpandBlocklist.push_back(std::move(entry));
-                }
+                next.mediaExpandBlocklist.push_back(std::move(entry));
             }
             if (comma == std::wstring::npos) {
                 break;
@@ -3405,8 +3183,55 @@ void LoadSettings() {
     next.alwaysOnTop = Wh_GetIntSetting(L"Behavior.AlwaysOnTop") != 0;
     const int localExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1);
     next.expandOnHover = localExpandOnHover >= 0 ? (localExpandOnHover != 0) : (Wh_GetIntSetting(L"Behavior.ExpandOnHover") != 0);
-    // Right-click toggle; stored with Wh_SetIntValue so it survives restarts.
-    next.collapsedLyrics = Wh_GetIntValue(L"CollapsedLyrics", 0) != 0;
+    // Show lyrics on the collapsed island: a real Mod Setting with the same
+    // persisted right-click override pattern used by the media-tab lyrics panel.
+    // The legacy "CollapsedLyrics" value (the old right-click-only switch) is
+    // migrated once, so anyone who already enabled it keeps it enabled.
+    {
+        const int islandLyricsSetting = Wh_GetIntSetting(L"Modules.ShowLyricsOnIsland") != 0 ? 1 : 0;
+        int islandLyricsOverride = Wh_GetIntValue(L"ShowLyricsOnIslandOverride", -1);
+        if (islandLyricsOverride < 0 &&
+            Wh_GetIntValue(L"ShowLyricsOnIslandLegacyMigrated", 0) == 0) {
+            // Migrate the old right-click-only key exactly once. A later Mod
+            // Settings change clears the override and must not be overwritten by
+            // this legacy value on the next reload.
+            const int legacy = Wh_GetIntValue(L"CollapsedLyrics", -1);
+            Wh_SetIntValue(L"ShowLyricsOnIslandLegacyMigrated", 1);
+            if (legacy >= 0) {
+                islandLyricsOverride = legacy ? 1 : 0;
+                Wh_SetIntValue(L"ShowLyricsOnIslandOverride", islandLyricsOverride);
+                Wh_SetIntValue(L"ShowLyricsOnIslandOverrideBase", islandLyricsSetting);
+            }
+        }
+        if (islandLyricsOverride >= 0 &&
+            Wh_GetIntValue(L"ShowLyricsOnIslandOverrideBase", -1) != islandLyricsSetting) {
+            Wh_SetIntValue(L"ShowLyricsOnIslandOverride", -1);
+            islandLyricsOverride = -1;
+        }
+        next.collapsedLyrics = islandLyricsOverride >= 0 ? (islandLyricsOverride != 0)
+                                                         : (islandLyricsSetting != 0);
+    }
+    next.dynamicLyricWidth = Wh_GetIntSetting(L"Modules.DynamicLyricWidth") != 0;
+    {
+        int width = Wh_GetIntSetting(L"Modules.LyricWidth");
+        if (width <= 0) width = 320;  // keep the documented default if the schema value is missing
+        next.lyricWidth = ClampInt(width, 160, 880);
+    }
+    {
+        const std::wstring sourceStr = GetStringSettingCopy(L"Modules.LyricsSource");
+        if (EqualsNoCase(sourceStr, L"lrclib")) {
+            next.lyricsSource = LyricsSource::Lrclib;
+        } else if (EqualsNoCase(sourceStr, L"netease")) {
+            next.lyricsSource = LyricsSource::Netease;
+        } else if (EqualsNoCase(sourceStr, L"qq")) {
+            next.lyricsSource = LyricsSource::Qq;
+        } else {
+            next.lyricsSource = LyricsSource::Auto;
+        }
+    }
+    next.lyricsTranslationFirst =
+        EqualsNoCase(GetStringSettingCopy(L"Modules.LyricsTranslationPriority"), L"translation");
+    next.preferTranslatedLyrics = Wh_GetIntSetting(L"Modules.PreferTranslatedLyrics") != 0;
     next.lyricsPinnedFirst = Wh_GetIntValue(L"LyricsPinnedFirst", 0) != 0;
     {
         // Right-click choice wins until the Mod Settings value is changed.
@@ -3446,30 +3271,6 @@ void LoadSettings() {
     // A bottom-anchored island cannot be a top-edge macOS notch.
     if (IsBottomPosition(next.position)) {
         next.notchStyle = false;
-    }
-
-    // Strip mode: right-click choice wins until the Mod Settings value is changed.
-    {
-        const int stripSetting = Wh_GetIntSetting(L"Appearance.StripMode") != 0 ? 1 : 0;
-        int stripOverride = Wh_GetIntValue(L"StripModeOverride", -1);
-        if (stripOverride >= 0 && Wh_GetIntValue(L"StripModeOverrideBase", -1) != stripSetting) {
-            Wh_SetIntValue(L"StripModeOverride", -1);
-            stripOverride = -1;
-        }
-        next.stripMode = stripOverride >= 0 ? (stripOverride != 0) : (stripSetting != 0);
-
-        const std::wstring stripSens = GetStringSettingCopy(L"Appearance.StripSensitivity");
-        if (EqualsNoCase(stripSens, L"minimum")) {
-            next.stripSensitivity = 0;
-        } else if (EqualsNoCase(stripSens, L"low")) {
-            next.stripSensitivity = 1;
-        } else if (EqualsNoCase(stripSens, L"high")) {
-            next.stripSensitivity = 3;
-        } else if (EqualsNoCase(stripSens, L"maximum")) {
-            next.stripSensitivity = 4;
-        } else {
-            next.stripSensitivity = 2;
-        }
     }
 
     // Color settings — check local theme override first, then settings YAML.
@@ -3674,10 +3475,7 @@ void LoadSettings() {
             next.hideShowVk != g_settings.hideShowVk ||
             next.quickLookup != g_settings.quickLookup ||
             next.lookupModifiers != g_settings.lookupModifiers ||
-            next.lookupVk != g_settings.lookupVk ||
-            next.songRecognition != g_settings.songRecognition ||
-            next.songIdModifiers != g_settings.songIdModifiers ||
-            next.songIdVk != g_settings.songIdVk;
+            next.lookupVk != g_settings.lookupVk;
         backdropChanged =
             next.backdropMaterial != g_settings.backdropMaterial ||
             std::fabs(next.backdropTint - g_settings.backdropTint) > 0.001f ||
@@ -4165,7 +3963,6 @@ void ApplyHideShowHotkey() {
     // Quick Lookup shares this entry point so both hotkeys are registered,
     // re-registered and released in the same places (render thread only).
     ApplyLookupHotkey();
-    ApplySongIdHotkey();
     if (!g_hwnd) {
         return;
     }
@@ -5000,11 +4797,11 @@ bool WindowLooksLikeMediaSource(HWND hwnd, const std::wstring& sourceLower) {
            (base.find(L"vlc") != std::wstring::npos && sourceLower.find(L"vlc") != std::wstring::npos);
 }
 
-// #62 / #114: short-form video feeds and browser noise should not take over the
-// island. A blocklist entry is matched loosely against the friendly source name,
-// the raw AUMID and the title, so a single entry like "tiktok" or "firefox.exe"
-// catches both the desktop app and a browser tab. Blocked sources are skipped
-// for media mode entirely (and therefore never auto-expand).
+// #62: short-form video feeds change "track" every few seconds, which turned
+// auto-expand into a constant popup. A blocklist entry is matched loosely
+// against the friendly source name, the raw AUMID and the title, so a single
+// entry like "tiktok" catches both the desktop app and a browser tab. The
+// collapsed pill still updates -- only the expansion is suppressed.
 //
 // Reads the blocklist under g_settingsMutex rather than taking a Settings
 // reference: the caller is the render loop, and walking a std::vector<std::wstring>
@@ -6999,7 +6796,9 @@ struct HttpResult {
     }
 };
 
-HttpResult HttpGetEx(const wchar_t* host, const wchar_t* path, bool https, const wchar_t* userAgent) {
+HttpResult HttpRequestEx(const wchar_t* host, const wchar_t* path, bool https,
+                         const wchar_t* userAgent, const std::wstring& extraHeaders,
+                         const std::string* postBody) {
     HttpResult result;
     HINTERNET hSession = WinHttpOpen(userAgent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                      WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
@@ -7008,17 +6807,21 @@ HttpResult HttpGetEx(const wchar_t* host, const wchar_t* path, bool https, const
     }
     // resolve, connect, send, receive (ms). Without these a dead network can park
     // the lyrics thread for a very long time.
-    WinHttpSetTimeouts(hSession, 8000, 8000, 10000, 15000);
+    WinHttpSetTimeouts(hSession, 6000, 6000, 8000, 12000);
 
     HINTERNET hConnect = WinHttpConnect(hSession, host,
                                         https ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT, 0);
     if (hConnect) {
-        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", path, nullptr, WINHTTP_NO_REFERER,
-                                                WINHTTP_DEFAULT_ACCEPT_TYPES,
+        HINTERNET hRequest = WinHttpOpenRequest(hConnect, postBody ? L"POST" : L"GET", path, nullptr,
+                                                WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
                                                 https ? WINHTTP_FLAG_SECURE : 0);
         if (hRequest) {
-            if (WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                                   WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+            const wchar_t* headers = extraHeaders.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS
+                                                          : extraHeaders.c_str();
+            const DWORD headersLen = extraHeaders.empty() ? 0 : static_cast<DWORD>(extraHeaders.size());
+            void* body = postBody ? const_cast<char*>(postBody->data()) : nullptr;
+            const DWORD bodyLen = postBody ? static_cast<DWORD>(postBody->size()) : 0;
+            if (WinHttpSendRequest(hRequest, headers, headersLen, body, bodyLen, bodyLen, 0) &&
                 WinHttpReceiveResponse(hRequest, nullptr)) {
                 DWORD status = 0;
                 DWORD statusSize = sizeof(status);
@@ -7062,6 +6865,10 @@ HttpResult HttpGetEx(const wchar_t* host, const wchar_t* path, bool https, const
     return result;
 }
 
+HttpResult HttpGetEx(const wchar_t* host, const wchar_t* path, bool https, const wchar_t* userAgent) {
+    return HttpRequestEx(host, path, https, userAgent, std::wstring(), nullptr);
+}
+
 // Percent-encodes a city name for use as a wttr.in path segment. Only spaces
 // used to be escaped, so a city containing a comma, an accent or any other
 // non-ASCII character produced a malformed request; wttr.in then answered with
@@ -7087,8 +6894,9 @@ std::wstring PercentEncodeUtf8(const std::wstring& text) {
         return std::wstring();
     }
 
-    std::string utf8(static_cast<size_t>(bytes - 1), '\0');
+    std::string utf8(static_cast<size_t>(bytes), '\0');
     WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, utf8.data(), bytes, nullptr, nullptr);
+    utf8.resize(static_cast<size_t>(bytes - 1));
 
     static constexpr wchar_t kHexDigits[] = L"0123456789ABCDEF";
     std::wstring out;
@@ -7316,8 +7124,11 @@ std::string UrlEncodeComponent(const std::wstring& value) {
     int len = WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, nullptr, 0, nullptr, nullptr);
     std::string utf8;
     if (len > 0) {
-        utf8.resize(len - 1);
+        // The -1 form writes the terminating NUL too; size the buffer for it and
+        // trim afterwards instead of writing into the string's terminator slot.
+        utf8.resize(static_cast<size_t>(len));
         WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, utf8.data(), len, nullptr, nullptr);
+        utf8.resize(static_cast<size_t>(len - 1));
     }
 
     std::string out;
@@ -7387,8 +7198,10 @@ std::wstring JsonStringUnescape(const std::string& raw) {
     int wlen = MultiByteToWideChar(CP_UTF8, 0, out.c_str(), -1, nullptr, 0);
     std::wstring wout;
     if (wlen > 0) {
-        wout.resize(wlen - 1);
+        // MultiByteToWideChar(-1) writes the terminating NUL as well.
+        wout.resize(static_cast<size_t>(wlen));
         MultiByteToWideChar(CP_UTF8, 0, out.c_str(), -1, wout.data(), wlen);
+        wout.resize(static_cast<size_t>(wlen - 1));
     }
     return wout;
 }
@@ -7467,37 +7280,150 @@ std::vector<std::string> SplitJsonObjectArray(const std::string& json) {
     return objects;
 }
 
-std::vector<LyricsLine> ParseSyncedLyrics(const std::wstring& text) {
-    std::vector<LyricsLine> lines;
+struct RawLyricLine {
+    int64_t timeMs = 0;
+    std::wstring text;
+};
+
+bool HasNonWhitespace(const std::wstring& s) {
+    return s.find_first_not_of(L" \t\r\n") != std::wstring::npos;
+}
+
+// Providers sometimes answer a purely instrumental track with a placeholder
+// "lyric" ("纯音乐，请欣赏" / "Instrumental"). Treating that as real lyrics would
+// put a meaningless line in the collapsed pill, so the whole track is reported
+// as having no usable lyrics instead.
+bool IsInstrumentalPlaceholder(const std::wstring& text) {
+    if (!HasNonWhitespace(text)) return true;
+    const std::wstring lower = ToLowerCopy(text);
+    return lower.find(L"\u7eaf\u97f3\u4e50") != std::wstring::npos ||  // 纯音乐
+           lower.find(L"\u8bf7\u6b23\u8d4f") != std::wstring::npos ||  // 请欣赏
+           lower.find(L"\u6682\u65e0\u6b4c\u8bcd") != std::wstring::npos ||  // 暂无歌词
+           lower.find(L"instrumental") != std::wstring::npos;
+}
+
+bool HasRealLyricContent(const std::vector<LyricsLine>& lines) {
+    for (const LyricsLine& line : lines) {
+        if (!HasNonWhitespace(line.text) || IsInstrumentalPlaceholder(line.text)) continue;
+        const std::wstring lower = ToLowerCopy(line.text);
+        auto startsWith = [&](const wchar_t* prefix) {
+            return lower.rfind(prefix, 0) == 0;
+        };
+        // Credit-only tracks are as useless in the pill as an instrumental note.
+        if (startsWith(L"\u4f5c\u8bcd") || startsWith(L"\u4f5c\u66f2") ||
+            startsWith(L"\u7f16\u66f2") || startsWith(L"\u5236\u4f5c") ||
+            startsWith(L"\u6df7\u97f3") || startsWith(L"\u6bcd\u5e26") ||
+            startsWith(L"\u76d1\u5236") || startsWith(L"\u51fa\u54c1") ||
+            startsWith(L"lyrics by") || startsWith(L"composed by") ||
+            startsWith(L"produced by")) {
+            continue;
+        }
+        return true;
+    }
+    return false;
+}
+
+// Parses a standard LRC line. Supports [mm:ss], [mm:ss.xx], [mm:ss.xxx] and the
+// multi-timestamp form ([00:12.00][00:15.00] text). Accepts both the '.' and the
+// ',' decimal separators, since some providers emit the European form.
+std::vector<RawLyricLine> ParseRawLrcLines(const std::wstring& text) {
+    std::vector<RawLyricLine> lines;
     size_t start = 0;
     while (start <= text.size()) {
         size_t end = text.find(L'\n', start);
         if (end == std::wstring::npos) end = text.size();
         std::wstring line = text.substr(start, end - start);
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
 
-        if (line.size() >= 3 && line[0] == L'[') {
-            const size_t closeBracket = line.find(L']');
-            if (closeBracket != std::wstring::npos) {
-                int minutes = 0, seconds = 0, hundredths = 0;
-                const std::wstring ts = line.substr(1, closeBracket - 1);
-                if (swscanf_s(ts.c_str(), L"%d:%d.%d", &minutes, &seconds, &hundredths) >= 2) {
-                    std::wstring lyricText = line.substr(closeBracket + 1);
-                    while (!lyricText.empty() && lyricText.front() == L' ') {
-                        lyricText.erase(lyricText.begin());
-                    }
-                    LyricsLine ll;
-                    ll.timeMs = static_cast<int64_t>(minutes) * 60000 +
-                               static_cast<int64_t>(seconds) * 1000 +
-                               static_cast<int64_t>(hundredths) * 10;
-                    ll.text = std::move(lyricText);
-                    lines.push_back(std::move(ll));
+        size_t p = 0;
+        std::vector<int64_t> times;
+        while (p < line.size() && line[p] == L'[') {
+            const size_t closeBracket = line.find(L']', p + 1);
+            if (closeBracket == std::wstring::npos) break;
+            const std::wstring ts = line.substr(p + 1, closeBracket - p - 1);
+            const size_t colon = ts.find(L':');
+            if (colon != std::wstring::npos && colon > 0) {
+                const int minutes = _wtoi(ts.substr(0, colon).c_str());
+                std::wstring secPart = ts.substr(colon + 1);
+                for (wchar_t& c : secPart) {
+                    if (c == L',') c = L'.';
                 }
+                wchar_t* secEnd = nullptr;
+                const double seconds = wcstod(secPart.c_str(), &secEnd);
+                if (secEnd != secPart.c_str() && seconds >= 0.0 && seconds < 6000.0) {
+                    times.push_back(static_cast<int64_t>(minutes) * 60000 +
+                                    static_cast<int64_t>(seconds * 1000.0 + 0.5));
+                }
+            }
+            p = closeBracket + 1;
+        }
+        if (!times.empty()) {
+            std::wstring lyricText = line.substr(p);
+            while (!lyricText.empty() && (lyricText.front() == L' ' || lyricText.front() == L'\t')) {
+                lyricText.erase(lyricText.begin());
+            }
+            for (int64_t timeMs : times) {
+                RawLyricLine raw;
+                raw.timeMs = timeMs;
+                raw.text = lyricText;
+                lines.push_back(std::move(raw));
             }
         }
 
         if (end == text.size()) break;
         start = end + 1;
     }
+    std::stable_sort(lines.begin(), lines.end(),
+                     [](const RawLyricLine& a, const RawLyricLine& b) { return a.timeMs < b.timeMs; });
+    return lines;
+}
+
+std::vector<LyricsLine> ParseSyncedLyrics(const std::wstring& text) {
+    std::vector<LyricsLine> lines;
+    for (RawLyricLine& raw : ParseRawLrcLines(text)) {
+        LyricsLine ll;
+        ll.timeMs = raw.timeMs;
+        ll.text = std::move(raw.text);
+        lines.push_back(std::move(ll));
+    }
+    if (!HasRealLyricContent(lines)) lines.clear();
+    return lines;
+}
+
+// Parses the original LRC and its translation track, merging translations by
+// timestamp (exact match first, then within 100 ms like the reference Python
+// provider). If only the translation track has timestamps, it becomes the primary
+// text instead of being dropped.
+std::vector<LyricsLine> ParseSyncedLyricsWithTranslation(const std::wstring& lrcText,
+                                                         const std::wstring& tlyricText) {
+    std::vector<RawLyricLine> originals = ParseRawLrcLines(lrcText);
+    const std::vector<RawLyricLine> translations = ParseRawLrcLines(tlyricText);
+    const bool translationAsPrimary = originals.empty() && !translations.empty();
+    if (translationAsPrimary) originals = translations;
+
+    std::vector<LyricsLine> lines;
+    lines.reserve(originals.size());
+    for (RawLyricLine& raw : originals) {
+        LyricsLine ll;
+        ll.timeMs = raw.timeMs;
+        ll.text = std::move(raw.text);
+        if (!translationAsPrimary) {
+            int64_t bestDelta = 101;
+            const std::wstring* bestText = nullptr;
+            for (const RawLyricLine& t : translations) {
+                const int64_t delta = ll.timeMs >= t.timeMs ? ll.timeMs - t.timeMs : t.timeMs - ll.timeMs;
+                if (delta <= 100 && delta < bestDelta) {
+                    bestDelta = delta;
+                    bestText = &t.text;
+                }
+            }
+            if (bestText && *bestText != ll.text) {
+                ll.translation = *bestText;
+            }
+        }
+        lines.push_back(std::move(ll));
+    }
+    if (!HasRealLyricContent(lines)) lines.clear();
     return lines;
 }
 
@@ -7517,6 +7443,7 @@ std::vector<LyricsLine> ParsePlainLyrics(const std::wstring& text) {
         if (end == text.size()) break;
         start = end + 1;
     }
+    if (!HasRealLyricContent(lines)) lines.clear();
     return lines;
 }
 
@@ -7559,6 +7486,8 @@ struct Entry {
     std::wstring fullKey;
     uint64_t looseHash = 0;
     uint64_t fullHash = 0;
+    std::wstring source;  // "lrclib" / "netease" / "qq"; empty on v1 cache entries
+    bool translationPreferred = false;  // selected under "prefer translated lyrics"
     std::vector<LyricsLine> lines;
 };
 
@@ -7710,7 +7639,8 @@ void PutMemory(Entry e) {
 
 // Exact key first, otherwise the best loose match. Moves the hit to the MRU slot;
 // the returned pointer is valid until the next modification of the vector.
-const Entry* FindInMemory(const Keys& k, int64_t nowUnix) {
+const Entry* FindInMemory(const Keys& k, int64_t nowUnix, const std::wstring& requiredSource,
+                          bool requiredTranslationPreferred) {
     auto& mem = Memory();
     int exactIdx = -1;
     int looseIdx = -1;
@@ -7718,6 +7648,8 @@ const Entry* FindInMemory(const Keys& k, int64_t nowUnix) {
     for (int i = static_cast<int>(mem.size()) - 1; i >= 0; --i) {
         const Entry& e = mem[static_cast<size_t>(i)];
         if (EntryExpired(e, nowUnix)) continue;
+        if (!requiredSource.empty() && e.source != requiredSource) continue;
+        if (e.translationPreferred != requiredTranslationPreferred) continue;
         if (e.fullKey == k.full) {
             exactIdx = i;
             break;
@@ -7779,23 +7711,28 @@ std::wstring SingleLine(std::wstring s) {
 }
 
 // File layout (UTF-8):
-//   DIWLC 1            <- magic + format version (anything else = miss + delete)
+//   DIWLC 2            <- magic + format version (1 is still read for compatibility)
 //   saved=<unix>       <- (PeekHeader relies on saved/status being lines 2 and 3)
 //   status=found|notfound
 //   synced=1|0
 //   dur=<sec>
+//   source=lrclib|netease|qq   (v2 only; empty on v1)
+//   trpref=1|0                  (selected under "prefer translated lyrics")
 //   lkey=<normalized artist|title>
 //   fkey=<normalized artist|title|album|dur>
 //   title=... / artist=...   (informational only)
 //   ---
-//   body: synced -> "<timeMs>\t<text>\n" per line, plain -> "<text>\n" per line
+//   body: synced -> "<timeMs>\t<text>[\x1f<translation>]\n" per line,
+//         plain  -> "<text>[\x1f<translation>]\n" per line
 std::string SerializeEntry(const Entry& e, const std::wstring& title, const std::wstring& artist) {
     std::string out;
-    out += "DIWLC 1\n";
+    out += "DIWLC 2\n";
     out += "saved=" + std::to_string(e.savedAt) + "\n";
     out += (e.status == Status::Found) ? "status=found\n" : "status=notfound\n";
     out += e.synced ? "synced=1\n" : "synced=0\n";
     out += "dur=" + std::to_string(e.durationSec) + "\n";
+    out += "source=" + WideToUtf8(e.source) + "\n";
+    out += e.translationPreferred ? "trpref=1\n" : "trpref=0\n";
     out += "lkey=" + WideToUtf8(e.looseKey) + "\n";
     out += "fkey=" + WideToUtf8(e.fullKey) + "\n";
     out += "title=" + WideToUtf8(SingleLine(title)) + "\n";
@@ -7810,11 +7747,23 @@ std::string SerializeEntry(const Entry& e, const std::wstring& title, const std:
                 body += L'\t';
             }
             body += SingleLine(line.text);
+            if (!line.translation.empty()) {
+                body += L'\x1f';
+                body += SingleLine(line.translation);
+            }
             body += L'\n';
         }
         out += WideToUtf8(body);
     }
     return out;
+}
+
+// Strips an optional "\x1ftranslation" suffix from a cache body row.
+void SplitCacheBodyRow(std::wstring* text, std::wstring* translation) {
+    const size_t sep = text->find(L'\x1f');
+    if (sep == std::wstring::npos) return;
+    *translation = text->substr(sep + 1);
+    text->resize(sep);
 }
 
 // Returns false for anything that is not a complete, current-version entry.
@@ -7834,7 +7783,8 @@ bool ParseEntry(const std::string& data, Entry* out) {
     };
 
     std::string line;
-    if (!nextLine(&line) || line != "DIWLC 1") return false;
+    if (!nextLine(&line) || (line != "DIWLC 1" && line != "DIWLC 2")) return false;
+    const bool version2 = (line == "DIWLC 2");
 
     Entry e;
     bool haveSaved = false, haveStatus = false, haveLoose = false, haveFull = false, headerEnded = false;
@@ -7857,6 +7807,10 @@ bool ParseEntry(const std::string& data, Entry* out) {
             e.synced = (val == "1");
         } else if (key == "dur") {
             e.durationSec = static_cast<int>(strtol(val.c_str(), nullptr, 10));
+        } else if (key == "source") {
+            e.source = Utf8ToWide(val);
+        } else if (key == "trpref") {
+            e.translationPreferred = (val == "1");
         } else if (key == "lkey") {
             e.looseKey = Utf8ToWide(val);
             haveLoose = !e.looseKey.empty();
@@ -7866,6 +7820,7 @@ bool ParseEntry(const std::string& data, Entry* out) {
         }
     }
     if (!headerEnded || !haveSaved || !haveStatus || !haveLoose || !haveFull) return false;
+    (void)version2;
 
     if (e.status == Status::Found) {
         const std::wstring body = Utf8ToWide(data.substr(pos));
@@ -7887,6 +7842,7 @@ bool ParseEntry(const std::string& data, Entry* out) {
                 ll.timeMs = -1;
                 ll.text = row;
             }
+            SplitCacheBodyRow(&ll.text, &ll.translation);
             e.lines.push_back(std::move(ll));
         }
         if (e.lines.empty()) return false;
@@ -7934,7 +7890,8 @@ void RemoveEntryFile(const std::wstring& path, uint64_t knownSize) {
 }
 
 // ---- disk layer ------------------------------------------------------------------
-bool LookupDisk(const Keys& k, int64_t nowUnix, Entry* out) {
+bool LookupDisk(const Keys& k, int64_t nowUnix, const std::wstring& requiredSource,
+                bool requiredTranslationPreferred, Entry* out) {
     const std::wstring& dir = CacheDir(false);
     if (dir.empty()) return false;
 
@@ -7945,7 +7902,9 @@ bool LookupDisk(const Keys& k, int64_t nowUnix, Entry* out) {
         Entry e;
         uint64_t size = 0;
         const LoadResult r = LoadEntry(path, nowUnix, &e, &size);
-        if (r == LoadResult::Ok && e.fullKey == k.full) {  // key check also guards hash collisions
+        if (r == LoadResult::Ok && e.fullKey == k.full &&
+            (requiredSource.empty() || e.source == requiredSource) &&
+            e.translationPreferred == requiredTranslationPreferred) {  // key check also guards hash collisions
             TouchFile(path);
             *out = std::move(e);
             return true;
@@ -7983,6 +7942,8 @@ bool LookupDisk(const Keys& k, int64_t nowUnix, Entry* out) {
             continue;
         }
         if (r != LoadResult::Ok) continue;
+        if (!requiredSource.empty() && e.source != requiredSource) continue;
+        if (e.translationPreferred != requiredTranslationPreferred) continue;
         if (e.looseKey != k.loose || !DurationCompatible(e.durationSec, k.durationSec)) continue;
 
         const int delta = (e.durationSec > 0 && k.durationSec > 0) ? std::abs(e.durationSec - k.durationSec) : 0;
@@ -8042,17 +8003,21 @@ bool PeekHeader(const std::wstring& path, int64_t* savedAt, bool* found) {
     if (!ok || got < 24) return false;
     buf[got] = '\0';
 
-    static const char kMagicLine[] = "DIWLC 1\n";
-    if (strncmp(buf, kMagicLine, sizeof(kMagicLine) - 1) != 0) return false;
-    const char* p = buf + sizeof(kMagicLine) - 1;
+    // Accept the current v2 cache files and the v1 files left by older builds;
+    // rejecting v2 here made CleanupPass delete everything the writer had just
+    // created. Both versions share the same saved/status lines.
+    if (strncmp(buf, "DIWLC ", 6) != 0 || (buf[6] != '1' && buf[6] != '2') || buf[7] != '\n') {
+        return false;
+    }
+    const char* p = buf + 8;
     if (strncmp(p, "saved=", 6) != 0) return false;
     *savedAt = static_cast<int64_t>(strtoll(p + 6, nullptr, 10));
     const char* nl = strchr(p, '\n');
     if (!nl) return false;
     p = nl + 1;
-    if (strncmp(p, "status=found", 12) == 0) {
+    if (strncmp(p, "status=found", 12) == 0 && (p[12] == '\n' || p[12] == '\r')) {
         *found = true;
-    } else if (strncmp(p, "status=notfound", 15) == 0) {
+    } else if (strncmp(p, "status=notfound", 15) == 0 && (p[15] == '\n' || p[15] == '\r')) {
         *found = false;
     } else {
         return false;
@@ -8203,6 +8168,8 @@ void FillSnapshot(const Entry& e, const std::wstring& title, const std::wstring&
     *out = LyricsSnapshot{};
     out->matchedTitle = title;
     out->matchedArtist = artist;
+    out->source = e.source;
+    out->translationPreferred = e.translationPreferred;
     if (e.status == Status::Found) {
         out->hasData = true;
         out->synced = e.synced;
@@ -8213,12 +8180,18 @@ void FillSnapshot(const Entry& e, const std::wstring& title, const std::wstring&
 }
 
 // True on a hit (memory or disk); *out is then ready to publish: hasData for found
-// lyrics, notFound for a cached "no lyrics", fetching never set.
+// lyrics, notFound for a cached "no lyrics", fetching never set. requiredSource is
+// empty for Auto (any cached provider is fine) and a source name for an explicit
+// setting, so changing the setting can never silently serve another provider's
+// cached lyrics. requiredTranslationPreferred is true when the user enabled
+// "prefer lyrics with translation", so a cached entry selected under the other
+// mode is treated as a miss and the providers are asked again.
 bool Lookup(const Keys& k, bool diskOn, const std::wstring& title, const std::wstring& artist,
+            const std::wstring& requiredSource, bool requiredTranslationPreferred,
             LyricsSnapshot* out) {
     const int64_t nowUnix = UnixNow();
 
-    if (const Entry* m = FindInMemory(k, nowUnix)) {
+    if (const Entry* m = FindInMemory(k, nowUnix, requiredSource, requiredTranslationPreferred)) {
         FillSnapshot(*m, title, artist, out);
         if (diskOn) {
             // A song replayed from memory must still look "recently used" on disk.
@@ -8230,7 +8203,7 @@ bool Lookup(const Keys& k, bool diskOn, const std::wstring& title, const std::ws
 
     if (!diskOn) return false;
     Entry e;
-    if (!LookupDisk(k, nowUnix, &e)) return false;
+    if (!LookupDisk(k, nowUnix, requiredSource, requiredTranslationPreferred, &e)) return false;
     FillSnapshot(e, title, artist, out);
     PutMemory(std::move(e));
     return true;
@@ -8251,6 +8224,8 @@ void Store(const Keys& k, Status status, const LyricsSnapshot& snap, bool diskOn
     e.fullKey = k.full;
     e.looseHash = k.looseHash;
     e.fullHash = k.fullHash;
+    e.source = snap.source;
+    e.translationPreferred = snap.translationPreferred;
     if (status == Status::Found) e.lines = snap.lines.vec();
 
     if (diskOn) WriteEntryToDisk(e, snap.matchedTitle, snap.matchedArtist);
@@ -8334,7 +8309,17 @@ std::wstring NormalizeLyricsMatch(const std::wstring& in) {
     std::wstring out;
     bool space = false;
     for (wchar_t c : in) {
-        if (iswalnum(c)) {
+        // iswalnum() only knows ASCII in the default C locale, which used to
+        // reduce every CJK title to an empty string and made NetEase / QQ
+        // matches score 0. Keep non-ASCII letters, but still treat CJK and
+        // full-width punctuation as separators.
+        bool keep = iswalnum(c) != 0;
+        if (!keep && c >= 0x80) {
+            const bool cjkPunctuation = (c >= 0x3000 && c <= 0x303F);
+            const bool fullWidthPunctuation = (c >= 0xFF01 && c <= 0xFF65);
+            keep = !cjkPunctuation && !fullWidthPunctuation;
+        }
+        if (keep) {
             if (space && !out.empty()) out.push_back(L' ');
             space = false;
             out.push_back(static_cast<wchar_t>(towlower(c)));
@@ -8366,10 +8351,197 @@ bool ExtractJsonNumberField(const std::string& json, const char* key, double* ou
     return true;
 }
 
+// ── Top-level JSON field extraction ─────────────────────────────────────────
+// NetEase's search objects start with an "album" object that contains its own
+// "id" and "name", and an "artist" object with another "id". A plain
+// find("\"id\":") therefore returns the album artist's id, not the song id.
+// These helpers walk only the fields of the outer object and skip nested
+// objects/arrays, so "id" / "name" / "songmid" mean the song-level field.
+void SkipJsonWhitespace(const std::string& json, size_t* pos) {
+    while (*pos < json.size()) {
+        const char c = json[*pos];
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+        ++*pos;
+    }
+}
+
+// Parses a JSON string starting at the opening quote. Returns the contents with
+// escape sequences still intact (JsonStringUnescape is applied by the caller).
+bool ParseJsonStringRaw(const std::string& json, size_t* pos, std::string* out) {
+    if (*pos >= json.size() || json[*pos] != '"') return false;
+    ++*pos;
+    out->clear();
+    bool escaped = false;
+    while (*pos < json.size()) {
+        const char c = json[*pos];
+        if (escaped) {
+            out->push_back('\\');
+            out->push_back(c);
+            escaped = false;
+            ++*pos;
+            continue;
+        }
+        if (c == '\\') {
+            escaped = true;
+            ++*pos;
+            continue;
+        }
+        if (c == '"') {
+            ++*pos;
+            return true;
+        }
+        out->push_back(c);
+        ++*pos;
+    }
+    return false;
+}
+
+// Skips one JSON value, including objects and arrays, respecting strings.
+bool SkipJsonValue(const std::string& json, size_t* pos) {
+    SkipJsonWhitespace(json, pos);
+    if (*pos >= json.size()) return false;
+    const char first = json[*pos];
+    if (first == '"') {
+        std::string ignored;
+        return ParseJsonStringRaw(json, pos, &ignored);
+    }
+    if (first == '{' || first == '[') {
+        int depth = 0;
+        bool inString = false;
+        bool escaped = false;
+        for (; *pos < json.size(); ++*pos) {
+            const char c = json[*pos];
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+            } else if (c == '{' || c == '[') {
+                ++depth;
+            } else if (c == '}' || c == ']') {
+                --depth;
+                if (depth == 0) {
+                    ++*pos;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    while (*pos < json.size() && json[*pos] != ',' && json[*pos] != '}' && json[*pos] != ']') {
+        ++*pos;
+    }
+    return true;
+}
+
+bool ExtractTopLevelJsonField(const std::string& object, const char* key, std::string* raw,
+                              bool* isString) {
+    size_t pos = object.find('{');
+    if (pos == std::string::npos) return false;
+    ++pos;
+    while (pos < object.size()) {
+        SkipJsonWhitespace(object, &pos);
+        if (pos >= object.size() || object[pos] == '}') break;
+        std::string field;
+        if (!ParseJsonStringRaw(object, &pos, &field)) return false;
+        SkipJsonWhitespace(object, &pos);
+        if (pos >= object.size() || object[pos] != ':') return false;
+        ++pos;
+        SkipJsonWhitespace(object, &pos);
+
+        const bool stringValue = (pos < object.size() && object[pos] == '"');
+        std::string value;
+        if (stringValue) {
+            if (!ParseJsonStringRaw(object, &pos, &value)) return false;
+        } else {
+            const size_t start = pos;
+            if (!SkipJsonValue(object, &pos)) return false;
+            value = object.substr(start, pos - start);
+            const size_t a = value.find_first_not_of(" \t\r\n");
+            const size_t b = value.find_last_not_of(" \t\r\n");
+            value = (a == std::string::npos) ? std::string() : value.substr(a, b - a + 1);
+        }
+
+        if (field == key) {
+            if (stringValue) {
+                *raw = std::move(value);
+                if (isString) *isString = true;
+                return true;
+            }
+            if (!value.empty() && value[0] != '{' && value[0] != '[') {
+                *raw = std::move(value);
+                if (isString) *isString = false;
+                return true;
+            }
+            return false;
+        }
+
+        SkipJsonWhitespace(object, &pos);
+        if (pos < object.size() && object[pos] == ',') {
+            ++pos;
+            continue;
+        }
+        if (pos < object.size() && object[pos] == '}') break;
+        return false;
+    }
+    return false;
+}
+
+bool ExtractTopLevelJsonString(const std::string& object, const char* key, std::string* raw) {
+    bool isString = false;
+    return ExtractTopLevelJsonField(object, key, raw, &isString) && isString;
+}
+
+bool ExtractTopLevelJsonNumber(const std::string& object, const char* key, double* out) {
+    std::string raw;
+    bool isString = true;
+    if (!ExtractTopLevelJsonField(object, key, &raw, &isString) || isString) return false;
+    *out = strtod(raw.c_str(), nullptr);
+    return true;
+}
+
+// Shared scoring used by every provider, so a NetEase or QQ candidate competes
+// with LRCLIB on the same terms. Artist is the primary signal, the title is
+// slightly behind it, and duration/language availability refine the choice:
+//   artist 0/1/2 * 40, title 0/1/2 * 35,
+//   duration within 2 s / 5 s / 10 s = 30 / 20 / 5,
+//   plus 20 for synchronized lyrics.
+// Returns -1 when the candidate is not the same song. `trusted` skips the
+// rejection rules (an exact /api/get answer) but still scores it.
+int ScoreLyricsCandidate(const std::wstring& candTitle, const std::wstring& candArtist,
+                         const std::wstring& wantTitle, const std::wstring& wantArtist,
+                         int durDiff, bool synced, bool trusted) {
+    const int titleMatch = LyricsTextMatch(candTitle, wantTitle);
+    const int artistMatch = wantArtist.empty() ? 1 : LyricsTextMatch(candArtist, wantArtist);
+    if (!trusted) {
+        if (titleMatch == 0) return -1;  // different song
+        if (durDiff > 10) return -1;     // different cut: sync would be off
+        if (artistMatch == 0 && !(durDiff >= 0 && durDiff <= 3)) return -1;  // maybe a cover
+    }
+    int score = artistMatch * 40 + titleMatch * 35;
+    if (durDiff >= 0) score += durDiff <= 2 ? 30 : (durDiff <= 5 ? 20 : 5);
+    if (synced) score += 20;
+    return score;
+}
+
+int DurationDiffSec(int wantDurationSec, double candidateDurationSec) {
+    if (wantDurationSec <= 0 || candidateDurationSec <= 0.0) return -1;
+    return std::abs(static_cast<int>(candidateDurationSec + 0.5) - wantDurationSec);
+}
+
 struct LyricsPick {
     bool found = false;
     bool synced = false;
     int score = -1;
+    std::wstring title;
+    std::wstring artist;
     std::vector<LyricsLine> lines;
 };
 
@@ -8415,25 +8587,19 @@ void ConsiderLyricsBody(const std::string& body, const std::wstring& wantTitle,
         int durDiff = -1;
         double candDur = 0.0;
         if (wantDurationSec > 0 && ExtractJsonNumberField(c, "duration", &candDur) && candDur > 0.0) {
-            durDiff = std::abs(static_cast<int>(candDur + 0.5) - wantDurationSec);
+            durDiff = DurationDiffSec(wantDurationSec, candDur);
         }
 
-        int score = 0;
-        if (!trusted) {
-            const int titleMatch = LyricsTextMatch(candTitle, wantTitle);
-            if (titleMatch == 0) continue;                       // different song
-            if (durDiff > 10) continue;                          // different cut: sync would be off
-            const int artistMatch = wantArtist.empty() ? 1 : LyricsTextMatch(candArtist, wantArtist);
-            if (artistMatch == 0 && !(durDiff >= 0 && durDiff <= 3)) continue;  // maybe a cover
-            score += titleMatch * 30 + artistMatch * 20;
-        }
-        if (durDiff >= 0) score += durDiff <= 2 ? 40 : (durDiff <= 5 ? 25 : 5);
-        if (synced) score += 20;
+        const int score = ScoreLyricsCandidate(candTitle, candArtist, wantTitle, wantArtist,
+                                               durDiff, synced, trusted);
+        if (score < 0) continue;
 
         if (!best->found || score > best->score) {
             best->found = true;
             best->synced = synced;
             best->score = score;
+            best->title = candTitle;
+            best->artist = candArtist;
             best->lines = std::move(lines);
         }
     }
@@ -8505,29 +8671,714 @@ bool FetchLyricsFromLrclib(const std::wstring& title, const std::wstring& artist
     return pick->found;
 }
 
+// ── NetEase Cloud Music / QQ Music providers ────────────────────────────────
+// Ported from Apple_Music_Dynamic_Lyrics' lyric_provider.py. NetEase's linux
+// gateway expects an AES-128-ECB encrypted JSON envelope ("eparams"), so the mod
+// carries a tiny PKCS#7/AES helper built on Windows CNG (bcrypt) instead of
+// OpenSSL. QQ returns JSONP with base64 lyric payloads.
+constexpr unsigned char kNetEaseLinuxApiKey[16] = {
+    'r', 'F', 'g', 'B', '&', 'h', '#', '%', '2', '?', '^', 'e', 'D', 'g', ':', 'Q'};
+constexpr wchar_t kNetEaseAnonymousToken[] =
+    L"bf8bfeabb1aa84f9c8c3906c04a04fb864322804c83f5d607e91a04eae463c9436bd1a17ec353cf780b396507a3f7464e8a60f4bbc019437993166e004087dd32d1490298caf655c2353e58daa0bc13cc7d5c198250968580b12c1b8817e3f5c807e650dd04abd3fb8130b7ae43fcc5b";
+constexpr wchar_t kLyricsSourceLrclib[] = L"lrclib";
+constexpr wchar_t kLyricsSourceNetease[] = L"netease";
+constexpr wchar_t kLyricsSourceQq[] = L"qq";
+// The reference Python provider deliberately presents a Linux desktop Chrome UA
+// to the NetEase linux gateway; keep that so the same endpoints accept us.
+constexpr wchar_t kNetEaseUserAgent[] =
+    L"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/60.0.3112.90 Safari/537.36";
+constexpr wchar_t kQqUserAgent[] =
+    L"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)";
+
+std::wstring LyricsSourceDisplayName(LyricsSource source) {
+    switch (source) {
+        case LyricsSource::Lrclib: return kLyricsSourceLrclib;
+        case LyricsSource::Netease: return kLyricsSourceNetease;
+        case LyricsSource::Qq: return kLyricsSourceQq;
+        default: return std::wstring();
+    }
+}
+
+int LyricsSourceRank(const std::wstring& source) {
+    if (source == kLyricsSourceLrclib) return 3;
+    if (source == kLyricsSourceNetease) return 2;
+    if (source == kLyricsSourceQq) return 1;
+    return 0;
+}
+
+std::string Utf8FromWideText(const std::wstring& text) {
+    if (text.empty()) return std::string();
+    const int len = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                                        nullptr, 0, nullptr, nullptr);
+    if (len <= 0) return std::string();
+    std::string out(static_cast<size_t>(len), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                        out.data(), len, nullptr, nullptr);
+    return out;
+}
+
+std::wstring WideFromUtf8Text(const std::string& text) {
+    if (text.empty()) return std::wstring();
+    const int len = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+                                        nullptr, 0);
+    if (len <= 0) return std::wstring();
+    std::wstring out(static_cast<size_t>(len), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), len);
+    return out;
+}
+
+// JSON string literal escaping for the strings we embed in the encrypted
+// NetEase envelope. Non-ASCII code units are emitted as \uXXXX, matching the
+// reference Python provider's json.dumps(ensure_ascii=True) output.
+std::string JsonEscapeUtf8(const std::wstring& text) {
+    std::string out;
+    out.reserve(text.size() + 8);
+    for (wchar_t wc : text) {
+        const unsigned c = static_cast<unsigned>(wc) & 0xFFFFu;
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20 || c >= 0x80) {
+                    char buf[8] = {};
+                    sprintf_s(buf, "\\u%04X", c);
+                    out += buf;
+                } else {
+                    out.push_back(static_cast<char>(c));
+                }
+                break;
+        }
+    }
+    return out;
+}
+
+// AES-128-ECB + PKCS#7, returned as uppercase hex (the NetEase "eparams" shape).
+std::string AesEcbEncryptHex(const std::string& plain, const unsigned char* key, size_t keyLen) {
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    BCRYPT_KEY_HANDLE keyHandle = nullptr;
+    std::string result;
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&alg, BCRYPT_AES_ALGORITHM, nullptr, 0))) {
+        return result;
+    }
+    if (!BCRYPT_SUCCESS(BCryptSetProperty(alg, BCRYPT_CHAINING_MODE,
+                                         reinterpret_cast<PUCHAR>(const_cast<wchar_t*>(BCRYPT_CHAIN_MODE_ECB)),
+                                         sizeof(BCRYPT_CHAIN_MODE_ECB), 0)) ||
+        !BCRYPT_SUCCESS(BCryptGenerateSymmetricKey(alg, &keyHandle, nullptr, 0,
+                                                   const_cast<PUCHAR>(key), static_cast<ULONG>(keyLen), 0))) {
+        BCryptCloseAlgorithmProvider(alg, 0);
+        return result;
+    }
+
+    const size_t pad = 16 - (plain.size() % 16);
+    std::string padded = plain;
+    padded.append(pad, static_cast<char>(pad));
+
+    DWORD needed = 0;
+    NTSTATUS status = BCryptEncrypt(keyHandle, reinterpret_cast<PUCHAR>(padded.data()),
+                                    static_cast<ULONG>(padded.size()), nullptr, nullptr, 0,
+                                    nullptr, 0, &needed, 0);
+    if (BCRYPT_SUCCESS(status) && needed > 0) {
+        std::string cipher(needed, '\0');
+        DWORD written = 0;
+        status = BCryptEncrypt(keyHandle, reinterpret_cast<PUCHAR>(padded.data()),
+                               static_cast<ULONG>(padded.size()), nullptr, nullptr, 0,
+                               reinterpret_cast<PUCHAR>(cipher.data()), static_cast<ULONG>(cipher.size()),
+                               &written, 0);
+        if (BCRYPT_SUCCESS(status)) {
+            static constexpr char kHex[] = "0123456789ABCDEF";
+            cipher.resize(written);
+            result.reserve(cipher.size() * 2);
+            for (unsigned char c : cipher) {
+                result.push_back(kHex[(c >> 4) & 0x0F]);
+                result.push_back(kHex[c & 0x0F]);
+            }
+        }
+    }
+    BCryptDestroyKey(keyHandle);
+    BCryptCloseAlgorithmProvider(alg, 0);
+    return result;
+}
+
+std::string Base64Decode(const std::string& input) {
+    // Function-local static initialisation is thread-safe, unlike the previous
+    // "static bool tableReady" manual lazy init.
+    static const std::array<int, 256> table = [] {
+        std::array<int, 256> t;
+        t.fill(-1);
+        const char* alphabet =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < 64; ++i) {
+            t[static_cast<unsigned char>(alphabet[i])] = i;
+        }
+        return t;
+    }();
+    std::string out;
+    int value = 0;
+    int bits = -8;
+    for (unsigned char c : input) {
+        if (table[c] == -1) continue;
+        value = (value << 6) + table[c];
+        bits += 6;
+        if (bits >= 0) {
+            out.push_back(static_cast<char>((value >> bits) & 0xFF));
+            bits -= 8;
+        }
+    }
+    return out;
+}
+
+// Finds `"key":[ ... ]` (whitespace tolerant) and returns the array text.
+std::string ExtractJsonArrayRaw(const std::string& json, const char* key) {
+    const std::string marker = std::string("\"") + key + "\"";
+    const size_t keyPos = json.find(marker);
+    if (keyPos == std::string::npos) return std::string();
+    const size_t colon = json.find(':', keyPos + marker.size());
+    if (colon == std::string::npos) return std::string();
+    const size_t start = json.find('[', colon);
+    if (start == std::string::npos) return std::string();
+
+    int depth = 0;
+    bool inString = false;
+    bool escaped = false;
+    for (size_t i = start; i < json.size(); ++i) {
+        const char c = json[i];
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (c == '"') {
+            inString = true;
+        } else if (c == '[') {
+            ++depth;
+        } else if (c == ']') {
+            --depth;
+            if (depth == 0) return json.substr(start, i - start + 1);
+        }
+    }
+    return std::string();
+}
+
+// JSONP wrapper: everything from the first '{' to the last '}'.
+std::string ExtractJsonObjectText(const std::string& text) {
+    const size_t start = text.find('{');
+    const size_t end = text.rfind('}');
+    if (start == std::string::npos || end == std::string::npos || end <= start) return std::string();
+    return text.substr(start, end - start + 1);
+}
+
+// Reads `field` from the part of `json` that follows `marker`. Used for the
+// nested provider responses (artists[0].name, singer[0].name, album.name).
+std::wstring JsonStringAfter(const std::string& json, const char* marker, const char* field) {
+    const size_t pos = json.find(marker);
+    if (pos == std::string::npos) return std::wstring();
+    std::string raw;
+    if (!ExtractJsonStringField(json.substr(pos), field, &raw)) return std::wstring();
+    return JsonStringUnescape(raw);
+}
+
+// Mirrors lyric_provider.py's _clean_keyword: drop a platform suffix, remove
+// punctuation, strip "(feat...)" / "[Live]" style blocks and " - Single/EP".
+std::wstring CleanProviderKeyword(std::wstring keyword) {
+    if (keyword.empty()) return keyword;
+    const size_t dashSep = keyword.find(L" \u2014 ");
+    if (dashSep != std::wstring::npos) keyword.resize(dashSep);
+    for (wchar_t bad : {L'\'', L'\u00b7', L'$', L'&'}) {
+        keyword.erase(std::remove(keyword.begin(), keyword.end(), bad), keyword.end());
+    }
+
+    auto trimDashSuffix = [&](const wchar_t* sep) {
+        const size_t dash = keyword.rfind(sep);
+        if (dash == std::wstring::npos) return;
+        const std::wstring tail = ToLowerCopy(keyword.substr(dash + wcslen(sep)));
+        if (tail.rfind(L"single", 0) == 0 || tail.rfind(L"ep", 0) == 0) {
+            keyword.resize(dash);
+        }
+    };
+    trimDashSuffix(L" - ");
+    trimDashSuffix(L" \u2014 ");
+
+    for (size_t i = 0; i < keyword.size();) {
+        const wchar_t open = keyword[i];
+        wchar_t close = 0;
+        if (open == L'(') close = L')';
+        else if (open == L'[') close = L']';
+        else if (open == L'{') close = L'}';
+        else if (open == L'\uff08') close = L'\uff09';
+        if (close == 0) {
+            ++i;
+            continue;
+        }
+        const size_t end = keyword.find(close, i + 1);
+        if (end == std::wstring::npos) break;
+        keyword.erase(i, end - i + 1);
+    }
+    return TrimLyricsText(keyword);
+}
+
+struct LyricsQueryResult {
+    bool found = false;
+    bool synced = false;
+    bool definitive = true;  // false = transport failed, so "not found" must not be cached
+    int score = -1;
+    std::wstring source;
+    std::wstring title;
+    std::wstring artist;
+    std::vector<LyricsLine> lines;
+};
+
+bool HasTranslatedLyricLines(const std::vector<LyricsLine>& lines) {
+    for (const LyricsLine& line : lines) {
+        if (!TrimLyricsText(line.translation).empty()) return true;
+    }
+    return false;
+}
+
+LyricsQueryResult FetchLrclibCandidate(const std::wstring& title, const std::wstring& artist,
+                                       const std::wstring& album, int durationSec) {
+    LyricsQueryResult out;
+    out.source = kLyricsSourceLrclib;
+    LyricsPick pick;
+    bool definitive = true;
+    FetchLyricsFromLrclib(title, artist, album, durationSec, &pick, &definitive);
+    out.definitive = definitive;
+    if (pick.found) {
+        out.found = true;
+        out.synced = pick.synced;
+        out.score = pick.score;
+        out.title = pick.title;
+        out.artist = pick.artist;
+        out.lines = std::move(pick.lines);
+    }
+    return out;
+}
+
+std::wstring NetEaseHeaders() {
+    std::wstring headers = L"Content-Type: application/x-www-form-urlencoded\r\nCookie: MUSIC_A=";
+    headers += kNetEaseAnonymousToken;
+    headers += L"\r\nReferer: https://music.163.com\r\n";
+    return headers;
+}
+
+// One encrypted NetEase linux-gateway call. Returns false only on transport
+// failure; *httpOk is true when the server answered with HTTP 200.
+bool NetEaseGatewayPost(const char* apiUrl, const std::string& paramsJson,
+                        std::string* body, bool* httpOk, bool* transportOk) {
+    *httpOk = false;
+    *transportOk = false;
+    const std::string envelope =
+        std::string("{\"method\":\"POST\",\"url\":\"") + apiUrl + "\",\"params\":" + paramsJson + "}";
+    const std::string eparams = AesEcbEncryptHex(envelope, kNetEaseLinuxApiKey, sizeof(kNetEaseLinuxApiKey));
+    if (eparams.empty()) return false;
+    const std::string form = "eparams=" + eparams;
+    HttpResult r = HttpRequestEx(L"music.163.com", L"/api/linux/forward", true,
+                                 kNetEaseUserAgent, NetEaseHeaders(), &form);
+    if (!r.ok) return false;
+    *transportOk = true;
+    *httpOk = (r.status == 200);
+    *body = std::move(r.body);
+    return true;
+}
+
+struct ProviderSong {
+    std::wstring id;
+    std::wstring title;
+    std::wstring artist;
+    int durationSec = 0;
+    int score = -1;
+};
+
+std::vector<ProviderSong> SearchNeteaseOnce(const std::wstring& query, int wantDurationSec,
+                                            const std::wstring& wantTitle,
+                                            const std::wstring& wantArtist,
+                                            bool* definitive) {
+    std::vector<ProviderSong> songs;
+    const std::string params =
+        "{\"s\":\"" + JsonEscapeUtf8(query) + "\",\"type\":1,\"limit\":10,\"offset\":0}";
+    std::string body;
+    bool httpOk = false;
+    bool transportOk = false;
+    if (!NetEaseGatewayPost("https://music.163.com/api/search/get", params, &body, &httpOk, &transportOk)) {
+        *definitive = false;
+        return songs;
+    }
+    if (!httpOk) {
+        *definitive = false;
+        return songs;
+    }
+
+    const std::string array = ExtractJsonArrayRaw(body, "songs");
+    for (const std::string& object : SplitJsonObjectArray(array)) {
+        ProviderSong song;
+        std::string idRaw;
+        bool idIsString = false;
+        if (!ExtractTopLevelJsonField(object, "id", &idRaw, &idIsString)) continue;
+        std::string raw;
+        if (!ExtractTopLevelJsonString(object, "name", &raw)) continue;
+        song.id = idIsString ? JsonStringUnescape(idRaw) : AsciiToWide(idRaw);
+        song.title = JsonStringUnescape(raw);
+        song.artist = JsonStringAfter(object, "\"artists\":[", "name");
+        double durationMs = 0.0;
+        if (ExtractTopLevelJsonNumber(object, "duration", &durationMs) && durationMs > 0.0) {
+            song.durationSec = static_cast<int>(durationMs / 1000.0 + 0.5);
+        }
+        const int durDiff = DurationDiffSec(wantDurationSec, static_cast<double>(song.durationSec));
+        song.score = ScoreLyricsCandidate(song.title, song.artist, wantTitle, wantArtist,
+                                          durDiff, false, false);
+        if (song.score >= 0) songs.push_back(std::move(song));
+    }
+    return songs;
+}
+
+LyricsQueryResult FetchNeteaseCandidate(const std::wstring& title, const std::wstring& artist,
+                                        int durationSec) {
+    LyricsQueryResult out;
+    out.source = kLyricsSourceNetease;
+    const std::wstring cleanTitle = CleanProviderKeyword(title);
+    const std::wstring cleanArtist = CleanProviderKeyword(artist);
+    const std::wstring wantTitle = cleanTitle.empty() ? title : cleanTitle;
+    const std::wstring wantArtist = cleanArtist.empty() ? artist : cleanArtist;
+    const std::wstring query = (wantTitle + L" " + wantArtist);
+
+    bool definitive = true;
+    std::vector<ProviderSong> songs = SearchNeteaseOnce(query, durationSec, wantTitle, wantArtist, &definitive);
+    if (songs.empty() && !wantArtist.empty()) {
+        // Same fallback as the reference provider: retry without the artist.
+        songs = SearchNeteaseOnce(wantTitle, durationSec, wantTitle, wantArtist, &definitive);
+    }
+    out.definitive = definitive;
+    if (songs.empty()) return out;
+
+    ProviderSong* best = nullptr;
+    for (ProviderSong& song : songs) {
+        if (!best || song.score > best->score) best = &song;
+    }
+    if (!best) return out;
+
+    const std::string params = "{\"id\":\"" + Utf8FromWideText(best->id) + "\"}";
+    std::string body;
+    bool httpOk = false;
+    bool transportOk = false;
+    if (!NetEaseGatewayPost("https://music.163.com/api/song/lyric?lv=-1&kv=-1&tv=-1",
+                            params, &body, &httpOk, &transportOk)) {
+        out.definitive = false;
+        return out;
+    }
+    if (!httpOk) {
+        out.definitive = false;
+        return out;
+    }
+
+    std::wstring lrcText;
+    std::wstring transText;
+    {
+        const size_t lrcPos = body.find("\"lrc\"");
+        if (lrcPos != std::string::npos) {
+            std::string raw;
+            if (ExtractJsonStringField(body.substr(lrcPos), "lyric", &raw)) {
+                lrcText = JsonStringUnescape(raw);
+            }
+        }
+        const size_t transPos = body.find("\"tlyric\"");
+        if (transPos != std::string::npos) {
+            std::string raw;
+            if (ExtractJsonStringField(body.substr(transPos), "lyric", &raw)) {
+                transText = JsonStringUnescape(raw);
+            }
+        }
+    }
+
+    std::vector<LyricsLine> lines = ParseSyncedLyricsWithTranslation(lrcText, transText);
+    if (lines.empty()) return out;
+
+    out.found = true;
+    out.synced = true;
+    out.score = best->score + 20;  // the provider returned a timestamped track
+    out.title = best->title;
+    out.artist = best->artist;
+    out.lines = std::move(lines);
+    return out;
+}
+
+std::vector<ProviderSong> SearchQqOnce(const std::wstring& query, int wantDurationSec,
+                                       const std::wstring& wantTitle,
+                                       const std::wstring& wantArtist,
+                                       bool* definitive) {
+    std::vector<ProviderSong> songs;
+    const std::wstring encoded = AsciiToWide(UrlEncodeComponent(query));
+    const std::wstring path =
+        L"/soso/fcgi-bin/client_search_cp?format=json&n=10&p=1&w=" + encoded + L"&cr=1&g_tk=5381";
+    const std::wstring headers = L"Referer: https://y.qq.com\r\n";
+    HttpResult r = HttpRequestEx(L"c.y.qq.com", path.c_str(), false, kQqUserAgent, headers, nullptr);
+    if (!r.ok) {
+        r = HttpRequestEx(L"c.y.qq.com", path.c_str(), true, kQqUserAgent, headers, nullptr);
+    }
+    if (!r.ok) {
+        *definitive = false;
+        return songs;
+    }
+    if (r.status != 200) {
+        *definitive = false;
+        return songs;
+    }
+
+    const std::string objectText = ExtractJsonObjectText(r.body);
+    const std::string array = ExtractJsonArrayRaw(objectText, "list");
+    for (const std::string& object : SplitJsonObjectArray(array)) {
+        ProviderSong song;
+        std::string raw;
+        if (!ExtractTopLevelJsonString(object, "songmid", &raw)) continue;
+        song.id = JsonStringUnescape(raw);
+        if (song.id.empty()) continue;
+        if (!ExtractTopLevelJsonString(object, "songname", &raw)) continue;
+        song.title = JsonStringUnescape(raw);
+        song.artist = JsonStringAfter(object, "\"singer\":[", "name");
+        double interval = 0.0;
+        if (ExtractTopLevelJsonNumber(object, "interval", &interval) && interval > 0.0) {
+            song.durationSec = static_cast<int>(interval + 0.5);
+        }
+        const int durDiff = DurationDiffSec(wantDurationSec, static_cast<double>(song.durationSec));
+        song.score = ScoreLyricsCandidate(song.title, song.artist, wantTitle, wantArtist,
+                                          durDiff, false, false);
+        if (song.score >= 0) songs.push_back(std::move(song));
+    }
+    return songs;
+}
+
+LyricsQueryResult FetchQqCandidate(const std::wstring& title, const std::wstring& artist,
+                                   int durationSec) {
+    LyricsQueryResult out;
+    out.source = kLyricsSourceQq;
+    const std::wstring cleanTitle = CleanProviderKeyword(title);
+    const std::wstring cleanArtist = CleanProviderKeyword(artist);
+    const std::wstring wantTitle = cleanTitle.empty() ? title : cleanTitle;
+    const std::wstring wantArtist = cleanArtist.empty() ? artist : cleanArtist;
+    const std::wstring query = (wantTitle + L" " + wantArtist);
+
+    bool definitive = true;
+    std::vector<ProviderSong> songs = SearchQqOnce(query, durationSec, wantTitle, wantArtist, &definitive);
+    if (songs.empty() && !wantArtist.empty()) {
+        songs = SearchQqOnce(wantTitle, durationSec, wantTitle, wantArtist, &definitive);
+    }
+    out.definitive = definitive;
+    if (songs.empty()) return out;
+
+    ProviderSong* best = nullptr;
+    for (ProviderSong& song : songs) {
+        if (!best || song.score > best->score) best = &song;
+    }
+    if (!best) return out;
+
+    const std::wstring encodedMid = AsciiToWide(UrlEncodeComponent(best->id));
+    const std::wstring path =
+        L"/lyric/fcgi-bin/fcg_query_lyric_new.fcg?songmid=" + encodedMid + L"&g_tk=5381&format=json";
+    const std::wstring headers = L"Referer: https://y.qq.com\r\n";
+    HttpResult r = HttpRequestEx(L"c.y.qq.com", path.c_str(), false, kQqUserAgent, headers, nullptr);
+    if (!r.ok) {
+        r = HttpRequestEx(L"c.y.qq.com", path.c_str(), true, kQqUserAgent, headers, nullptr);
+    }
+    if (!r.ok) {
+        out.definitive = false;
+        return out;
+    }
+    if (r.status != 200) {
+        out.definitive = false;
+        return out;
+    }
+
+    const std::string objectText = ExtractJsonObjectText(r.body);
+    std::string lrcRaw;
+    std::string transRaw;
+    if (!ExtractTopLevelJsonString(objectText, "lyric", &lrcRaw)) {
+        ExtractJsonStringField(objectText, "lyric", &lrcRaw);
+    }
+    if (!ExtractTopLevelJsonString(objectText, "trans", &transRaw)) {
+        ExtractJsonStringField(objectText, "trans", &transRaw);
+    }
+    const std::wstring lrcText = WideFromUtf8Text(Base64Decode(lrcRaw));
+    const std::wstring transText = WideFromUtf8Text(Base64Decode(transRaw));
+
+    std::vector<LyricsLine> lines = ParseSyncedLyricsWithTranslation(lrcText, transText);
+    if (lines.empty()) return out;
+
+    out.found = true;
+    out.synced = true;
+    out.score = best->score + 20;
+    out.title = best->title;
+    out.artist = best->artist;
+    out.lines = std::move(lines);
+    return out;
+}
+
+// Fetches every allowed provider concurrently, then keeps the highest score.
+// Tie-break order is LRCLIB > NetEase > QQ. When preferTranslated is set and at
+// least one provider returned a translated track, the best translated candidate
+// wins even if an untranslated source scored higher. Explicit source modes never
+// fall back and ignore the preference.
+LyricsQueryResult FetchLyricsFromProviders(const std::wstring& title, const std::wstring& artist,
+                                           const std::wstring& album, int durationSec,
+                                           LyricsSource mode, bool preferTranslated,
+                                           bool* definitive) {
+    *definitive = true;
+
+    if (mode != LyricsSource::Auto) {
+        LyricsQueryResult result;
+        switch (mode) {
+            case LyricsSource::Lrclib:
+                result = FetchLrclibCandidate(title, artist, album, durationSec);
+                break;
+            case LyricsSource::Netease:
+                result = FetchNeteaseCandidate(title, artist, durationSec);
+                break;
+            case LyricsSource::Qq:
+                result = FetchQqCandidate(title, artist, durationSec);
+                break;
+            default:
+                break;
+        }
+        *definitive = result.definitive;
+        return result;
+    }
+
+    LyricsQueryResult lrclib;
+    LyricsQueryResult netease;
+    LyricsQueryResult qq;
+    auto runLrclib = [&]() {
+        try {
+            lrclib = FetchLrclibCandidate(title, artist, album, durationSec);
+        } catch (...) {
+            lrclib = LyricsQueryResult{};
+            lrclib.definitive = false;
+        }
+    };
+    auto runNetease = [&]() {
+        try {
+            netease = FetchNeteaseCandidate(title, artist, durationSec);
+        } catch (...) {
+            netease = LyricsQueryResult{};
+            netease.definitive = false;
+        }
+    };
+    auto runQq = [&]() {
+        try {
+            qq = FetchQqCandidate(title, artist, durationSec);
+        } catch (...) {
+            qq = LyricsQueryResult{};
+            qq.definitive = false;
+        }
+    };
+
+    // Thread creation can fail (system_error) on a loaded system. A joinable
+    // std::thread destroyed without join() terminates the process, so start each
+    // provider defensively and fall back to running it synchronously.
+    std::thread lrclibThread;
+    std::thread neteaseThread;
+    std::thread qqThread;
+    try {
+        lrclibThread = std::thread(runLrclib);
+    } catch (...) {
+        runLrclib();
+    }
+    try {
+        neteaseThread = std::thread(runNetease);
+    } catch (...) {
+        runNetease();
+    }
+    try {
+        qqThread = std::thread(runQq);
+    } catch (...) {
+        runQq();
+    }
+    if (lrclibThread.joinable()) lrclibThread.join();
+    if (neteaseThread.joinable()) neteaseThread.join();
+    if (qqThread.joinable()) qqThread.join();
+
+    *definitive = lrclib.definitive && netease.definitive && qq.definitive;
+
+    auto chooseBest = [&](bool requireTranslation) -> LyricsQueryResult {
+        LyricsQueryResult best;
+        for (const LyricsQueryResult* candidate : {&lrclib, &netease, &qq}) {
+            if (!candidate->found) continue;
+            if (requireTranslation && !HasTranslatedLyricLines(candidate->lines)) continue;
+            if (!best.found || candidate->score > best.score ||
+                (candidate->score == best.score &&
+                 LyricsSourceRank(candidate->source) > LyricsSourceRank(best.source))) {
+                best = *candidate;
+            }
+        }
+        return best;
+    };
+
+    LyricsQueryResult best;
+    if (preferTranslated) {
+        best = chooseBest(true);
+    }
+    if (!best.found) {
+        best = chooseBest(false);
+    }
+    return best;
+}
+
 DWORD WINAPI LyricsThreadProc(void*) {
     WaitForSingleObject(g_stopEvent, 4000);
 
     std::wstring lastTitle;
     std::wstring lastArtist;
+    LyricsSource lastSourceMode = LyricsSource::Auto;
+    bool lastPreferTranslationMode = false;
     double retryAtSec = 0.0;
     int failCount = 0;
 
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         bool lyricsEnabled = true;
+        bool collapsedWanted = false;
         bool diskCacheOn = false;
+        bool preferTranslated = false;
         uint64_t diskCapBytes = 0;
+        LyricsSource sourceMode = LyricsSource::Auto;
         {
             std::lock_guard lock(g_settingsMutex);
-            lyricsEnabled = (g_settings.lyrics || g_settings.collapsedLyrics ||
+            collapsedWanted = g_settings.collapsedLyrics;
+            lyricsEnabled = (g_settings.lyrics || collapsedWanted ||
                              g_settings.mediaTabLyrics) && g_settings.media;
+            sourceMode = g_settings.lyricsSource;
+            preferTranslated = g_settings.preferTranslatedLyrics;
             diskCacheOn = g_settings.lyricsCache && g_settings.lyricsCacheMaxMB > 0;
             diskCapBytes = static_cast<uint64_t>(std::max(0, g_settings.lyricsCacheMaxMB)) * 1024ull * 1024ull;
+        }
+        // The preference only changes Auto's source choice; explicit modes have
+        // exactly one source and ignore it.
+        const bool preferTranslationMode =
+            (sourceMode == LyricsSource::Auto && preferTranslated);
+        if (sourceMode != lastSourceMode || preferTranslationMode != lastPreferTranslationMode) {
+            // A different provider / preference means the cached match may have
+            // been selected under the old rule. Force a fresh lookup.
+            lastSourceMode = sourceMode;
+            lastPreferTranslationMode = preferTranslationMode;
+            lastTitle.clear();
+            lastArtist.clear();
+            retryAtSec = 0.0;
+            failCount = 0;
+            std::lock_guard lock(g_stateMutex);
+            g_state.lyrics = LyricsSnapshot{};
         }
         LyricsCache::IterationGuard cacheGuard(diskCacheOn, diskCapBytes);
         const bool lyricsViewVisible =
             (NowSeconds() - g_lastLyricsViewTime.load(std::memory_order_relaxed)) < 3.0;
-        if (!lyricsEnabled || !lyricsViewVisible) {
+        // With the collapsed-pill lyrics enabled, the fetching must not depend on
+        // a lyrics surface being painted: the pill only widens after data arrives,
+        // so waiting for a paint would deadlock the feature.
+        if (!lyricsEnabled || (!lyricsViewVisible && !collapsedWanted)) {
             WaitForSingleObject(g_stopEvent, 1000);
             continue;
         }
@@ -8577,9 +9428,11 @@ DWORD WINAPI LyricsThreadProc(void*) {
         lastArtist = artist;
 
         const LyricsCache::Keys cacheKeys = LyricsCache::BuildKeys(title, artist, album, endTicks);
+        const std::wstring requiredSource = LyricsSourceDisplayName(sourceMode);
         {
             LyricsSnapshot cached;
-            if (LyricsCache::Lookup(cacheKeys, diskCacheOn, title, artist, &cached)) {
+            if (LyricsCache::Lookup(cacheKeys, diskCacheOn, title, artist, requiredSource,
+                                    preferTranslationMode, &cached)) {
                 Wh_Log(L"Lyrics: cache hit for %s - %s", artist.c_str(), title.c_str());
                 std::lock_guard lock(g_stateMutex);
                 if (g_state.media.title == title && g_state.media.artist == artist) {
@@ -8600,22 +9453,27 @@ DWORD WINAPI LyricsThreadProc(void*) {
         const int durationSec = endTicks > 0 ? static_cast<int>(endTicks / 10000000.0 + 0.5) : 0;
         Wh_Log(L"Lyrics: requesting %s - %s (attempt %d)", artist.c_str(), title.c_str(), failCount + 1);
 
-        LyricsPick pick;
         bool definitive = true;
-        FetchLyricsFromLrclib(title, artist, album, durationSec, &pick, &definitive);
+        LyricsQueryResult result =
+            FetchLyricsFromProviders(title, artist, album, durationSec, sourceMode,
+                                     preferTranslationMode, &definitive);
 
         LyricsSnapshot snap;
         snap.matchedTitle = title;
         snap.matchedArtist = artist;
+        snap.translationPreferred = preferTranslationMode;
 
-        if (pick.found) {
+        if (result.found) {
             snap.hasData = true;
-            snap.synced = pick.synced;
-            snap.lines = LyricsLines(std::move(pick.lines));
+            snap.synced = result.synced;
+            snap.source = result.source;
+            snap.lines = LyricsLines(std::move(result.lines));
             failCount = 0;
+            Wh_Log(L"Lyrics: using %s for %s - %s (score %d)", result.source.c_str(),
+                   artist.c_str(), title.c_str(), result.score);
             LyricsCache::Store(cacheKeys, LyricsCache::Status::Found, snap, diskCacheOn);
         } else if (definitive) {
-            snap.notFound = true;   // LRCLIB really has nothing for this track
+            snap.notFound = true;   // every allowed provider really has nothing
             failCount = 0;
             Wh_Log(L"Lyrics: genuinely no lyrics for %s - %s", artist.c_str(), title.c_str());
         } else {
@@ -11071,915 +11929,6 @@ void ApplyLookupHotkey() {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// Song recognition (Shazam)
-//
-//   hotkey -> StartSongRecognition() -> worker thread:
-//     1. capture N seconds (WASAPI loopback or microphone), resample to 16 kHz mono
-//     2. build a Shazam signature (spectral peaks) locally
-//     3. POST the signature to amp.shazam.com, parse the track, fetch the cover
-//     4. publish the result to g_state.songId (the island draws it)
-//
-// Only the fingerprint (frequency peaks) leaves the PC, never raw audio.
-// The endpoint is unofficial and may change or rate-limit without notice.
-// ═════════════════════════════════════════════════════════════════════════════
-std::atomic<uint64_t> g_songIdSeq{0};
-std::atomic<bool> g_songIdRunning{false};
-std::atomic<bool> g_songIdCancel{false};
-std::atomic<double> g_songIdLastEnd{-100.0};
-bool g_songIdHotkeyRegistered = false;
-
-template <typename Fn>
-void SongIdUpdate(uint64_t id, Fn&& fn, bool dirty = true) {
-    {
-        std::lock_guard lock(g_stateMutex);
-        if (g_songIdSeq.load() != id) {
-            return;  // superseded or dismissed
-        }
-        fn(g_state.songId);
-    }
-    if (dirty) {
-        g_layoutDirty = true;
-    }
-}
-
-namespace ShazamId {
-
-constexpr wchar_t kUserAgent[] = L"Dalvik/2.1.0 (Linux; U; Android 9; SM-G960F Build/PPR1.180610.011)";
-constexpr int kRate = 16000;
-constexpr int kFftSize = 2048;
-constexpr int kHop = 128;
-constexpr int kBins = 1025;
-constexpr int kHistory = 256;
-
-inline void Put16(std::string& s, uint32_t v) {
-    s.push_back(static_cast<char>(v & 0xFF));
-    s.push_back(static_cast<char>((v >> 8) & 0xFF));
-}
-inline void Put32(std::string& s, uint32_t v) {
-    for (int i = 0; i < 4; ++i) {
-        s.push_back(static_cast<char>((v >> (8 * i)) & 0xFF));
-    }
-}
-
-uint32_t Crc32(const uint8_t* data, size_t n) {
-    static const std::array<uint32_t, 256> table = [] {
-        std::array<uint32_t, 256> t{};
-        for (uint32_t i = 0; i < 256; ++i) {
-            uint32_t c = i;
-            for (int k = 0; k < 8; ++k) {
-                c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
-            }
-            t[i] = c;
-        }
-        return t;
-    }();
-    uint32_t crc = 0xFFFFFFFFu;
-    for (size_t i = 0; i < n; ++i) {
-        crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
-    }
-    return crc ^ 0xFFFFFFFFu;
-}
-
-std::string Base64(const std::string& in) {
-    static const char* kTbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve(((in.size() + 2) / 3) * 4);
-    const size_t n = in.size();
-    for (size_t i = 0; i < n; i += 3) {
-        uint32_t v = static_cast<uint8_t>(in[i]) << 16;
-        if (i + 1 < n) v |= static_cast<uint8_t>(in[i + 1]) << 8;
-        if (i + 2 < n) v |= static_cast<uint8_t>(in[i + 2]);
-        out.push_back(kTbl[(v >> 18) & 63]);
-        out.push_back(kTbl[(v >> 12) & 63]);
-        out.push_back(i + 1 < n ? kTbl[(v >> 6) & 63] : '=');
-        out.push_back(i + 2 < n ? kTbl[v & 63] : '=');
-    }
-    return out;
-}
-
-void AppendHex(std::string& s, uint32_t v, int digits) {
-    static const char* kHex = "0123456789ABCDEF";
-    for (int i = digits - 1; i >= 0; --i) {
-        s.push_back(kHex[(v >> (i * 4)) & 0xF]);
-    }
-}
-
-// Random (version 4) UUID, upper-case, hyphenated.
-std::string NewUuid() {
-    GUID g = {};
-    if (FAILED(CoCreateGuid(&g))) {
-        g.Data1 = static_cast<unsigned long>(GetTickCount64());
-    }
-    std::string s;
-    AppendHex(s, g.Data1, 8);
-    s.push_back('-');
-    AppendHex(s, g.Data2, 4);
-    s.push_back('-');
-    AppendHex(s, g.Data3, 4);
-    s.push_back('-');
-    AppendHex(s, g.Data4[0], 2);
-    AppendHex(s, g.Data4[1], 2);
-    s.push_back('-');
-    for (int i = 2; i < 8; ++i) {
-        AppendHex(s, g.Data4[i], 2);
-    }
-    return s;
-}
-
-// ── Signature generator ──────────────────────────────────────────────────────
-// 16 kHz mono int16 in. Every 128 samples: 2048-point FFT of a Hann window,
-// peak spreading in frequency/time, then local-maximum picking 46 frames in the
-// past. Peaks are grouped into four frequency bands and packed in Shazam's
-// binary "sig" layout.
-class SignatureGenerator {
-   public:
-    SignatureGenerator() {
-        constexpr double kPi = 3.14159265358979323846;
-        fftOut_.assign(static_cast<size_t>(kHistory) * kBins, 0.0f);
-        spreadOut_.assign(static_cast<size_t>(kHistory) * kBins, 0.0f);
-        window_.resize(kFftSize);
-        twCos_.resize(kFftSize / 2);
-        twSin_.resize(kFftSize / 2);
-        bitRev_.resize(kFftSize);
-        ring_.fill(0);
-        for (int i = 0; i < kFftSize; ++i) {
-            window_[i] = static_cast<float>(1024.0 * (0.5 - 0.5 * std::cos(2.0 * kPi * (i + 1) / 2049.0)));
-        }
-        for (int i = 0; i < kFftSize / 2; ++i) {
-            const double a = -2.0 * kPi * i / kFftSize;
-            twCos_[i] = static_cast<float>(std::cos(a));
-            twSin_[i] = static_cast<float>(std::sin(a));
-        }
-        for (int i = 0; i < kFftSize; ++i) {
-            int r = 0;
-            for (int b = 0; b < 11; ++b) {
-                if (i & (1 << b)) r |= 1 << (10 - b);
-            }
-            bitRev_[i] = r;
-        }
-    }
-
-    void Feed(const int16_t* samples, size_t count) {
-        size_t i = 0;
-        for (; i + kHop <= count; i += kHop) {
-            ProcessChunk(samples + i);
-        }
-        totalSamples_ += static_cast<uint32_t>(i);
-    }
-
-    size_t PeakCount() const {
-        size_t n = 0;
-        for (const auto& band : peaks_) n += band.size();
-        return n;
-    }
-    uint32_t SampleCount() const { return totalSamples_; }
-
-    std::string EncodeUri() const {
-        std::string contents;
-        for (int band = 0; band < 4; ++band) {
-            const std::vector<Peak>& list = peaks_[band];
-            if (list.empty()) continue;
-            std::string pb;
-            uint32_t pass = 0;
-            for (const Peak& p : list) {
-                if (p.pass - pass >= 255) {
-                    pb.push_back(static_cast<char>(0xFF));
-                    Put32(pb, p.pass);
-                    pass = p.pass;
-                }
-                pb.push_back(static_cast<char>(p.pass - pass));
-                Put16(pb, p.magnitude);
-                Put16(pb, p.bin);
-                pass = p.pass;
-            }
-            Put32(contents, 0x60030040u + static_cast<uint32_t>(band));
-            Put32(contents, static_cast<uint32_t>(pb.size()));
-            contents += pb;
-            while (contents.size() % 4) contents.push_back('\0');
-        }
-
-        std::string out;
-        Put32(out, 0xCAFE2580u);                                   // magic1
-        Put32(out, 0);                                             // crc32 (patched below)
-        Put32(out, static_cast<uint32_t>(contents.size() + 8));    // size minus header
-        Put32(out, 0x94119C00u);                                   // magic2
-        Put32(out, 0); Put32(out, 0); Put32(out, 0);               // void1
-        Put32(out, 3u << 27);                                      // sample-rate id (16 kHz) << 27
-        Put32(out, 0); Put32(out, 0);                              // void2
-        Put32(out, totalSamples_ + static_cast<uint32_t>(kRate * 0.24));
-        Put32(out, (15u << 19) + 0x40000u);                        // fixed value
-        Put32(out, 0x40000000u);
-        Put32(out, static_cast<uint32_t>(contents.size() + 8));
-        out += contents;
-
-        const uint32_t crc = Crc32(reinterpret_cast<const uint8_t*>(out.data()) + 8, out.size() - 8);
-        for (int i = 0; i < 4; ++i) {
-            out[4 + i] = static_cast<char>((crc >> (8 * i)) & 0xFF);
-        }
-        return "data:audio/vnd.shazam.sig;base64," + Base64(out);
-    }
-
-   private:
-    struct Peak {
-        uint32_t pass;
-        uint16_t magnitude;
-        uint16_t bin;
-    };
-
-    static int Idx(uint32_t pos, int offset) {
-        return ((static_cast<int>(pos % kHistory) + offset) % kHistory + kHistory) % kHistory;
-    }
-
-    void ProcessChunk(const int16_t* chunk) {
-        for (int i = 0; i < kHop; ++i) {
-            ring_[ringPos_] = chunk[i];
-            ringPos_ = (ringPos_ + 1) % kFftSize;
-        }
-
-        float re[kFftSize];
-        float im[kFftSize];
-        for (int i = 0; i < kFftSize; ++i) {
-            const int dst = bitRev_[i];
-            re[dst] = static_cast<float>(ring_[(ringPos_ + i) % kFftSize]) * window_[i];
-            im[dst] = 0.0f;
-        }
-        for (int len = 2; len <= kFftSize; len <<= 1) {
-            const int half = len >> 1;
-            const int step = kFftSize / len;
-            for (int i = 0; i < kFftSize; i += len) {
-                for (int k = 0; k < half; ++k) {
-                    const float wr = twCos_[k * step];
-                    const float wi = twSin_[k * step];
-                    const int a = i + k;
-                    const int b = a + half;
-                    const float tr = re[b] * wr - im[b] * wi;
-                    const float ti = re[b] * wi + im[b] * wr;
-                    re[b] = re[a] - tr;
-                    im[b] = im[a] - ti;
-                    re[a] += tr;
-                    im[a] += ti;
-                }
-            }
-        }
-
-        float* cur = &fftOut_[static_cast<size_t>(pos_) * kBins];
-        for (int k = 0; k < kBins; ++k) {
-            const float p = (re[k] * re[k] + im[k] * im[k]) / 131072.0f;
-            cur[k] = p < 1e-10f ? 1e-10f : p;
-        }
-
-        // Peak spreading: neighbouring bins, then backwards in time.
-        float spread[kBins];
-        std::memcpy(spread, cur, sizeof(spread));
-        static const int kFormer[3] = {-1, -3, -6};
-        for (int pos = 0; pos < kBins; ++pos) {
-            if (pos < 1023) {
-                spread[pos] = std::max({spread[pos], spread[pos + 1], spread[pos + 2]});
-            }
-            float maxValue = spread[pos];
-            for (int f : kFormer) {
-                float* row = &spreadOut_[static_cast<size_t>(Idx(pos_, f)) * kBins];
-                maxValue = std::max(row[pos], maxValue);
-                row[pos] = maxValue;
-            }
-        }
-        std::memcpy(&spreadOut_[static_cast<size_t>(pos_) * kBins], spread, sizeof(spread));
-
-        pos_ = (pos_ + 1) % kHistory;
-        ++numSpread_;
-        if (numSpread_ >= 46) {
-            Recognize();
-        }
-    }
-
-    void Recognize() {
-        static const int kNear[8] = {-10, -7, -4, -3, 1, 2, 5, 8};
-        static const int kFar[14] = {-53, -45, 165, 172, 179, 186, 193, 200,
-                                     214, 221, 228, 235, 242, 249};
-
-        const float* f46 = &fftOut_[static_cast<size_t>(Idx(pos_, -46)) * kBins];
-        const float* s49 = &spreadOut_[static_cast<size_t>(Idx(pos_, -49)) * kBins];
-        auto mag = [](float x) { return std::log(std::max(x, 1.0f / 64.0f)) * 1477.3f + 6144.0f; };
-
-        for (int bin = 10; bin < 1015; ++bin) {
-            const float v = f46[bin];
-            if (v < 1.0f / 64.0f || v < s49[bin - 1]) continue;
-
-            float maxN = 0.0f;
-            for (int off : kNear) maxN = std::max(maxN, s49[bin + off]);
-            if (v <= maxN) continue;
-
-            float maxO = maxN;
-            for (int off : kFar) {
-                const float* row = &spreadOut_[static_cast<size_t>(Idx(pos_, off)) * kBins];
-                maxO = std::max(maxO, row[bin - 1]);
-            }
-            if (v <= maxO) continue;
-
-            const float m0 = mag(v);
-            const float mb = mag(f46[bin - 1]);
-            const float ma = mag(f46[bin + 1]);
-            const float var1 = m0 * 2.0f - mb - ma;
-            if (var1 <= 0.0f) continue;
-            const float var2 = (ma - mb) * 32.0f / var1;
-            const int corrected = static_cast<int>(static_cast<float>(bin) * 64.0f + var2);
-            if (corrected < 0 || corrected > 65535) continue;
-
-            const float hz = static_cast<float>(corrected) * (16000.0f / 2.0f / 1024.0f / 64.0f);
-            int band;
-            if (hz < 250.0f) continue;
-            else if (hz < 520.0f) band = 0;
-            else if (hz < 1450.0f) band = 1;
-            else if (hz < 3500.0f) band = 2;
-            else if (hz <= 5500.0f) band = 3;
-            else continue;
-
-            Peak p;
-            p.pass = numSpread_ - 46;
-            p.magnitude = static_cast<uint16_t>(std::clamp(static_cast<int>(m0), 0, 65535));
-            p.bin = static_cast<uint16_t>(corrected);
-            peaks_[band].push_back(p);
-        }
-    }
-
-    std::vector<float> fftOut_;
-    std::vector<float> spreadOut_;
-    std::vector<float> window_;
-    std::vector<float> twCos_;
-    std::vector<float> twSin_;
-    std::vector<int> bitRev_;
-    std::array<int16_t, kFftSize> ring_{};
-    int ringPos_ = 0;
-    uint32_t pos_ = 0;          // next write slot in both history rings
-    uint32_t numSpread_ = 0;
-    uint32_t totalSamples_ = 0;
-    std::vector<Peak> peaks_[4];
-};
-
-// ── Audio capture ────────────────────────────────────────────────────────────
-struct CaptureOutcome {
-    std::vector<int16_t> samples;  // 16 kHz mono
-    bool cancelled = false;
-    bool failed = false;
-    int peak = 0;
-};
-
-std::vector<int16_t> To16kMono(const std::vector<float>& in, double srcRate) {
-    std::vector<int16_t> out;
-    if (in.empty() || srcRate < 8000.0) return out;
-    constexpr double kPi = 3.14159265358979323846;
-
-    auto toS16 = [](double v) {
-        v *= 32767.0;
-        return static_cast<int16_t>(v > 32767.0 ? 32767 : (v < -32768.0 ? -32768 : static_cast<int>(v)));
-    };
-
-    if (std::fabs(srcRate - 16000.0) < 1.0) {
-        out.reserve(in.size());
-        for (float v : in) out.push_back(toS16(v));
-        return out;
-    }
-
-    // Windowed-sinc low-pass + decimation, so 48 kHz / 44.1 kHz material does
-    // not alias into the 250-5500 Hz bands the fingerprint looks at.
-    const double ratio = srcRate / 16000.0;
-    const double cutoff = std::min(1.0, 1.0 / ratio) * 0.92;
-    const double halfWidth = 10.0 * std::max(1.0, ratio);
-    const size_t outCount = static_cast<size_t>(static_cast<double>(in.size()) / ratio);
-    out.resize(outCount);
-    const long last = static_cast<long>(in.size()) - 1;
-    for (size_t i = 0; i < outCount; ++i) {
-        const double center = static_cast<double>(i) * ratio;
-        const long lo = std::max(0L, static_cast<long>(std::ceil(center - halfWidth)));
-        const long hi = std::min(last, static_cast<long>(std::floor(center + halfWidth)));
-        double acc = 0.0, norm = 0.0;
-        for (long n = lo; n <= hi; ++n) {
-            const double t = static_cast<double>(n) - center;
-            const double a = kPi * cutoff * t;
-            const double sinc = std::fabs(a) < 1e-9 ? 1.0 : std::sin(a) / a;
-            const double w = 0.5 + 0.5 * std::cos(kPi * t / halfWidth);
-            const double k = cutoff * sinc * w;
-            acc += static_cast<double>(in[static_cast<size_t>(n)]) * k;
-            norm += k;
-        }
-        out[i] = toS16(norm != 0.0 ? acc / norm : 0.0);
-    }
-    return out;
-}
-
-CaptureOutcome CaptureAudio(bool useMic, int seconds, uint64_t id) {
-    CaptureOutcome out;
-    ComPtr<IMMDeviceEnumerator> enumerator;
-    ComPtr<IMMDevice> device;
-    ComPtr<IAudioClient> client;
-    ComPtr<IAudioCaptureClient> capture;
-    WAVEFORMATEX* mix = nullptr;
-
-    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                                  IID_PPV_ARGS(&enumerator));
-    if (SUCCEEDED(hr)) {
-        hr = enumerator->GetDefaultAudioEndpoint(useMic ? eCapture : eRender, eConsole, &device);
-    }
-    if (SUCCEEDED(hr)) {
-        hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-                              reinterpret_cast<void**>(client.GetAddressOf()));
-    }
-    if (SUCCEEDED(hr)) {
-        hr = client->GetMixFormat(&mix);
-    }
-    if (SUCCEEDED(hr)) {
-        hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                                useMic ? 0 : AUDCLNT_STREAMFLAGS_LOOPBACK,
-                                10000000, 0, mix, nullptr);
-    }
-    if (SUCCEEDED(hr)) {
-        hr = client->GetService(IID_PPV_ARGS(&capture));
-    }
-    if (SUCCEEDED(hr)) {
-        hr = client->Start();
-    }
-    if (FAILED(hr) || !mix) {
-        if (mix) CoTaskMemFree(mix);
-        out.failed = true;
-        return out;
-    }
-
-    const UINT32 channels = std::max<UINT32>(1, mix->nChannels);
-    const UINT32 bits = mix->wBitsPerSample;
-    const UINT32 blockAlign = mix->nBlockAlign;
-    const double rate = static_cast<double>(mix->nSamplesPerSec);
-    const bool isFloat =
-        mix->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
-        (mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-         mix->cbSize >= sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX) &&
-         IsEqualGUID(reinterpret_cast<WAVEFORMATEXTENSIBLE*>(mix)->SubFormat, kSubTypeIeeeFloat));
-
-    std::vector<float> mono;
-    const size_t target = static_cast<size_t>(rate * seconds);
-    mono.reserve(target + static_cast<size_t>(rate));
-
-    const double t0 = NowSeconds();
-    double nextPublish = 0.0;
-    float level = 0.0f;
-
-    while (mono.size() < target) {
-        if (g_songIdCancel.load() || !g_running.load() ||
-            WaitForSingleObject(g_stopEvent, 0) != WAIT_TIMEOUT) {
-            out.cancelled = true;
-            break;
-        }
-        const double now = NowSeconds();
-        // Loopback delivers nothing while the output is silent, so wall-clock
-        // time is the backstop.
-        if (now - t0 > seconds + 3.0) break;
-
-        double sumSq = 0.0;
-        size_t count = 0;
-        UINT32 packet = 0;
-        if (SUCCEEDED(capture->GetNextPacketSize(&packet))) {
-            while (packet > 0) {
-                BYTE* data = nullptr;
-                UINT32 frames = 0;
-                DWORD bufFlags = 0;
-                if (FAILED(capture->GetBuffer(&data, &frames, &bufFlags, nullptr, nullptr))) break;
-                if ((bufFlags & AUDCLNT_BUFFERFLAGS_SILENT) || !data) {
-                    mono.insert(mono.end(), frames, 0.0f);
-                    count += frames;
-                } else {
-                    for (UINT32 f = 0; f < frames; ++f) {
-                        const BYTE* p = data + static_cast<size_t>(f) * blockAlign;
-                        float sum = 0.0f;
-                        for (UINT32 c = 0; c < channels; ++c) {
-                            float v = 0.0f;
-                            if (isFloat && bits == 32) {
-                                v = reinterpret_cast<const float*>(p)[c];
-                            } else if (bits == 16) {
-                                v = reinterpret_cast<const int16_t*>(p)[c] / 32768.0f;
-                            } else if (bits == 24) {
-                                const BYTE* q = p + c * 3;
-                                int32_t s = q[0] | (q[1] << 8) | (q[2] << 16);
-                                if (s & 0x800000) s |= static_cast<int32_t>(0xFF000000u);
-                                v = static_cast<float>(s) / 8388608.0f;
-                            } else if (bits == 32) {
-                                v = static_cast<float>(reinterpret_cast<const int32_t*>(p)[c]) / 2147483648.0f;
-                            }
-                            sum += v;
-                        }
-                        const float m = sum / static_cast<float>(channels);
-                        mono.push_back(m);
-                        sumSq += static_cast<double>(m) * m;
-                        ++count;
-                    }
-                }
-                capture->ReleaseBuffer(frames);
-                if (FAILED(capture->GetNextPacketSize(&packet))) packet = 0;
-            }
-        }
-
-        if (count > 0) {
-            const float rms = static_cast<float>(std::sqrt(sumSq / static_cast<double>(count)));
-            level += (Clamp(rms * 5.0f, 0.0f, 1.0f) - level) * 0.5f;
-        } else {
-            level *= 0.85f;
-        }
-        if (now >= nextPublish) {
-            nextPublish = now + 0.05;
-            const float lv = level;
-            SongIdUpdate(id, [lv](SongIdSnapshot& s) { s.level = lv; }, false);
-        }
-        WaitForSingleObject(g_stopEvent, 15);
-    }
-
-    client->Stop();
-    CoTaskMemFree(mix);
-    if (out.cancelled) return out;
-
-    if (mono.size() > target) mono.resize(target);
-    out.samples = To16kMono(mono, rate);
-    int peak = 0;
-    for (int16_t v : out.samples) {
-        const int a = v < 0 ? -static_cast<int>(v) : static_cast<int>(v);
-        peak = std::max(peak, a);
-    }
-    out.peak = peak;
-    return out;
-}
-
-// ── HTTP + response parsing ──────────────────────────────────────────────────
-HttpResult HttpPostJson(const wchar_t* host, const std::wstring& path, const std::string& body,
-                        const wchar_t* userAgent, const wchar_t* headers) {
-    HttpResult result;
-    HINTERNET hSession = WinHttpOpen(userAgent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                     WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!hSession) return result;
-    WinHttpSetTimeouts(hSession, 8000, 8000, 15000, 20000);
-
-    HINTERNET hConnect = WinHttpConnect(hSession, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (hConnect) {
-        HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", path.c_str(), nullptr,
-                                                WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                                WINHTTP_FLAG_SECURE);
-        if (hRequest) {
-            if (WinHttpSendRequest(hRequest, headers, static_cast<DWORD>(-1L),
-                                   const_cast<char*>(body.data()), static_cast<DWORD>(body.size()),
-                                   static_cast<DWORD>(body.size()), 0) &&
-                WinHttpReceiveResponse(hRequest, nullptr)) {
-                DWORD status = 0;
-                DWORD statusSize = sizeof(status);
-                if (WinHttpQueryHeaders(hRequest,
-                                        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                        WINHTTP_HEADER_NAME_BY_INDEX, &status, &statusSize,
-                                        WINHTTP_NO_HEADER_INDEX)) {
-                    bool readOk = true;
-                    for (;;) {
-                        DWORD size = 0;
-                        if (!WinHttpQueryDataAvailable(hRequest, &size)) { readOk = false; break; }
-                        if (size == 0) break;
-                        std::vector<char> buffer(size);
-                        DWORD downloaded = 0;
-                        if (!WinHttpReadData(hRequest, buffer.data(), size, &downloaded)) { readOk = false; break; }
-                        result.body.append(buffer.data(), downloaded);
-                        if (result.body.size() > 4u * 1024u * 1024u) { readOk = false; break; }
-                    }
-                    if (readOk) {
-                        result.ok = true;
-                        result.status = status;
-                    }
-                }
-            }
-            WinHttpCloseHandle(hRequest);
-        }
-        WinHttpCloseHandle(hConnect);
-    }
-    WinHttpCloseHandle(hSession);
-    return result;
-}
-
-// Index where the value of a key that sits directly inside `obj` starts
-// (depth 1), or npos. Nested keys with the same name are ignored.
-size_t FindTopLevelValue(const std::string& obj, const char* key) {
-    const size_t keyLen = std::strlen(key);
-    int depth = 0;
-    bool inString = false, escaped = false;
-    size_t strStart = 0;
-    auto isSpace = [](char c) { return c == ' ' || c == '\n' || c == '\r' || c == '\t'; };
-    for (size_t i = 0; i < obj.size(); ++i) {
-        const char c = obj[i];
-        if (inString) {
-            if (escaped) {
-                escaped = false;
-            } else if (c == '\\') {
-                escaped = true;
-            } else if (c == '"') {
-                inString = false;
-                if (depth == 1 && i - strStart == keyLen && obj.compare(strStart, keyLen, key) == 0) {
-                    size_t j = i + 1;
-                    while (j < obj.size() && isSpace(obj[j])) ++j;
-                    if (j < obj.size() && obj[j] == ':') {
-                        ++j;
-                        while (j < obj.size() && isSpace(obj[j])) ++j;
-                        return j < obj.size() ? j : std::string::npos;
-                    }
-                }
-            }
-            continue;
-        }
-        if (c == '"') {
-            inString = true;
-            strStart = i + 1;
-        } else if (c == '{' || c == '[') {
-            ++depth;
-        } else if (c == '}' || c == ']') {
-            --depth;
-        }
-    }
-    return std::string::npos;
-}
-
-std::wstring TopLevelString(const std::string& obj, const char* key) {
-    const size_t v = FindTopLevelValue(obj, key);
-    if (v == std::string::npos || obj[v] != '"') return std::wstring();
-    std::string raw;
-    bool escaped = false;
-    for (size_t i = v + 1; i < obj.size(); ++i) {
-        const char c = obj[i];
-        if (escaped) { raw.push_back(c); escaped = false; continue; }
-        if (c == '\\') { raw.push_back(c); escaped = true; continue; }
-        if (c == '"') break;
-        raw.push_back(c);
-    }
-    return JsonStringUnescape(raw);
-}
-
-std::string TopLevelObject(const std::string& obj, const char* key) {
-    const size_t v = FindTopLevelValue(obj, key);
-    if (v == std::string::npos || obj[v] != '{') return std::string();
-    return QuickLookup::BalancedObjectAt(obj, v);
-}
-
-struct TrackMatch {
-    std::wstring title;
-    std::wstring artist;
-    std::wstring url;
-    std::wstring coverUrl;
-};
-
-enum class ParseOutcome { Match, NoMatch, Invalid };
-
-ParseOutcome ParseShazamResponse(const std::string& body, TrackMatch* out) {
-    const size_t first = body.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos || body[first] != '{') return ParseOutcome::Invalid;
-
-    const size_t mv = FindTopLevelValue(body, "matches");
-    if (mv != std::string::npos && body[mv] == '[') {
-        size_t j = mv + 1;
-        while (j < body.size() && (body[j] == ' ' || body[j] == '\n' || body[j] == '\r' || body[j] == '\t')) ++j;
-        if (j < body.size() && body[j] == ']') return ParseOutcome::NoMatch;
-    }
-
-    const std::string track = TopLevelObject(body, "track");
-    if (track.empty()) return (mv == std::string::npos) ? ParseOutcome::NoMatch : ParseOutcome::Invalid;
-
-    TrackMatch m;
-    m.title = TopLevelString(track, "title");
-    m.artist = TopLevelString(track, "subtitle");
-    if (m.title.empty()) return ParseOutcome::Invalid;
-
-    const std::string images = TopLevelObject(track, "images");
-    m.coverUrl = TopLevelString(images, "coverarthq");
-    if (m.coverUrl.empty()) m.coverUrl = TopLevelString(images, "coverart");
-
-    const std::string share = TopLevelObject(track, "share");
-    m.url = TopLevelString(share, "href");
-    if (m.url.empty()) m.url = TopLevelString(track, "url");
-
-    *out = std::move(m);
-    return ParseOutcome::Match;
-}
-
-PixelsRef FetchCover(const std::wstring& url) {
-    if (url.rfind(L"https://", 0) != 0) return PixelsRef();
-    const size_t hostEnd = url.find(L'/', 8);
-    if (hostEnd == std::wstring::npos) return PixelsRef();
-    const std::wstring host = url.substr(8, hostEnd - 8);
-    const std::wstring path = url.substr(hostEnd);
-    if (host.empty()) return PixelsRef();
-
-    const HttpResult r = HttpGetEx(host.c_str(), path.c_str(), true, kUserAgent);
-    if (!r.ok || r.status != 200 || r.body.empty()) return PixelsRef();
-    BitmapPixels px;
-    const std::vector<uint8_t> bytes(r.body.begin(), r.body.end());
-    if (!DecodeImageBytesToPixels(bytes, &px)) return PixelsRef();
-    return PixelsRef(std::move(px));
-}
-
-std::string BuildRequestBody(const std::string& uri, uint32_t sampleCount) {
-    FILETIME ft = {};
-    GetSystemTimeAsFileTime(&ft);
-    ULARGE_INTEGER u = {};
-    u.LowPart = ft.dwLowDateTime;
-    u.HighPart = ft.dwHighDateTime;
-    const unsigned long long ms = (u.QuadPart - 116444736000000000ULL) / 10000ULL;
-    const std::string stamp = std::to_string(ms);
-
-    std::string body =
-        "{\"geolocation\":{\"altitude\":300.0,\"latitude\":45.0,\"longitude\":2.0},"
-        "\"signature\":{\"samplems\":";
-    body += std::to_string(static_cast<unsigned long long>(sampleCount) * 1000ull / kRate);
-    body += ",\"timestamp\":" + stamp + ",\"uri\":\"" + uri + "\"},\"timestamp\":" + stamp +
-            ",\"timezone\":\"Europe/Paris\"}";
-    return body;
-}
-
-// ── Worker ───────────────────────────────────────────────────────────────────
-void RunRecognition(uint64_t id, bool useMic, int seconds) {
-    auto dismiss = [&]() {
-        SongIdUpdate(id, [](SongIdSnapshot& s) { s.active = false; });
-    };
-    auto fail = [&](SongIdStatus st, const wchar_t* msg, double ttl) {
-        const std::wstring text = msg;
-        SongIdUpdate(id, [&](SongIdSnapshot& s) {
-            s.status = st;
-            s.message = text;
-            s.level = 0.0f;
-            s.expiresAt = NowSeconds() + ttl;
-        });
-    };
-
-    CaptureOutcome cap = CaptureAudio(useMic, seconds, id);
-    if (cap.cancelled) { dismiss(); return; }
-    if (cap.failed) { fail(SongIdStatus::Error, L"Couldn't open the audio device", 6.0); return; }
-    if (cap.samples.size() < static_cast<size_t>(kRate) * 2 || cap.peak < 20) {
-        fail(SongIdStatus::NoAudio, L"No audio detected", 5.0);
-        return;
-    }
-
-    SongIdUpdate(id, [](SongIdSnapshot& s) {
-        s.status = SongIdStatus::Matching;
-        s.level = 0.0f;
-        s.expiresAt = NowSeconds() + 40.0;
-    });
-
-    SignatureGenerator gen;
-    gen.Feed(cap.samples.data(), cap.samples.size());
-    Wh_Log(L"Song recognition: %zu peaks from %zu samples.", gen.PeakCount(), cap.samples.size());
-    if (gen.PeakCount() < 8) {
-        fail(SongIdStatus::NoMatch, L"Not enough detail in the audio", 5.0);
-        return;
-    }
-
-    const std::string body = BuildRequestBody(gen.EncodeUri(), gen.SampleCount());
-    const std::wstring path =
-        L"/discovery/v5/en/US/android/-/tag/" + AsciiToWide(NewUuid()) + L"/" + AsciiToWide(NewUuid()) +
-        L"?sync=true&webv3=true&sampling=true&connected=&shazamapiversion=v3&sharehub=true"
-        L"&hubv5minorversion=v5.1&hidelb=true&video=v3";
-
-    const HttpResult res = HttpPostJson(
-        L"amp.shazam.com", path, body, kUserAgent,
-        L"Content-Type: application/json\r\nContent-Language: en_US\r\n");
-
-    if (g_songIdCancel.load()) { dismiss(); return; }
-    if (!res.ok) { fail(SongIdStatus::Error, L"Couldn't reach Shazam", 6.0); return; }
-    if (res.status == 429) { fail(SongIdStatus::Error, L"Shazam is rate limiting - try again soon", 7.0); return; }
-    if (res.status != 200) {
-        Wh_Log(L"Song recognition: HTTP %lu from Shazam.", res.status);
-        fail(SongIdStatus::Error, L"Shazam returned an error", 6.0);
-        return;
-    }
-
-    TrackMatch match;
-    switch (ParseShazamResponse(res.body, &match)) {
-        case ParseOutcome::NoMatch:
-            fail(SongIdStatus::NoMatch, L"No match found", 6.0);
-            return;
-        case ParseOutcome::Invalid:
-            fail(SongIdStatus::Error, L"Unexpected response from Shazam", 6.0);
-            return;
-        case ParseOutcome::Match:
-            break;
-    }
-
-    PixelsRef cover = FetchCover(match.coverUrl);
-    if (g_songIdCancel.load()) { dismiss(); return; }
-
-    SongIdUpdate(id, [&](SongIdSnapshot& s) {
-        s.status = SongIdStatus::Found;
-        s.title = match.title;
-        s.artist = match.artist;
-        s.url = match.url;
-        s.cover = cover;
-        s.level = 0.0f;
-        s.expiresAt = NowSeconds() + 12.0;
-    });
-    TriggerNudge();
-}
-
-void Worker(uint64_t id, bool useMic, int seconds) {
-    struct Guard {
-        ~Guard() {
-            g_songIdLastEnd.store(NowSeconds());
-            g_songIdRunning.store(false);
-        }
-    } guard;
-
-    const HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    try {
-        RunRecognition(id, useMic, seconds);
-    } catch (...) {
-        Wh_Log(L"Song recognition: unexpected exception.");
-        SongIdUpdate(id, [](SongIdSnapshot& s) {
-            s.status = SongIdStatus::Error;
-            s.message = L"Song recognition failed";
-            s.expiresAt = NowSeconds() + 5.0;
-        });
-    }
-    if (SUCCEEDED(hrCo)) {
-        CoUninitialize();
-    }
-}
-
-}  // namespace ShazamId
-
-// Hotkey press (render thread). Pressing it again while listening cancels.
-void StartSongRecognition(HWND hwnd) {
-    const Settings s = GetSettingsCopy();
-    if (!s.songRecognition || g_manuallyHidden.load()) {
-        return;
-    }
-    if (g_songIdRunning.load()) {
-        g_songIdCancel.store(true);
-        return;
-    }
-    if (NowSeconds() - g_songIdLastEnd.load() < 1.0) {
-        return;
-    }
-    if (g_lookupUi.open) {
-        CloseLookupPanel(hwnd);
-    }
-
-    g_songIdRunning = true;
-    g_songIdCancel = false;
-    const uint64_t id = ++g_songIdSeq;
-    const double now = NowSeconds();
-    {
-        std::lock_guard lock(g_stateMutex);
-        SongIdSnapshot sid;
-        sid.active = true;
-        sid.status = SongIdStatus::Listening;
-        sid.micSource = s.songIdUseMic;
-        sid.listenSeconds = static_cast<float>(s.songIdSeconds);
-        sid.startedAt = now;
-        sid.expiresAt = now + s.songIdSeconds + 25.0;
-        g_state.songId = std::move(sid);
-    }
-    g_layoutDirty = true;
-    TriggerNudge();
-
-    std::thread(ShazamId::Worker, id, s.songIdUseMic, s.songIdSeconds).detach();
-}
-
-// Click on the card: open the track page when found, otherwise just dismiss
-// (and stop listening if it is still running).
-void HandleSongIdClick() {
-    std::wstring url;
-    {
-        std::lock_guard lock(g_stateMutex);
-        if (g_state.songId.status == SongIdStatus::Found) {
-            url = g_state.songId.url;
-        }
-        g_state.songId.active = false;
-    }
-    if (g_songIdRunning.load()) {
-        g_songIdCancel = true;
-    }
-    if (url.rfind(L"https://", 0) == 0) {
-        ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    }
-    g_layoutDirty = true;
-}
-
-// Registers (or releases) the song recognition hotkey. Render thread only.
-void ApplySongIdHotkey() {
-    HWND hwnd = g_hwnd;
-    if (!hwnd) {
-        return;
-    }
-    if (g_songIdHotkeyRegistered) {
-        UnregisterHotKey(hwnd, ID_SONGID_HOTKEY);
-        g_songIdHotkeyRegistered = false;
-    }
-    const Settings settings = GetSettingsCopy();
-    if (!settings.songRecognition) {
-        return;
-    }
-    if (RegisterHotKey(hwnd, ID_SONGID_HOTKEY, settings.songIdModifiers, settings.songIdVk)) {
-        g_songIdHotkeyRegistered = true;
-    } else {
-        Wh_Log(L"Failed to register song recognition hotkey (error %lu).", GetLastError());
-    }
-}
-
 void SetClickThrough(HWND hwnd, bool clickThrough) {
     LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
     const bool has = (exStyle & WS_EX_TRANSPARENT) != 0;
@@ -12445,8 +12394,6 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, 40, g_manuallyHidden.load() ? L"Show Island" : L"Hide Island");
     AppendMenuW(menu, MF_STRING, 1, L"Dismiss");
-    AppendMenuW(menu, MF_STRING | (g_settings.songRecognition ? 0 : (MF_GRAYED | MF_DISABLED)), 44,
-                L"Identify song");
 
     HMENU timerMenu = CreatePopupMenu();
     AppendMenuW(timerMenu, MF_STRING, 30, L"Start 25 min Focus");
@@ -12496,17 +12443,13 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         }
         CheckMenuRadioItem(shapeMenu, kShapeMenuIdBase, kShapeMenuIdBase + 2,
                            kShapeMenuIdBase + static_cast<UINT>(currentShape), MF_BYCOMMAND);
-        // Strip mode is a plain on/off toggle, not one of the three shapes.
-        AppendMenuW(shapeMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(shapeMenu, MF_STRING | (g_settings.stripMode ? MF_CHECKED : 0),
-                    kShapeMenuIdBase + 3, L"Strip mode");
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(shapeMenu), L"Shape style");
     }
     const int activeExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1) >= 0
                           ? Wh_GetIntValue(L"ExpandOnHoverOverride", 0)
                           : (Wh_GetIntSetting(L"Behavior.ExpandOnHover") != 0);
     AppendMenuW(menu, MF_STRING, 11, activeExpandOnHover ? L"Expand on Click" : L"Expand on Hover");
-    AppendMenuW(menu, MF_STRING | (Wh_GetIntValue(L"CollapsedLyrics", 0) ? MF_CHECKED : 0), 13,
+    AppendMenuW(menu, MF_STRING | (g_settings.collapsedLyrics ? MF_CHECKED : 0), 13,
                 L"Show lyrics on collapsed island");
     AppendMenuW(menu,
                 MF_STRING | (Wh_GetIntValue(L"LyricsPinnedFirst", 0) ? MF_CHECKED : 0) |
@@ -12708,14 +12651,6 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             TriggerNudge();
             break;
         }
-        case kShapeMenuIdBase + 3: {
-            const int stripSetting = Wh_GetIntSetting(L"Appearance.StripMode") != 0 ? 1 : 0;
-            Wh_SetIntValue(L"StripModeOverride", g_settings.stripMode ? 0 : 1);
-            Wh_SetIntValue(L"StripModeOverrideBase", stripSetting);
-            LoadSettings();
-            g_layoutDirty = true;
-            break;
-        }
         case 11: {
             const int activeExpandOnHover = Wh_GetIntValue(L"ExpandOnHoverOverride", -1) >= 0
                                   ? Wh_GetIntValue(L"ExpandOnHoverOverride", 0)
@@ -12726,7 +12661,12 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             break;
         }
         case 13: {
-            Wh_SetIntValue(L"CollapsedLyrics", Wh_GetIntValue(L"CollapsedLyrics", 0) ? 0 : 1);
+            // Mirror the current effective state into the override, and remember
+            // which Mod Setting value it was based on so a later settings change
+            // hands control back to the settings tab (same pattern as case 15).
+            const int islandLyricsSetting = Wh_GetIntSetting(L"Modules.ShowLyricsOnIsland") != 0 ? 1 : 0;
+            Wh_SetIntValue(L"ShowLyricsOnIslandOverride", GetSettingsCopy().collapsedLyrics ? 0 : 1);
+            Wh_SetIntValue(L"ShowLyricsOnIslandOverrideBase", islandLyricsSetting);
             LoadSettings();
             g_layoutDirty = true;
             TriggerNudge();
@@ -12794,9 +12734,6 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             // Only sets a flag: the lyrics thread does the deletion (never the render thread)
             // and resets the counters. Lyrics currently on screen are left alone.
             g_lyricsCacheClearRequested.store(true);
-            break;
-        case 44:
-            StartSongRecognition(hwnd);
             break;
         case 42:
             PasteIntoFileTray(hwnd);
@@ -12957,15 +12894,145 @@ std::wstring WidestDigitForm(std::wstring text) {
 }
 
 // ── Collapsed-pill lyrics ────────────────────────────────────────────────────
-// Width of the collapsed media pill while it carries a lyric line (content px).
-constexpr float kCollapsedLyricsWidth = 320.0f;
+// Geometry shared by the sizer (Activity width in the render loop) and the
+// painter (DrawMedia / DrawCollapsedLyrics). Everything is content px at 100%;
+// the render loop multiplies the final width by sizeScale, which also carries
+// Auto DPI scaling, so LyricWidth is DPI- and resolution-independent.
+namespace CollapsedLyricLayout {
+    constexpr float kArtPad = 6.0f;        // pill edge -> cover
+    constexpr float kArtSize = 32.0f;      // 44px pill height - 2 * 6px
+    constexpr float kArtGap = 10.0f;       // cover -> lyric text
+    constexpr float kWaveGap = 10.0f;      // lyric text -> visualizer
+    constexpr float kWaveAndRightPad = 42.0f;  // 28px spectrum + 14px right inset
+    constexpr float kPrivacyShift = 22.0f; // same shift DrawMedia applies for privacy dots
+    constexpr float kMinWidth = 150.0f;    // normal collapsed media pill
+    constexpr float kMaxWidth = 880.0f;    // the fixed stage's content width; larger would be clipped
+    constexpr float kWidthQuantum = 2.0f;
 
-// True when the collapsed pill should be widened for lyrics. "fetching" counts
-// too, so the pill does not shrink and regrow on every track change.
+    // Fixed cost around the text: cover, both gaps, spectrum and right inset.
+    constexpr float Chrome(float clockSection, bool privacy) {
+        return clockSection + kArtPad + kArtSize + kArtGap + kWaveGap +
+               kWaveAndRightPad + (privacy ? kPrivacyShift : 0.0f);
+    }
+}
+
+// True when the collapsed pill has a synchronized line it can actually paint for
+// the track that is playing right now. No lyrics (still fetching, not found,
+// instrumental, or unsynced) means the pill keeps its normal 150px appearance.
+bool CollapsedLyricsUsable(const SharedState& state, const Settings& settings) {
+    if (!settings.collapsedLyrics || !settings.media || !state.media.available) {
+        return false;
+    }
+    return state.lyrics.hasData && state.lyrics.synced && !state.lyrics.lines.empty() &&
+           state.lyrics.matchedTitle == state.media.title &&
+           state.lyrics.matchedArtist == state.media.artist;
+}
+
 bool CollapsedLyricsActive(const SharedState& state, const Settings& settings) {
-    // Stays wide for as long as media is available. If there are no lyrics to
-    // show, DrawCollapsedLyrics shows the media title instead.
-    return settings.collapsedLyrics && settings.media && state.media.available;
+    return CollapsedLyricsUsable(state, settings);
+}
+
+// Playback position used by every lyric surface. SMTC sources occasionally
+// refresh LastUpdatedTime with a position a few hundred ms behind the estimate
+// that was extrapolated on the previous frame; near a line boundary that makes
+// the active lyric jump back to the previous line for one or two frames. Hold
+// the position monotonic for ordinary jitter, but still allow a real backwards
+// seek (more than 1.5 s) to move the lyrics back.
+double StableLyricPositionSec(const SharedState& state) {
+    // Only the render thread draws lyric surfaces, so the static cache needs no
+    // synchronization. The track key includes the duration so two versions with
+    // the same title/artist (for example studio vs live) still reset the state.
+    static std::wstring s_trackKey;
+    static double s_lastPos = 0.0;
+    static bool s_valid = false;
+
+    double pos = state.media.positionTicks / 10000000.0;
+    if (state.media.playing && state.media.lastUpdatedTicks > 0) {
+        const ULONGLONG now = GetTickCount64();
+        if (now > static_cast<ULONGLONG>(state.media.lastUpdatedTicks)) {
+            pos += (now - static_cast<ULONGLONG>(state.media.lastUpdatedTicks)) / 1000.0;
+        }
+    }
+    // Include the display lookahead before the monotonic clamp. A short
+    // Playing/Paused flicker (buffering, SMTC status churn) must not remove the
+    // lookahead and rewind the highlighted line; applying it in both states keeps
+    // the position continuous.
+    pos += LyricsLookaheadSec();
+
+    const std::wstring key = state.media.title + L"|" + state.media.artist + L"|" +
+                             std::to_wstring(state.media.endTicks);
+    if (key != s_trackKey || !s_valid) {
+        s_trackKey = key;
+        s_lastPos = pos;
+        s_valid = true;
+        return pos;
+    }
+
+    constexpr double kRealSeekBackToleranceSec = 1.5;
+    if (pos < s_lastPos - kRealSeekBackToleranceSec) {
+        s_lastPos = pos;  // a real backwards seek: follow it
+        return pos;
+    }
+    if (pos < s_lastPos) {
+        pos = s_lastPos;  // jitter backward: hold the previous position
+    }
+    s_lastPos = pos;
+    return pos;
+}
+
+double LyricsPositionSec(const SharedState& state) {
+    return StableLyricPositionSec(state);
+}
+
+// Current synced lyric index for the collapsed pill. Shared by the width sizer
+// and the painter so the pill can never be measured for one line while another
+// is painted. Returns -1 before the first line (or with no usable lyrics).
+int CurrentCollapsedLyricIndex(const SharedState& state, int64_t* posMsOut) {
+    const double posSec = LyricsPositionSec(state);
+    const int64_t posMs = std::max<int64_t>(0, static_cast<int64_t>(posSec * 1000.0));
+    if (posMsOut) *posMsOut = posMs;
+
+    const auto& lines = state.lyrics.lines;
+    int lo = 0;
+    int hi = static_cast<int>(lines.size());
+    while (lo < hi) {
+        const int mid = (lo + hi) / 2;
+        if (lines[mid].timeMs <= posMs) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo - 1;
+}
+
+// Chooses the two lines painted in the collapsed pill and the expanded Lyrics
+// page. The priority line is normal coloured, the other one is smaller and
+// clearly readable underneath.
+void SelectCollapsedLyricTexts(const SharedState& state, const Settings& settings, int idx,
+                               std::wstring* primary, std::wstring* secondary) {
+    primary->clear();
+    secondary->clear();
+    if (idx < 0 || idx >= static_cast<int>(state.lyrics.lines.size())) {
+        *primary = L"\u266A";
+        return;
+    }
+    const LyricsLine& line = state.lyrics.lines[static_cast<size_t>(idx)];
+    const std::wstring& original = line.text;
+    const std::wstring& translation = line.translation;
+    const bool hasOriginal = !TrimLyricsText(original).empty();
+    const bool hasTranslation = !TrimLyricsText(translation).empty();
+    if (settings.lyricsTranslationFirst && hasTranslation) {
+        *primary = translation;
+        *secondary = hasOriginal ? original : std::wstring();
+    } else if (hasOriginal) {
+        *primary = original;
+        *secondary = hasTranslation ? translation : std::wstring();
+    } else {
+        *primary = L"\u266A";
+        *secondary = hasTranslation ? translation : std::wstring();
+    }
+    if (*secondary == *primary) secondary->clear();
 }
 
 // One pre-built lyric line. Built once when the line changes, then reused every
@@ -12976,6 +13043,14 @@ struct CollapsedLyricLine {
     float width = 0.0f;
     float height = 0.0f;
     bool isTitle = false;  // true when this is the media-title fallback, not a lyric line
+
+    // Optional second line (the translation, or the original when translation is
+    // the priority line). Only the collapsed pill fills these.
+    ComPtr<IDWriteTextLayout> subLayout;
+    std::wstring subText;
+    float subWidth = 0.0f;
+    float subHeight = 0.0f;
+    bool hasSub = false;
 };
 
 class Renderer {
@@ -13344,6 +13419,33 @@ class Renderer {
         return metrics;
     }
 
+    // Natural width (content px) of the currently painted collapsed lyric line.
+    // Returns 0 when the pill should not carry lyrics. Used by the render loop to
+    // size the island; the painter uses the same selection helper and formats.
+    float MeasureCollapsedLyricWidth(const SharedState& state, const Settings& settings) {
+        if (!CollapsedLyricsUsable(state, settings)) return 0.0f;
+        EnsureTextFormats(settings.sizeScale, settings.fontFamily, settings.textScale);
+
+        const int idx = CurrentCollapsedLyricIndex(state, nullptr);
+        std::wstring primary;
+        std::wstring secondary;
+        SelectCollapsedLyricTexts(state, settings, idx, &primary, &secondary);
+
+        if (lyricWidthCache_.valid && lyricWidthCache_.primary == primary &&
+            lyricWidthCache_.secondary == secondary) {
+            return lyricWidthCache_.width;
+        }
+
+        const float primaryW = MeasureTextNaturalWidth(primary, textFormat_.Get());
+        const float secondaryW =
+            secondary.empty() ? 0.0f : MeasureTextNaturalWidth(secondary, lyricSubFormat_.Get());
+        lyricWidthCache_.primary = primary;
+        lyricWidthCache_.secondary = secondary;
+        lyricWidthCache_.width = std::max(primaryW, secondaryW);
+        lyricWidthCache_.valid = true;
+        return lyricWidthCache_.width;
+    }
+
    private:
     // Keyed on the string alone. EnsureTextFormats invalidates both caches
     // whenever it rebuilds the formats, so a cached width can never outlive the
@@ -13356,6 +13458,30 @@ class Renderer {
     };
     TextWidthCache idleClockWidthCache_;
     TextWidthCache idleWeatherWidthCache_;
+
+    // The collapsed lyric width is requested every frame but changes only when the
+    // line changes. Keyed on both painted strings, invalidated with the formats.
+    struct LyricWidthCache {
+        std::wstring primary;
+        std::wstring secondary;
+        float width = 0.0f;
+        bool valid = false;
+    };
+    LyricWidthCache lyricWidthCache_;
+
+    float MeasureTextNaturalWidth(const std::wstring& text, IDWriteTextFormat* fmt) {
+        if (!fmt || !dwriteFactory_ || text.empty()) return 0.0f;
+        ComPtr<IDWriteTextLayout> layout;
+        if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                text.c_str(), static_cast<UINT32>(text.size()), fmt, 4096.0f, 40.0f, &layout)) &&
+            layout) {
+            DWRITE_TEXT_METRICS tm = {};
+            if (SUCCEEDED(layout->GetMetrics(&tm))) {
+                return std::max(tm.width, tm.widthIncludingTrailingWhitespace);
+            }
+        }
+        return 0.0f;
+    }
 
     float MeasureTextWidthCached(const std::wstring& text, IDWriteTextFormat* fmt,
                                  TextWidthCache& cache) {
@@ -13459,8 +13585,11 @@ class Renderer {
         // width measured against the old ones is stale.
         idleClockWidthCache_.valid = false;
         idleWeatherWidthCache_.valid = false;
+        lyricWidthCache_.valid = false;
 
         textFormat_ = nullptr;
+        lyricSubFormat_ = nullptr;
+        lyricsPageTranslationFormat_ = nullptr;
         smallTextFormat_ = nullptr;
         clockFormat_ = nullptr;
         boldTextFormat_ = nullptr;
@@ -13500,6 +13629,19 @@ class Renderer {
         createFormat(mainFamily, defaultDisplay,
                      DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
                      DWRITE_FONT_STRETCH_NORMAL, 13.5f * ts, textFormat_);
+        // Smaller second line under a collapsed lyric (translation / original).
+        // Semi-bold and a touch larger than before: the previous normal-weight
+        // 10px grey line was too faint against album-art-tinted backgrounds.
+        // Two lines are vertically scaled down together when Text size makes them
+        // taller than the 44px pill, so the secondary line stays legible.
+        createFormat(smallFamily, defaultSmall,
+                     DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_FONT_STYLE_NORMAL,
+                     DWRITE_FONT_STRETCH_NORMAL, 10.5f * ts, lyricSubFormat_);
+        // Translation line on the expanded Lyrics page. It wraps (unlike the
+        // one-line collapsed subtitle) because the page has room for a second row.
+        createFormat(smallFamily, defaultSmall,
+                     DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                     DWRITE_FONT_STRETCH_NORMAL, 11.0f * ts, lyricsPageTranslationFormat_);
         createFormat(smallFamily, defaultSmall,
                      DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
                      DWRITE_FONT_STRETCH_NORMAL, 11.0f * ts, smallTextFormat_);
@@ -13578,6 +13720,15 @@ class Renderer {
         }
         if (smallTextFormat_) {
             smallTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+        if (lyricSubFormat_) {
+            lyricSubFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+        }
+        if (lyricsPageTranslationFormat_) {
+            // The lyrics page has horizontal room for a wrapped translation.
+            lyricsPageTranslationFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            lyricsPageTranslationFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            lyricsPageTranslationFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
         }
         if (boldTextFormat_) {
             boldTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -13990,25 +14141,12 @@ class Renderer {
         } else if (!settings.w11Style) {
             radius = std::min(radius, 44.0f * settings.sizeScale);
         }
-        // A radius larger than half the height breaks on a thin strip.
-        radius = std::min(radius, std::min(w, h) * 0.5f);
-
-        // Strip mode: content fades in as the island grows out of the strip.
-        const float contentAlpha = settings.stripMode
-            ? SmoothStep01((h / std::max(0.05f, settings.sizeScale) - StripModeLayout::kContentFadeStart) /
-                           StripModeLayout::kContentFadeSpan)
-            : 1.0f;
         if (pillCount_ < DwmBackdrop::kMaxPills) {
             pillRects_[pillCount_] = rect;
             pillRadii_[pillCount_] = radius;
             ++pillCount_;
         }
-        if (contentAlpha > 0.01f) {
-            const float savedOpacity = settingsOpacity_;
-            settingsOpacity_ = savedOpacity * contentAlpha;
-            DrawSoftShadow(rect, radius);
-            settingsOpacity_ = savedOpacity;
-        }
+        DrawSoftShadow(rect, radius);
 
         DrawPillSurface(rect, radius, activity.kind, settings);
 
@@ -14038,21 +14176,7 @@ class Renderer {
         float unH = (rect.bottom - rect.top) * invScale;
         D2D1_RECT_F unscaledRect = D2D1::RectF(pillCenter.x - unW * 0.5f, pillCenter.y - unH * 0.5f, pillCenter.x + unW * 0.5f, pillCenter.y + unH * 0.5f);
 
-        // The strip itself draws no content; it fades in while the island opens.
-        const bool drawContent = contentAlpha > 0.01f;
-        ID2D1Layer* stripFadeLayer = nullptr;
-        if (drawContent && contentAlpha < 0.995f) {
-            stripFadeLayer = AcquireLayer();
-            if (stripFadeLayer) {
-                target_->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
-                                                          D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
-                                                          D2D1::IdentityMatrix(), contentAlpha, nullptr,
-                                                          D2D1_LAYER_OPTIONS_NONE),
-                                   stripFadeLayer);
-            }
-        }
-
-        if (drawContent) switch (activity.kind) {
+        switch (activity.kind) {
             case IslandKind::Media:
                 DrawMedia(state, unscaledRect, settings, now);
                 break;
@@ -14092,9 +14216,6 @@ class Renderer {
             case IslandKind::Lookup:
                 DrawLookup(state, unscaledRect, settings, now);
                 break;
-            case IslandKind::SongId:
-                DrawSongId(state, unscaledRect, settings, now);
-                break;
             case IslandKind::Idle:
             default:
                 DrawIdleDashboard(state, unscaledRect, settings, now);
@@ -14104,12 +14225,7 @@ class Renderer {
         // ── Apple-style privacy indicator dots ───────────────────────────────
         // Green dot = camera in use, Orange dot = mic in use.
         // Drawn in top-right corner of pill, outside content area.
-        if (drawContent) {
-            DrawPrivacyDots(state, settings, unscaledRect, now);
-        }
-        if (stripFadeLayer) {
-            target_->PopLayer();
-        }
+        DrawPrivacyDots(state, settings, unscaledRect, now);
 
         target_->SetTransform(oldTransform);
     }
@@ -15283,65 +15399,6 @@ class Renderer {
                           brush.Get(), stroke, round.Get());
     }
 
-    // Round chevron button for the File Tray pager. dir: -1 = previous, +1 = next.
-    void DrawTrayPagerButton(D2D1_POINT_2F c, float size, int dir, bool enabled, bool hovered) {
-        if (enabled && hovered) {
-            if (ID2D1SolidColorBrush* bg =
-                    AcquireBrush(WithAlpha(material_.accent, 0.20f * settingsOpacity_))) {
-                target_->FillEllipse(D2D1::Ellipse(c, size * 0.5f, size * 0.5f), bg);
-            }
-        }
-
-        D2D1_COLOR_F ink = enabled ? (hovered ? material_.accent : material_.textSecondary)
-                                   : WithAlpha(material_.textSecondary, 0.30f);
-        ink.a *= settingsOpacity_;
-        ID2D1SolidColorBrush* brush = AcquireBrush(ink);
-        if (!brush) {
-            return;
-        }
-
-        const float r = size * 0.22f;
-        const float stroke = std::max(1.3f, size * 0.09f);
-        const float d = static_cast<float>(dir);
-        const D2D1_POINT_2F tip = D2D1::Point2F(c.x + d * r * 0.6f, c.y);
-        const D2D1_POINT_2F a = D2D1::Point2F(c.x - d * r * 0.6f, c.y - r * 1.3f);
-        const D2D1_POINT_2F b = D2D1::Point2F(c.x - d * r * 0.6f, c.y + r * 1.3f);
-        target_->DrawLine(a, tip, brush, stroke, RoundStroke());
-        target_->DrawLine(tip, b, brush, stroke, RoundStroke());
-    }
-
-    // "<  2/4  >" in the File Tray header, shown only when rows overflow.
-    void DrawTrayPager(D2D1_RECT_F rect, float midY, float scale, int total, int offset) {
-        const int pages = FileTrayPageCount(total);
-        const int page = FileTrayCurrentPage(total, offset);
-        const int action = g_hoveredFileTrayAction.load(std::memory_order_relaxed);
-
-        const float btn = FileTrayLayout::kPagerBtnSize * scale;
-        const float labelW = FileTrayLayout::kPagerLabelW * scale;
-        const float right = rect.right - FileTrayLayout::PagerRightInset() * scale;
-
-        const D2D1_POINT_2F nextC = D2D1::Point2F(right - btn * 0.5f, midY);
-        const D2D1_POINT_2F prevC = D2D1::Point2F(
-            right - FileTrayLayout::PagerWidth() * scale + btn * 0.5f, midY);
-        DrawTrayPagerButton(prevC, btn, -1, offset > 0, action == -4);
-        DrawTrayPagerButton(nextC, btn, 1, offset < FileTrayMaxScroll(total), action == -5);
-
-        if (smallTextFormat_) {
-            wchar_t label[24] = {};
-            swprintf_s(label, L"%d/%d", page, pages);
-            const D2D1_RECT_F labelRect = D2D1::RectF(right - btn - labelW, midY - 9.0f * scale,
-                                                      right - btn, midY + 9.0f * scale);
-            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            textBrush_->SetOpacity(0.90f);
-            target_->DrawTextW(label, static_cast<UINT32>(wcslen(label)), smallTextFormat_.Get(),
-                               labelRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
-            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-            textBrush_->SetOpacity(0.96f);
-        }
-    }
-
     // File Tray (#33): a shelf for files dragged onto the island. Rows are built
     // from the shared DrawCard primitive so the shelf matches every other
     // dashboard, with the real Explorer icon for each file.
@@ -15375,14 +15432,8 @@ class Renderer {
             wchar_t countBuf[48] = {};
             swprintf_s(countBuf, L"%zu %s", total,
                        Loc(total == 1 ? L"item" : L"items"));
-            const bool pagerOn = settings.fileTrayPager &&
-                                 static_cast<int>(total) > FileTrayRestCapacity();
-            const float countRight = pagerOn
-                ? rect.right - (FileTrayLayout::PagerRightInset() +
-                                FileTrayLayout::PagerWidth() + 8.0f) * scale
-                : pasteBox.left - 8.0f * scale;
             const D2D1_RECT_F countRect = D2D1::RectF(headerRect.left, headerRect.top,
-                                                      countRight, headerRect.bottom);
+                                                      pasteBox.left - 8.0f * scale, headerRect.bottom);
             smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
             mutedBrush_->SetOpacity(0.75f);
             target_->DrawTextW(countBuf, static_cast<UINT32>(wcslen(countBuf)),
@@ -15394,10 +15445,6 @@ class Renderer {
         DrawTrayPasteButton(pasteBox, g_hoveredFileTrayAction.load(std::memory_order_relaxed) == -3);
         DrawTrayBinButton(clearBox, total > 0,
                           g_hoveredFileTrayAction.load(std::memory_order_relaxed) == -2);
-        if (settings.fileTrayPager && static_cast<int>(total) > FileTrayRestCapacity()) {
-            DrawTrayPager(rect, (clearBox.top + clearBox.bottom) * 0.5f, scale,
-                          static_cast<int>(total), FileTrayScrollOffset(static_cast<int>(total)));
-        }
 
         const float listTop = rect.top + FileTrayLayout::kListTop * scale;
         const float listBottom = rect.bottom - FileTrayLayout::kListBottomInset * scale;
@@ -15435,11 +15482,9 @@ class Renderer {
         const float rowGap = FileTrayLayout::kRowGap * scale;
         const int capacity = FileTrayLayout::VisibleRowCapacity((rect.bottom - rect.top) / scale);
 
-        // Newest first: the file just dropped is the one the user wants. Rows
-        // scrolled past (scrollOffset of them) are skipped.
-        const int scrollOffset = FileTrayScrollOffset(static_cast<int>(total));
+        // Newest first: the file just dropped is the one the user wants.
         int drawn = 0;
-        for (auto it = state.fileTrayItems.rbegin() + scrollOffset;
+        for (auto it = state.fileTrayItems.rbegin();
              it != state.fileTrayItems.rend() && drawn < capacity; ++it, ++drawn) {
             const FileTrayItem& item = *it;
             const float rowTop = listTop + drawn * (rowH + rowGap);
@@ -15508,35 +15553,17 @@ class Renderer {
             }
         }
 
-        // Scrollbar on the right edge, only while some rows are out of view.
-        if (settings.fileTrayScroll && static_cast<int>(total) > FileTrayRestCapacity()) {
-            const int totalRows = static_cast<int>(total);
-            const float trackH = static_cast<float>(capacity) * rowH +
-                                 static_cast<float>(capacity - 1) * rowGap;
-            const float barX = rect.right - padX + FileTrayLayout::kScrollbarGap * scale;
-            const float barW = FileTrayLayout::kScrollbarWidth * scale;
-            const D2D1_RECT_F track = D2D1::RectF(barX, listTop, barX + barW, listTop + trackH);
-
-            if (ID2D1SolidColorBrush* trackBrush = AcquireBrush(material_.raisedStrong)) {
-                target_->FillRoundedRectangle(D2D1::RoundedRect(track, barW * 0.5f, barW * 0.5f),
-                                              trackBrush);
-            }
-
-            const float thumbH = std::max(14.0f * scale,
-                                          trackH * static_cast<float>(capacity) /
-                                              static_cast<float>(totalRows));
-            const int maxScroll = FileTrayMaxScroll(totalRows);
-            const float t = maxScroll > 0
-                ? static_cast<float>(scrollOffset) / static_cast<float>(maxScroll)
-                : 0.0f;
-            const float thumbTop = track.top + (trackH - thumbH) * t;
-            if (ID2D1SolidColorBrush* thumbBrush =
-                    AcquireBrush(WithAlpha(material_.accent, 0.80f * settingsOpacity_))) {
-                target_->FillRoundedRectangle(
-                    D2D1::RoundedRect(D2D1::RectF(track.left, thumbTop, track.right, thumbTop + thumbH),
-                                      barW * 0.5f, barW * 0.5f),
-                    thumbBrush);
-            }
+        // "+N more" when the shelf holds more than fits.
+        if (static_cast<int>(total) > capacity && smallTextFormat_) {
+            wchar_t moreBuf[32] = {};
+            swprintf_s(moreBuf, L"+%d", static_cast<int>(total) - capacity);
+            const D2D1_RECT_F moreRect = D2D1::RectF(rect.left + padX, listBottom - 12.0f * scale,
+                                                      rect.right - padX, listBottom);
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+            mutedBrush_->SetOpacity(0.65f);
+            target_->DrawTextW(moreBuf, static_cast<UINT32>(wcslen(moreBuf)), smallTextFormat_.Get(),
+                               moreRect, mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         }
 
         textBrush_->SetOpacity(0.96f);
@@ -15949,17 +15976,10 @@ class Renderer {
         }
 
         if (state.lyrics.synced) {
-            double currentPositionSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                currentPositionSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
-
-            // The reported position lags what you hear by a bit; nudge it forward.
-            // Raise this if lyrics feel late, lower it if they feel early.
-            const double kLyricsLookaheadSec = LyricsLookaheadSec();  // 0.49 baseline + speaker/Bluetooth offset
-            if (state.media.playing) {
-                currentPositionSec += kLyricsLookaheadSec;
-            }
+            // Shared stable position + the user's sync offset. This prevents a
+            // one-frame jump back to the previous line when the media session
+            // reports a slightly stale position.
+            const double currentPositionSec = LyricsPositionSec(state);
             const int64_t posMs = std::max<int64_t>(0, static_cast<int64_t>(currentPositionSec * 1000.0));
 
             int currentIndex = 0;
@@ -16006,7 +16026,20 @@ class Renderer {
             }
 
             constexpr int kContextLines = 2;
-            const float lineHeight = 42.0f * scale;
+            // Lyrics with translations need a taller row: the priority line sits
+            // on top and the translation underneath. Without any translation the
+            // old 42px rhythm is kept exactly.
+            bool anyTranslation = false;
+            for (const LyricsLine& lyricLine : state.lyrics.lines.vec()) {
+                if (!TrimLyricsText(lyricLine.translation).empty()) {
+                    anyTranslation = true;
+                    break;
+                }
+            }
+            const float lineHeight = anyTranslation
+                ? std::max(64.0f, 42.0f * settings.textScale) * scale
+                : 42.0f * scale;
+            const int contextLines = anyTranslation ? 1 : kContextLines;
             const float centerY = (bodyRect.top + bodyRect.bottom) * 0.5f;
             const int baseIndex = static_cast<int>(std::floor(lyricsScrollPos_));
 
@@ -16058,7 +16091,12 @@ class Renderer {
                 return SmoothStep01(t);
             };
 
-            for (int offset = -kContextLines; offset <= kContextLines; ++offset) {
+            // Keep the spring-scrolled rows inside the lyrics body. With a
+            // translation row the line pitch is taller, so an unclipped
+            // neighbour would otherwise paint over the tab header/controls.
+            target_->PushAxisAlignedClip(bodyRect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+
+            for (int offset = -contextLines; offset <= contextLines; ++offset) {
                 const int idx = baseIndex + offset;
                 if (idx < 0 || idx >= static_cast<int>(state.lyrics.lines.size())) continue;
 
@@ -16072,9 +16110,29 @@ class Renderer {
                     bodyRect.left, y - lineHeight * 0.5f,
                     bodyRect.right, y + lineHeight * 0.5f);
 
-                const std::wstring& line = state.lyrics.lines[idx].text;
-                const wchar_t* toDraw = line.empty() ? L"\u266A" : line.c_str();
-                const UINT32 toDrawLen = static_cast<UINT32>(line.empty() ? 1 : line.size());
+                std::wstring primaryText;
+                std::wstring secondaryText;
+                SelectCollapsedLyricTexts(state, settings, idx, &primaryText, &secondaryText);
+                const bool hasSecondary = !secondaryText.empty();
+                const float primaryFont = ((idx == lyricsHighlightIndex_ ||
+                                            idx == lyricsHighlightPrevIndex_)
+                                               ? kLyricsActiveFontSize
+                                               : 13.5f) *
+                                          settings.textScale;
+                const float primaryH = primaryFont * 1.24f * scale;
+                const float secondaryH = 11.0f * settings.textScale * 1.24f * scale;
+                const float rowGap = 2.0f * scale;
+                const float blockH = primaryH + (hasSecondary ? rowGap + secondaryH : 0.0f);
+                const float blockTop = y - blockH * 0.5f;
+                const D2D1_RECT_F primaryRect = D2D1::RectF(
+                    lineRect.left, blockTop, lineRect.right, blockTop + primaryH + 2.0f * scale);
+                const D2D1_RECT_F secondaryRect = D2D1::RectF(
+                    lineRect.left, primaryRect.bottom, lineRect.right, lineRect.bottom);
+
+                const wchar_t* toDraw =
+                    primaryText.empty() ? L"\u266A" : primaryText.c_str();
+                const UINT32 toDrawLen = static_cast<UINT32>(
+                    primaryText.empty() ? 1 : primaryText.size());
 
                 float activeBlend = 0.0f;
                 float glowPulse = 0.0f;
@@ -16123,16 +16181,16 @@ class Renderer {
 
                 // ── Bright / active pass ─────────────────────────────────────
                 if (activeBlend > 0.01f) {
-                    D2D1_RECT_F activeLineRect = D2D1::RectF(
-                        lineRect.left, y - lineHeight * 0.66f,
-                        lineRect.right, y + lineHeight * 0.66f);
+                    D2D1_RECT_F activeLineRect = primaryRect;
 
                     const float availableWidth = activeLineRect.right - activeLineRect.left;
+                    const float activeLayoutHeight = activeLineRect.bottom - activeLineRect.top;
+                    const float textCenterY = (activeLineRect.top + activeLineRect.bottom) * 0.5f;
                     IDWriteTextFormat* drawFormat = activeFormat;
 
                     ComPtr<IDWriteTextLayout> measureLayout;
                     dwriteFactory_->CreateTextLayout(toDraw, toDrawLen, activeFormat,
-                                                     availableWidth, lineHeight, &measureLayout);
+                                                     availableWidth, activeLayoutHeight, &measureLayout);
                     float textWidth = availableWidth;
                     if (measureLayout) {
                         DWRITE_TEXT_METRICS metrics{};
@@ -16201,8 +16259,8 @@ class Renderer {
                                 ComPtr<ID2D1LinearGradientBrush> glowBrush;
                                 target_->CreateLinearGradientBrush(
                                     D2D1::LinearGradientBrushProperties(
-                                        D2D1::Point2F(wipeX - trailWidth, y),
-                                        D2D1::Point2F(wipeX + leadWidth, y)),
+                                        D2D1::Point2F(wipeX - trailWidth, textCenterY),
+                                        D2D1::Point2F(wipeX + leadWidth, textCenterY)),
                                     glowStopCollection.Get(), &glowBrush);
                                 if (glowBrush) {
                                     target_->DrawTextW(toDraw, toDrawLen, drawFormat, activeLineRect,
@@ -16255,11 +16313,32 @@ class Renderer {
                 const float dimOpacity = kMaxNeighborOpacity * (1.0f - activeBlend) * edgeFade;
                 if (dimOpacity > 0.01f) {
                     mutedBrush_->SetOpacity(dimOpacity);
-                    target_->DrawTextW(toDraw, toDrawLen, textFormat_.Get(), lineRect,
+                    target_->DrawTextW(toDraw, toDrawLen, textFormat_.Get(), primaryRect,
                                        mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                }
+
+                // Translation / secondary line. It is static (no karaoke wipe)
+                // and follows the current line's active/neighbour opacity.
+                if (hasSecondary && !secondaryText.empty()) {
+                    const float secondaryOpacity =
+                        std::max(activeBlend * edgeFade * 0.90f, dimOpacity * 0.88f);
+                    if (secondaryOpacity > 0.01f) {
+                        IDWriteTextFormat* secondaryFormat =
+                            lyricsPageTranslationFormat_
+                                ? lyricsPageTranslationFormat_.Get()
+                                : smallTextFormat_.Get();
+                        if (secondaryFormat) {
+                            mutedBrush_->SetOpacity(secondaryOpacity);
+                            target_->DrawTextW(
+                                secondaryText.c_str(),
+                                static_cast<UINT32>(secondaryText.size()), secondaryFormat,
+                                secondaryRect, mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        }
+                    }
                 }
             }
 
+            target_->PopAxisAlignedClip();
             textBrush_->SetOpacity(0.96f);
             mutedBrush_->SetOpacity(0.75f);
         } else {
@@ -17482,11 +17561,11 @@ class Renderer {
             // pill widens, so there is no pop while the spring is still moving.
             if (CollapsedLyricsActive(state, settings)) {
                 const float lyricsAlpha =
-                    SmoothStep01(((rect.right - rect.left) - 175.0f) / 60.0f);
+                    SmoothStep01(((rect.right - rect.left) - 120.0f) / 30.0f);
                 if (lyricsAlpha > 0.01f) {
                     const float textLeft = artRect.right + 10.0f;
                     const float textRight = waveRect.left - 10.0f;
-                    DrawCollapsedLyrics(state,
+                    DrawCollapsedLyrics(state, settings,
                                         D2D1::RectF(textLeft, rect.top + 4.0f, textRight, rect.bottom - 4.0f),
                                         now, lyricsAlpha);
                 }
@@ -17819,14 +17898,8 @@ class Renderer {
         } else {
             EnsureImmersiveFormat(settings);
 
-            // Same position math as the Lyrics tab, including the sync offset.
-            double posSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                posSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
-            if (state.media.playing) {
-                posSec += LyricsLookaheadSec();
-            }
+            // Same stable position math as the Lyrics tab, including the sync offset.
+            const double posSec = LyricsPositionSec(state);
             const int64_t posMs = std::max<int64_t>(0, static_cast<int64_t>(posSec * 1000.0));
 
             int lo = 0;
@@ -17983,6 +18056,11 @@ class Renderer {
         out.width = 0.0f;
         out.height = 0.0f;
         out.isTitle = false;
+        out.subText.clear();
+        out.subLayout.Reset();
+        out.subWidth = 0.0f;
+        out.subHeight = 0.0f;
+        out.hasSub = false;
         if (!dwriteFactory_ || text.empty()) {
             return;
         }
@@ -18098,15 +18176,9 @@ class Renderer {
                     layout.Get(), mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
             }
         } else {
-            // Same position math as the Lyrics tab, including the lookahead nudge.
-            double posSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                posSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
-            if (state.media.playing) {
-                posSec += LyricsLookaheadSec();
-                            }
-                            const int64_t posMs = std::max<int64_t>(0, static_cast<int64_t>(posSec * 1000.0));
+            // Same stable position math as the Lyrics tab, including the lookahead nudge.
+            const double posSec = LyricsPositionSec(state);
+            const int64_t posMs = std::max<int64_t>(0, static_cast<int64_t>(posSec * 1000.0));
 
             int lo = 0;
             int hi = static_cast<int>(lines.size());
@@ -18208,13 +18280,20 @@ class Renderer {
         mutedBrush_->SetOpacity(0.75f);
     }
 
-    // Builds the cached layout for one lyric line.
+    // Builds the cached layout for one lyric line, plus the optional smaller
+    // second line (translation / original) painted underneath it.
     void BuildCollapsedLyricLine(CollapsedLyricLine& out, const std::wstring& text,
-                                 IDWriteTextFormat* fmt) {
+                                 IDWriteTextFormat* fmt, const std::wstring& subText = std::wstring(),
+                                 IDWriteTextFormat* subFmt = nullptr) {
         out.text = text;
         out.layout.Reset();
         out.width = 0.0f;
         out.height = 0.0f;
+        out.subText.clear();
+        out.subLayout.Reset();
+        out.subWidth = 0.0f;
+        out.subHeight = 0.0f;
+        out.hasSub = false;
         if (SUCCEEDED(dwriteFactory_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()),
                                                        fmt, 4096.0f, 40.0f, &out.layout)) &&
             out.layout) {
@@ -18222,66 +18301,56 @@ class Renderer {
             // pin it here so positioning below never depends on that.
             out.layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             out.layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            out.layout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
             DWRITE_TEXT_METRICS tm{};
             out.layout->GetMetrics(&tm);
             out.width = tm.widthIncludingTrailingWhitespace;
             out.height = tm.height;
         }
+
+        if (!subText.empty() && subFmt && dwriteFactory_) {
+            out.subText = subText;
+            if (SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                    subText.c_str(), static_cast<UINT32>(subText.size()), subFmt,
+                    4096.0f, 40.0f, &out.subLayout)) &&
+                out.subLayout) {
+                out.subLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                out.subLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                out.subLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                DWRITE_TEXT_METRICS tm{};
+                out.subLayout->GetMetrics(&tm);
+                out.subWidth = tm.widthIncludingTrailingWhitespace;
+                out.subHeight = tm.height;
+                out.hasSub = out.subWidth > 0.0f;
+            }
+        }
     }
 
-    // Draws the current synced lyric line inside `area`. When the line changes,
+    // Draws the current synced lyric line(s) inside `area`. When the line changes,
     // the old one slides up and fades out while the new one rises in from below.
-    void DrawCollapsedLyrics(const SharedState& state, D2D1_RECT_F area, double now, float alpha) {
+    // With a translation available the priority line is normal coloured and the
+    // other one sits underneath, smaller, semi-bold and clearly readable.
+    void DrawCollapsedLyrics(const SharedState& state, const Settings& settings, D2D1_RECT_F area,
+                             double now, float alpha) {
         g_lastLyricsViewTime.store(now, std::memory_order_relaxed);
         IDWriteTextFormat* fmt = textFormat_.Get();
         if (!fmt || !dwriteFactory_ || alpha <= 0.01f) {
             return;
         }
         const float availW = area.right - area.left;
-        if (availW < 40.0f) {
+        const float availH = area.bottom - area.top;
+        if (availW < 40.0f || availH < 8.0f) {
             return;
         }
 
         const auto& lines = state.lyrics.lines;
+        const bool lyricsUsable = CollapsedLyricsUsable(state, settings);
 
-        // Lyrics only count if they belong to the track that is playing right now.
-        // This also stops the previous song's lyrics showing while the lyrics
-        // thread has not noticed the track change yet.
-        const bool lyricsUsable =
-            state.lyrics.hasData && state.lyrics.synced && !lines.empty() &&
-            state.lyrics.matchedTitle == state.media.title &&
-            state.lyrics.matchedArtist == state.media.artist;
-
-        int idx = -1;  // -1 = before the first line, or no usable lyrics
         int64_t posMs = 0;
-        if (lyricsUsable) {
-            // Same position math as the Lyrics tab, including the lookahead nudge.
-            double posSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                posSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
-            if (state.media.playing) {
-                posSec += LyricsLookaheadSec();
-                            }
-                            posMs = std::max<int64_t>(0, static_cast<int64_t>(posSec * 1000.0));
+        const int idx = lyricsUsable ? CurrentCollapsedLyricIndex(state, &posMs) : -1;
 
-            // Binary search for the last line whose timestamp has passed.
-            int lo = 0;
-            int hi = static_cast<int>(lines.size());
-            while (lo < hi) {
-                const int mid = (lo + hi) / 2;
-                if (lines[mid].timeMs <= posMs) {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            idx = lo - 1;
-        }
-
-        // The media title is only a fallback for when there are no usable lyrics
-        // (still loading, not found, unsynced). Once lyrics are usable, the intro
-        // and instrumental gaps show the note glyph, as before.
+        // The media title is a defensive fallback only; the caller only invokes
+        // this when CollapsedLyricsActive() is true, i.e. usable lyrics exist.
         constexpr int kTitleKey = -3;  // distinct from idx == -1 (before the first line)
         const bool showTitle = !lyricsUsable;
         const int showIdx = showTitle ? kTitleKey : idx;
@@ -18290,11 +18359,20 @@ class Renderer {
         if (fallback.empty()) fallback = state.media.sourceName;
         if (fallback.empty()) fallback = Loc(L"Media");
 
+        std::wstring primaryText;
+        std::wstring secondaryText;
+        if (showTitle) {
+            primaryText = fallback;
+        } else {
+            SelectCollapsedLyricTexts(state, settings, idx, &primaryText, &secondaryText);
+        }
+
         // Rebuild layouts only when what is shown actually changed.
         const bool trackChanged = state.media.title != collapsedLyricTitle_ ||
                                   state.media.artist != collapsedLyricArtist_;
-        const bool fallbackTextChanged = showTitle && collapsedLyricCur_.text != fallback;
-        if (trackChanged || showIdx != collapsedLyricIdx_ || fallbackTextChanged) {
+        const bool textChanged = primaryText != collapsedLyricCur_.text ||
+                                 secondaryText != collapsedLyricCur_.subText;
+        if (trackChanged || showIdx != collapsedLyricIdx_ || textChanged) {
             if (trackChanged || collapsedLyricIdx_ == -2) {
                 // New track or first draw: snap, no animation.
                 collapsedLyricPrev_ = CollapsedLyricLine{};
@@ -18307,14 +18385,15 @@ class Renderer {
             collapsedLyricArtist_ = state.media.artist;
             collapsedLyricIdx_ = showIdx;
 
-            const std::wstring text = showTitle
-                ? fallback
-                : ((idx >= 0 && !lines[idx].text.empty()) ? lines[idx].text
-                                                          : std::wstring(L"\u266A"));
-            BuildCollapsedLyricLine(collapsedLyricCur_, text, fmt);
+            BuildCollapsedLyricLine(collapsedLyricCur_, primaryText, fmt, secondaryText,
+                                    lyricSubFormat_.Get());
             collapsedLyricCur_.isTitle = showTitle;
         }
         if (!collapsedLyricCur_.layout) {
+            // Force a rebuild next frame: otherwise textChanged stays false and a
+            // transient layout failure would leave this line blank until the song
+            // moves to another line.
+            collapsedLyricIdx_ = -2;
             return;
         }
 
@@ -18325,63 +18404,119 @@ class Renderer {
         const float inv = 1.0f - t;
         const float e = 1.0f - inv * inv * inv;
 
+        const float cx = (area.left + area.right) * 0.5f;
         const float cy = (area.top + area.bottom) * 0.5f;
+
+        auto blockHeight = [](const CollapsedLyricLine& line) {
+            return line.height + (line.hasSub ? 1.5f + line.subHeight : 0.0f);
+        };
+        // At very large Text size the two lines can exceed the 44px pill; scale
+        // the block around its centre instead of clipping the translation.
+        const float curBlockH = blockHeight(collapsedLyricCur_);
+        const float verticalScale = curBlockH > availH ? (availH / curBlockH) : 1.0f;
+
+        // Pan progress for long lyric lines, shared by both rows.
+        float panProgress = 1.0f;
+        if (!showTitle && showIdx >= 0 && showIdx < static_cast<int>(lines.size())) {
+            const int64_t startMs = lines[showIdx].timeMs;
+            int64_t endMs = startMs + 4000;
+            if (showIdx + 1 < static_cast<int>(lines.size())) {
+                endMs = lines[showIdx + 1].timeMs;
+            } else if (state.media.endTicks > 0) {
+                endMs = state.media.endTicks / 10000;
+            }
+            const int64_t span = endMs - startMs;
+            panProgress = span > 0
+                ? Clamp(static_cast<float>(posMs - startMs) / static_cast<float>(span), 0.0f, 1.0f)
+                : 1.0f;
+        }
+        const float panEase = SmoothStep01((panProgress - 0.12f) / 0.70f);
+
+        D2D1_MATRIX_3X2_F oldTransform;
+        target_->GetTransform(&oldTransform);
         target_->PushAxisAlignedClip(area, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        if (verticalScale < 0.999f) {
+            target_->SetTransform(D2D1::Matrix3x2F::Scale(verticalScale, verticalScale,
+                                                          D2D1::Point2F(cx, cy)) *
+                                  oldTransform);
+        }
+
+        auto drawRow = [&](const CollapsedLyricLine& line, float x, float y, float textAlpha,
+                           bool subtitle) {
+            if (subtitle) {
+                if (!line.subLayout) return;
+                mutedBrush_->SetOpacity(textAlpha);
+                target_->DrawTextLayout(D2D1::Point2F(x, y + line.height + 1.5f),
+                                        line.subLayout.Get(), mutedBrush_.Get(),
+                                        D2D1_DRAW_TEXT_OPTIONS_NONE);
+                return;
+            }
+            textBrush_->SetOpacity(textAlpha);
+            target_->DrawTextLayout(D2D1::Point2F(x, y), line.layout.Get(), textBrush_.Get(),
+                                    D2D1_DRAW_TEXT_OPTIONS_NONE);
+        };
 
         // Outgoing line: rises and fades a bit faster than the new one arrives.
         if (t < 1.0f && collapsedLyricPrev_.layout) {
             const CollapsedLyricLine& p = collapsedLyricPrev_;
+            const float blockH = blockHeight(p);
+            const float top = cy - blockH * 0.5f - e * kSlidePx;
+            const float outgoingAlpha = alpha * (1.0f - Clamp(t * 1.6f, 0.0f, 1.0f));
+
             float x = area.left;
             if (p.width <= availW) {
                 x = area.left + (availW - p.width) * 0.5f;
             } else if (!p.isTitle) {
                 x = area.left - (p.width - availW);  // lyric rests at its panned end
             }
-            const float y = cy - p.height * 0.5f - e * kSlidePx;
-            textBrush_->SetOpacity(alpha * (1.0f - Clamp(t * 1.6f, 0.0f, 1.0f)) * 0.9f);
-            target_->DrawTextLayout(D2D1::Point2F(x, y), p.layout.Get(), textBrush_.Get(),
-                                    D2D1_DRAW_TEXT_OPTIONS_NONE);
+            drawRow(p, x, top, outgoingAlpha * 0.9f, false);
+
+            if (p.hasSub) {
+                float subX = area.left;
+                if (p.subWidth <= availW) {
+                    subX = area.left + (availW - p.subWidth) * 0.5f;
+                } else {
+                    subX = area.left - (p.subWidth - availW);
+                }
+                drawRow(p, subX, top, outgoingAlpha * 0.82f, true);
+            }
         }
 
         // Incoming / current line.
         {
             const CollapsedLyricLine& c = collapsedLyricCur_;
+            const float blockH = blockHeight(c);
+            const float top = cy - blockH * 0.5f + (1.0f - e) * kSlidePx;
+
             float x = area.left + (availW - c.width) * 0.5f;  // centred when it fits
-            const float overflow = c.width - availW;
             float titleCycle = 0.0f;  // > 0 only when the title is scrolling as a marquee
-            if (overflow > 0.0f) {
+            if (c.width > availW) {
                 if (c.isTitle) {
                     // Long title: scroll it in a loop, like the other marquees.
                     titleCycle = c.width + 38.0f;
                     x = area.left - std::fmod(static_cast<float>(now) * 30.0f, titleCycle);
-                } else if (showIdx >= 0) {
-                    // Long lyric: start at the left edge and pan across as it is sung.
-                    const int64_t startMs = lines[showIdx].timeMs;
-                    int64_t endMs = startMs + 4000;
-                    if (showIdx + 1 < static_cast<int>(lines.size())) {
-                        endMs = lines[showIdx + 1].timeMs;
-                    } else if (state.media.endTicks > 0) {
-                        endMs = state.media.endTicks / 10000;
-                    }
-                    const int64_t span = endMs - startMs;
-                    const float prog = span > 0
-                        ? Clamp(static_cast<float>(posMs - startMs) / static_cast<float>(span), 0.0f, 1.0f)
-                        : 1.0f;
-                    x = area.left - overflow * SmoothStep01((prog - 0.12f) / 0.70f);
+                } else {
+                    x = area.left - (c.width - availW) * panEase;
                 }
             }
-            const float y = cy - c.height * 0.5f + (1.0f - e) * kSlidePx;
-            textBrush_->SetOpacity(alpha * e * (c.isTitle ? 0.90f : 0.97f));
-            target_->DrawTextLayout(D2D1::Point2F(x, y), c.layout.Get(), textBrush_.Get(),
-                                    D2D1_DRAW_TEXT_OPTIONS_NONE);
+            drawRow(c, x, top, alpha * e * (c.isTitle ? 0.90f : 0.97f), false);
             if (titleCycle > 0.0f) {
-                target_->DrawTextLayout(D2D1::Point2F(x + titleCycle, y), c.layout.Get(),
-                                        textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                drawRow(c, x + titleCycle, top, alpha * e * 0.90f, false);
+            }
+
+            if (c.hasSub) {
+                float subX = area.left + (availW - c.subWidth) * 0.5f;
+                if (c.subWidth > availW) {
+                    subX = area.left - (c.subWidth - availW) * panEase;
+                }
+                drawRow(c, subX, top, alpha * e * 0.90f, true);
             }
         }
 
+        target_->SetTransform(oldTransform);
         target_->PopAxisAlignedClip();
         textBrush_->SetOpacity(0.96f);
+        mutedBrush_->SetOpacity(0.75f);
     }
 
     // ── Source switch animation + source dock ────────────────────────────────
@@ -21771,126 +21906,6 @@ class Renderer {
     std::wstring lookupFormatFamily_;
     LookupFit lookupFit_;
 
-    // ── Song recognition card ────────────────────────────────────────────────
-    void DrawSongId(const SharedState& state, D2D1_RECT_F rect, const Settings& settings, double now) {
-        (void)settings;
-        const SongIdSnapshot& sid = state.songId;
-        const float h = rect.bottom - rect.top;
-        if (h < 40.0f || rect.right - rect.left < 200.0f) return;
-
-        const bool busy = sid.status == SongIdStatus::Listening || sid.status == SongIdStatus::Matching;
-        const bool found = sid.status == SongIdStatus::Found;
-        const float cy = (rect.top + rect.bottom) * 0.5f;
-        const float badgeSz = h - 16.0f;
-        const D2D1_RECT_F badge = D2D1::RectF(rect.left + 14.0f, cy - badgeSz * 0.5f,
-                                              rect.left + 14.0f + badgeSz, cy + badgeSz * 0.5f);
-        const float br = badgeSz * 0.30f;
-        const D2D1_POINT_2F bc = D2D1::Point2F((badge.left + badge.right) * 0.5f, cy);
-
-        if (raisedStrongBrush_) {
-            target_->FillRoundedRectangle(D2D1::RoundedRect(badge, br, br), raisedStrongBrush_.Get());
-        }
-
-        if (found && sid.cover) {
-            DrawRoundedBitmapPixels(*sid.cover, badge, br, songIdCoverBitmap_, songIdCoverGeneration_, 1.0f);
-        } else if (busy) {
-            // Pulsing rings that breathe with the live input level.
-            const float level = Clamp(sid.level, 0.0f, 1.0f);
-            target_->PushAxisAlignedClip(badge, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-            for (int i = 0; i < 3; ++i) {
-                const float phase = static_cast<float>(std::fmod(now * 0.85 + i / 3.0, 1.0));
-                const float r = badgeSz * (0.16f + 0.40f * phase);
-                accentBrush_->SetOpacity(Clamp((1.0f - phase) * (0.30f + 0.60f * level), 0.0f, 1.0f));
-                target_->DrawEllipse(D2D1::Ellipse(bc, r, r), accentBrush_.Get(), 1.6f);
-            }
-            const float dotR = badgeSz * (0.14f + 0.06f * level);
-            accentBrush_->SetOpacity(0.95f);
-            target_->FillEllipse(D2D1::Ellipse(bc, dotR, dotR), accentBrush_.Get());
-            accentBrush_->SetOpacity(1.0f);
-            target_->PopAxisAlignedClip();
-        } else if (iconFormat_) {
-            iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            textBrush_->SetOpacity(found ? 0.95f : 0.50f);
-            target_->DrawTextW(L"\uE8D6", 1, iconFormat_.Get(), badge, textBrush_.Get(),
-                               D2D1_DRAW_TEXT_OPTIONS_CLIP);
-            iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-            iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-            textBrush_->SetOpacity(0.90f);
-        }
-
-        const float tx = badge.right + 14.0f;
-        const float tr = rect.right - 14.0f;
-
-        if (found) {
-            const wchar_t* hint = sid.url.empty() ? L"Shazam" : L"Shazam  \u00b7  Tap to open";
-            mutedBrush_->SetOpacity(0.50f);
-            target_->DrawTextW(hint, static_cast<UINT32>(wcslen(hint)), smallTextFormat_.Get(),
-                               D2D1::RectF(tx, cy - 27.0f, tr, cy - 12.0f), mutedBrush_.Get(),
-                               D2D1_DRAW_TEXT_OPTIONS_CLIP);
-            textBrush_->SetOpacity(0.96f);
-            DrawMarqueeText(sid.title, D2D1::RectF(tx, cy - 12.0f, tr, cy + 6.0f), textFormat_.Get(),
-                            textBrush_.Get(), now, 34.0f, marqueeSongTitleCache_);
-            mutedBrush_->SetOpacity(0.80f);
-            DrawMarqueeText(sid.artist, D2D1::RectF(tx, cy + 6.0f, tr, cy + 22.0f),
-                            smallTextFormat_.Get(), mutedBrush_.Get(), now, 28.0f,
-                            marqueeSongArtistCache_);
-        } else {
-            std::wstring label = L"Song recognition";
-            std::wstring text;
-            if (busy) {
-                label += sid.micSource ? L"  \u00b7  Microphone" : L"  \u00b7  System audio";
-                if (sid.status == SongIdStatus::Listening) {
-                    const int remaining = std::max(
-                        0, static_cast<int>(std::ceil(sid.listenSeconds - (now - sid.startedAt))));
-                    text = remaining > 0 ? L"Listening\u2026  " + std::to_wstring(remaining) + L"s"
-                                         : std::wstring(L"Listening\u2026");
-                } else {
-                    text = L"Matching\u2026";
-                }
-            } else {
-                text = sid.message;
-            }
-
-            mutedBrush_->SetOpacity(0.50f);
-            target_->DrawTextW(label.c_str(), static_cast<UINT32>(label.size()), smallTextFormat_.Get(),
-                               D2D1::RectF(tx, cy - 18.0f, tr, cy - 4.0f), mutedBrush_.Get(),
-                               D2D1_DRAW_TEXT_OPTIONS_CLIP);
-            textBrush_->SetOpacity(0.95f);
-            DrawMarqueeText(text, D2D1::RectF(tx, cy - 4.0f, tr, cy + 12.0f), textFormat_.Get(),
-                            textBrush_.Get(), now, 34.0f, marqueeSongTitleCache_);
-
-            if (busy) {
-                const D2D1_RECT_F track = D2D1::RectF(tx, cy + 15.0f, tr, cy + 19.0f);
-                if (sid.status == SongIdStatus::Listening) {
-                    const float progress = sid.listenSeconds > 0.1f
-                        ? Clamp(static_cast<float>((now - sid.startedAt) / sid.listenSeconds), 0.0f, 1.0f)
-                        : 0.0f;
-                    DrawAccentTrack(track, progress, 2.0f);
-                } else {
-                    if (raisedStrongBrush_) {
-                        target_->FillRoundedRectangle(D2D1::RoundedRect(track, 2.0f, 2.0f),
-                                                      raisedStrongBrush_.Get());
-                    }
-                    const float tw = tr - tx;
-                    const float seg = tw * 0.32f;
-                    const float ph = static_cast<float>(std::fmod(now, 1.0));
-                    const float x0 = tx - seg + (tw + seg) * ph;
-                    const D2D1_RECT_F part = D2D1::RectF(std::max(tx, x0), track.top,
-                                                         std::min(tr, x0 + seg), track.bottom);
-                    if (part.right > part.left) {
-                        if (ID2D1SolidColorBrush* b = AcquireBrush(WithAlpha(material_.accent, 0.95f))) {
-                            target_->FillRoundedRectangle(D2D1::RoundedRect(part, 2.0f, 2.0f), b);
-                        }
-                    }
-                }
-            }
-        }
-
-        textBrush_->SetOpacity(0.90f);
-        mutedBrush_->SetOpacity(0.58f);
-    }
-
     void DrawBattery(const SharedState& state, D2D1_RECT_F rect) {
         if (rect.bottom - rect.top < 24.0f || rect.right - rect.left < 140.0f) return;
         const float cy = (rect.top + rect.bottom) * 0.5f;
@@ -22023,6 +22038,8 @@ class Renderer {
     ComPtr<ID2D1DCRenderTarget> target_;
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> textFormat_;
+    ComPtr<IDWriteTextFormat> lyricSubFormat_;
+    ComPtr<IDWriteTextFormat> lyricsPageTranslationFormat_;
     ComPtr<IDWriteTextFormat> smallTextFormat_;
     ComPtr<IDWriteTextFormat> boldTextFormat_;
     ComPtr<IDWriteTextFormat> hugeTextFormat_;
@@ -22072,10 +22089,6 @@ class Renderer {
     uint64_t clipboardImageGeneration_ = 0;
     ComPtr<ID2D1Bitmap> fileTrayIconBitmap_;
     uint64_t fileTrayIconGeneration_ = 0;
-    ComPtr<ID2D1Bitmap> songIdCoverBitmap_;
-    uint64_t songIdCoverGeneration_ = 0;
-    MarqueeLayoutCache marqueeSongTitleCache_;
-    MarqueeLayoutCache marqueeSongArtistCache_;
 
     // ── Lyrics tab state ─────────────────────────────────────────────────────
     KaraokeLayoutCache karaokeCache_;
@@ -22319,15 +22332,6 @@ Activity ActivityForKind(IslandKind kind, const Settings& settings, const Shared
             activity.width = LookupLayout::kWidth;
             activity.height = 42.0f;
             break;
-        case IslandKind::SongId:
-            if (state.songId.status == SongIdStatus::Found) {
-                activity.width = 380.0f;
-                activity.height = 78.0f;
-            } else {
-                activity.width = 310.0f;
-                activity.height = 58.0f;
-            }
-            break;
         case IslandKind::Idle:
         default:
             if (settings.autoHideIdleSeconds == -1 && !state.system.micActive && !state.system.cameraActive) {
@@ -22356,10 +22360,6 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
 
     if (settings.quickLookup && state.lookup.active && now < state.lookup.expiresAt) {
         activities.push_back(IslandKind::Lookup);
-    }
-
-    if (settings.songRecognition && state.songId.active && now < state.songId.expiresAt) {
-        activities.push_back(IslandKind::SongId);
     }
 
     if (state.clipboard.active && now < state.clipboard.expiresAt) {
@@ -22402,11 +22402,7 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
          state.timer.active)) {
         activities.push_back(IslandKind::Timer);
     }
-    // Blocklisted sources stay off the island entirely (#114). Auto-expand was
-    // already gated on MediaExpandBlocked, but with MediaAutoExpand off by
-    // default that gate never fired — so "firefox.exe" in the list looked like
-    // a no-op while the pill still switched to music mode.
-    if (settings.media && state.media.available && !MediaExpandBlocked(state.media)) {
+    if (settings.media && state.media.available) {
         activities.push_back(IslandKind::Media);
     }
 
@@ -22907,8 +22903,6 @@ void AddPathsToFileTrayCore(const std::vector<std::wstring>& paths) {
         return;
     }
 
-    g_fileTrayScroll.store(0, std::memory_order_relaxed);  // show the newest file
-
     std::lock_guard lock(g_stateMutex);
     for (auto& item : added) {
         // Re-dropping a file promotes the existing entry instead of duplicating it.
@@ -23024,8 +23018,6 @@ void AddTextToFileTray(const std::wstring& rawText) {
     item.text = std::move(text);
     item.name = preview.empty() ? std::wstring(L"Text") : preview;
 
-    g_fileTrayScroll.store(0, std::memory_order_relaxed);  // show the newest snippet
-
     std::lock_guard lock(g_stateMutex);
     auto& items = g_state.fileTrayItems;
     // Pasting the same snippet again promotes it instead of duplicating it.
@@ -23107,208 +23099,6 @@ DWORD PickTrayDropEffect(DWORD allowed) {
     return DROPEFFECT_NONE;
 }
 
-// For non-file drags (browser images / links / text). Nothing is ever deleted from
-// the source for these, so MOVE is harmless and some apps only offer it.
-DWORD PickTrayDropEffectAny(DWORD allowed) {
-    if (allowed & DROPEFFECT_COPY) return DROPEFFECT_COPY;
-    if (allowed & DROPEFFECT_LINK) return DROPEFFECT_LINK;
-    if (allowed & DROPEFFECT_MOVE) return DROPEFFECT_MOVE;
-    return DROPEFFECT_NONE;
-}
-
-// ── Non-Explorer drops (Brave / Chrome / Edge / Firefox ...) ─────────────────
-CLIPFORMAT TrayFmtFileDescriptorW() {
-    static const CLIPFORMAT f = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW"));
-    return f;
-}
-CLIPFORMAT TrayFmtFileContents() {
-    static const CLIPFORMAT f = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileContents"));
-    return f;
-}
-CLIPFORMAT TrayFmtInetUrlW() {
-    static const CLIPFORMAT f = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"UniformResourceLocatorW"));
-    return f;
-}
-
-// True when the drag carries something the tray can keep. *realFiles is set only
-// for genuine CF_HDROP files (those are never allowed to be "moved").
-bool TrayDataAcceptable(IDataObject* data, bool* realFiles) {
-    *realFiles = false;
-    if (!data) return false;
-
-    FORMATETC fmt = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-    if (data->QueryGetData(&fmt) == S_OK) {
-        *realFiles = true;
-        return true;
-    }
-    fmt.cfFormat = TrayFmtFileDescriptorW();      // images dragged out of a browser
-    if (data->QueryGetData(&fmt) == S_OK) return true;
-    fmt.cfFormat = TrayFmtInetUrlW();             // dragged links
-    if (data->QueryGetData(&fmt) == S_OK) return true;
-    fmt.cfFormat = CF_UNICODETEXT;                // dragged text selections
-    if (data->QueryGetData(&fmt) == S_OK) return true;
-    return false;
-}
-
-std::wstring SanitizeDroppedFileName(std::wstring name) {
-    name = BaseNameFromPath(name);
-    for (wchar_t& c : name) {
-        if (c < 0x20 || wcschr(L"<>:\"/\\|?*", c) != nullptr) c = L'_';
-    }
-    while (!name.empty() && (name.back() == L' ' || name.back() == L'.')) name.pop_back();
-    if (name.empty()) name = L"dropped-file";
-    if (name.size() > 120) name.resize(120);
-    return name;
-}
-
-HANDLE CreateUniqueDroppedFile(const std::wstring& dir, const std::wstring& name,
-                               std::wstring* outPath) {
-    const size_t dot = name.find_last_of(L'.');
-    const bool hasExt = dot != std::wstring::npos && dot > 0;
-    const std::wstring stem = hasExt ? name.substr(0, dot) : name;
-    const std::wstring ext = hasExt ? name.substr(dot) : std::wstring();
-
-    for (int n = 0; n < 1000; ++n) {
-        const std::wstring suffix = n ? (L" (" + std::to_wstring(n) + L")") : std::wstring();
-        const std::wstring candidate = dir + L"\\" + stem + suffix + ext;
-        HANDLE h = CreateFileW(candidate.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
-                               FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (h != INVALID_HANDLE_VALUE) {
-            *outPath = candidate;
-            return h;
-        }
-        const DWORD err = GetLastError();
-        if (err != ERROR_FILE_EXISTS && err != ERROR_ALREADY_EXISTS) break;
-    }
-    return INVALID_HANDLE_VALUE;
-}
-
-bool WriteMediumToFile(STGMEDIUM& medium, HANDLE file) {
-    constexpr uint64_t kMaxBytes = 512ull * 1024 * 1024;
-    uint64_t total = 0;
-
-    if (medium.tymed == TYMED_ISTREAM && medium.pstm) {
-        LARGE_INTEGER zero = {};
-        medium.pstm->Seek(zero, STREAM_SEEK_SET, nullptr);
-        std::vector<BYTE> buffer(64 * 1024);
-        for (;;) {
-            ULONG got = 0;
-            const HRESULT hr = medium.pstm->Read(buffer.data(), static_cast<ULONG>(buffer.size()), &got);
-            if (got > 0) {
-                DWORD written = 0;
-                if (!WriteFile(file, buffer.data(), got, &written, nullptr) || written != got) return false;
-                total += got;
-                if (total > kMaxBytes) return false;
-            }
-            if (hr != S_OK || got == 0) break;
-        }
-        return total > 0;
-    }
-
-    if (medium.tymed == TYMED_HGLOBAL && medium.hGlobal) {
-        const SIZE_T size = GlobalSize(medium.hGlobal);
-        if (size == 0 || size > kMaxBytes) return false;
-        void* src = GlobalLock(medium.hGlobal);
-        if (!src) return false;
-        DWORD written = 0;
-        const BOOL ok = WriteFile(file, src, static_cast<DWORD>(size), &written, nullptr);
-        GlobalUnlock(medium.hGlobal);
-        return ok && written == size;
-    }
-    return false;
-}
-
-// Browser images have no file on disk, so they are saved into the mod's storage
-// folder (filetray\dropped) and the saved path goes on the shelf like any file.
-bool ExtractVirtualFilePaths(IDataObject* data, std::vector<std::wstring>* out) {
-    if (!data || !out) return false;
-
-    FORMATETC descFmt = {TrayFmtFileDescriptorW(), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-    STGMEDIUM descMedium = {};
-    if (FAILED(data->GetData(&descFmt, &descMedium))) return false;
-
-    std::vector<std::wstring> names;
-    std::vector<bool> skip;
-    if (descMedium.hGlobal) {
-        const SIZE_T size = GlobalSize(descMedium.hGlobal);
-        auto* group = static_cast<FILEGROUPDESCRIPTORW*>(GlobalLock(descMedium.hGlobal));
-        if (group && size >= sizeof(UINT)) {
-            const UINT maxFit = size >= sizeof(FILEGROUPDESCRIPTORW)
-                ? static_cast<UINT>(1 + (size - sizeof(FILEGROUPDESCRIPTORW)) / sizeof(FILEDESCRIPTORW))
-                : 0;
-            const UINT count = std::min<UINT>(group->cItems, std::min<UINT>(maxFit, 16));
-            for (UINT i = 0; i < count; ++i) {
-                const FILEDESCRIPTORW& fd = group->fgd[i];
-                wchar_t nameBuf[MAX_PATH + 1] = {};
-                wcsncpy_s(nameBuf, fd.cFileName, MAX_PATH);
-                names.push_back(nameBuf);
-                skip.push_back((fd.dwFlags & FD_ATTRIBUTES) &&
-                               (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY));
-            }
-        }
-        if (group) GlobalUnlock(descMedium.hGlobal);
-    }
-    ReleaseStgMedium(&descMedium);
-    if (names.empty()) return false;
-
-    wchar_t storagePath[MAX_PATH] = {};
-    if (!Wh_GetModStoragePath(storagePath, ARRAYSIZE(storagePath))) return false;
-    const std::wstring dir = std::wstring(storagePath) + L"\\filetray\\dropped";
-    SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
-
-    for (size_t i = 0; i < names.size(); ++i) {
-        if (skip[i]) continue;
-
-        FORMATETC contentFmt = {TrayFmtFileContents(), nullptr, DVASPECT_CONTENT,
-                                static_cast<LONG>(i), TYMED_ISTREAM | TYMED_HGLOBAL};
-        STGMEDIUM content = {};
-        if (FAILED(data->GetData(&contentFmt, &content))) continue;
-
-        std::wstring savedPath;
-        HANDLE file = CreateUniqueDroppedFile(dir, SanitizeDroppedFileName(names[i]), &savedPath);
-        if (file != INVALID_HANDLE_VALUE) {
-            const bool ok = WriteMediumToFile(content, file);
-            CloseHandle(file);
-            if (ok) {
-                out->push_back(savedPath);
-            } else {
-                DeleteFileW(savedPath.c_str());
-            }
-        }
-        ReleaseStgMedium(&content);
-    }
-    return !out->empty();
-}
-
-// Dragged link or selected text -> a text snippet on the shelf.
-bool ExtractDropText(IDataObject* data, std::wstring* out) {
-    if (!data || !out) return false;
-
-    const CLIPFORMAT formats[2] = {TrayFmtInetUrlW(), CF_UNICODETEXT};
-    for (CLIPFORMAT cf : formats) {
-        FORMATETC fmt = {cf, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-        STGMEDIUM medium = {};
-        if (FAILED(data->GetData(&fmt, &medium))) continue;
-
-        std::wstring text;
-        if (medium.hGlobal) {
-            const SIZE_T maxChars = GlobalSize(medium.hGlobal) / sizeof(wchar_t);
-            const auto* p = static_cast<const wchar_t*>(GlobalLock(medium.hGlobal));
-            if (p) {
-                text.assign(p, wcsnlen_s(p, maxChars));
-                GlobalUnlock(medium.hGlobal);
-            }
-        }
-        ReleaseStgMedium(&medium);
-
-        if (!text.empty()) {
-            *out = std::move(text);
-            return true;
-        }
-    }
-    return false;
-}
-
 // Receives drags while they are still hovering, which is what lets the island
 // expand onto the File Tray *before* the drop.
 class TrayDropTarget final : public IDropTarget {
@@ -23332,10 +23122,9 @@ class TrayDropTarget final : public IDropTarget {
 
     STDMETHODIMP DragEnter(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
         accept_ = false;
-        realFiles_ = false;
         if (!g_trayInternalDrag.load() && TrayModuleEnabled() && data) {
-            // Explorer files, browser images (virtual files), links and text.
-            accept_ = TrayDataAcceptable(data, &realFiles_);
+            FORMATETC fmt = {CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+            accept_ = (data->QueryGetData(&fmt) == S_OK);
         }
 
         if (accept_) {
@@ -23349,7 +23138,7 @@ class TrayDropTarget final : public IDropTarget {
             TriggerNudge();
         }
         if (effect) {
-            *effect = accept_ ? PickEffect(*effect) : DROPEFFECT_NONE;
+            *effect = accept_ ? PickTrayDropEffect(*effect) : DROPEFFECT_NONE;
         }
         return S_OK;
     }
@@ -23359,14 +23148,13 @@ class TrayDropTarget final : public IDropTarget {
             g_idleTab = tab_;  // stay on the tray while the island expands
         }
         if (effect) {
-            *effect = accept_ ? PickEffect(*effect) : DROPEFFECT_NONE;
+            *effect = accept_ ? PickTrayDropEffect(*effect) : DROPEFFECT_NONE;
         }
         return S_OK;
     }
 
     STDMETHODIMP DragLeave() override {
         accept_ = false;
-        realFiles_ = false;
         g_trayDragOver = false;
         g_layoutDirty = true;
         return S_OK;
@@ -23374,29 +23162,11 @@ class TrayDropTarget final : public IDropTarget {
 
     STDMETHODIMP Drop(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
         std::vector<std::wstring> paths;
-        std::wstring text;
-        bool gotFiles = false;
-        bool gotText = false;
-
-        if (accept_ && data) {
-            gotFiles = ExtractDropPaths(data, &paths);               // Explorer
-            if (!gotFiles) {
-                paths.clear();
-                gotFiles = ExtractVirtualFilePaths(data, &paths);    // browser images
-            }
-            if (!gotFiles) {
-                gotText = ExtractDropText(data, &text);              // links / text
-            }
-        }
+        const bool ok = accept_ && ExtractDropPaths(data, &paths);
         accept_ = false;
 
-        if (gotFiles || gotText) {
-            if (gotFiles) {
-                AddPathsToFileTray(paths);
-            } else {
-                AddTextToFileTray(text);
-                SaveFileTray();
-            }
+        if (ok) {
+            AddPathsToFileTray(paths);
             const int tab = FileTrayTabIndex(GetSettingsCopy());
             if (tab >= 0) {
                 g_idleTab = tab;
@@ -23404,25 +23174,17 @@ class TrayDropTarget final : public IDropTarget {
             g_clickExpanded = true;
             g_layoutDirty = true;
             TriggerNudge();
-            if (effect) *effect = PickEffect(*effect);
+            if (effect) *effect = PickTrayDropEffect(*effect);
         } else if (effect) {
             *effect = DROPEFFECT_NONE;
         }
-        realFiles_ = false;
         g_trayDragOver = false;
         return S_OK;
     }
 
    private:
-    // Real files are never "moved" (the source would delete them); browser
-    // content has nothing to delete, so any effect is fine there.
-    DWORD PickEffect(DWORD allowed) const {
-        return realFiles_ ? PickTrayDropEffect(allowed) : PickTrayDropEffectAny(allowed);
-    }
-
     std::atomic<LONG> refs_{1};
     bool accept_ = false;
-    bool realFiles_ = false;
     int tab_ = -1;
 };
 
@@ -23835,8 +23597,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         s_trayPressPt.x = xPos;
                         s_trayPressPt.y = yPos;
                         s_trayPressPath =
-                            g_state.fileTrayItems[static_cast<size_t>(
-                                count - 1 - (row + FileTrayScrollOffset(count)))].path;
+                            g_state.fileTrayItems[static_cast<size_t>(count - 1 - row)].path;
                     }
                 }
 
@@ -23963,13 +23724,10 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 }
                 const MediaContentPoint trayPt = MediaContentFromClient(xPos, yPos);
                 hoveredRow = FileTrayRowAtContentPoint(trayPt, static_cast<int>(trayCount));
-                const int pagerHit = FileTrayPagerHitTest(trayPt, static_cast<int>(trayCount));
                 if (trayCount > 0 && FileTrayClearHitTest(trayPt)) {
                     hoveredAction = -2;
                 } else if (FileTrayPasteHitTest(trayPt)) {
                     hoveredAction = -3;
-                } else if (pagerHit >= 0) {
-                    hoveredAction = pagerHit == 0 ? -4 : -5;
                 } else if (hoveredRow >= 0 && FileTrayRemoveHitTest(trayPt, hoveredRow)) {
                     hoveredAction = hoveredRow;
                 }
@@ -24095,13 +23853,6 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     kinds = ChooseActivities(g_state, g_settings, NowSeconds());
                 }
 
-                // Song recognition card: open the track when found, otherwise dismiss / cancel.
-                if (!kinds.empty() && kinds[0] == IslandKind::SongId) {
-                    HandleSongIdClick();
-                    TriggerNudge();
-                    return 0;
-                }
-
                 // Clicking an active transient notification or clipboard card immediately dismisses it cleanly.
                 // In a split layout (kinds.size() > 1), don't dismiss if clicking on the secondary pill on the right.
                 const bool onSecondarySplit = (kinds.size() > 1 && g_pillClientRect.valid &&
@@ -24149,21 +23900,6 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     const bool wasPressed = s_trayPressActive;
                     s_trayPressActive = false;
 
-                    {
-                        int pagerCount = 0;
-                        {
-                            std::lock_guard lock(g_stateMutex);
-                            pagerCount = static_cast<int>(g_state.fileTrayItems.size());
-                        }
-                        const int pagerHit = FileTrayPagerHitTest(cp, pagerCount);
-                        if (pagerHit >= 0) {
-                            FileTrayPageBy(pagerCount, pagerHit == 0 ? -1 : 1);
-                            g_hoveredFileTrayRow = -1;
-                            g_layoutDirty = true;
-                            return 0;
-                        }
-                    }
-
                     if (FileTrayPasteHitTest(cp)) {
                         PasteIntoFileTray(hwnd);
                         g_layoutDirty = true;
@@ -24182,9 +23918,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         } else {
                             const int row = FileTrayRowAtContentPoint(cp, count);
                             if (row >= 0) {
-                                // Rows render newest-first and may be scrolled, so map back from the end.
-                                const size_t index = static_cast<size_t>(
-                                    count - 1 - (row + FileTrayScrollOffset(count)));
+                                // Rows render newest-first, so map back from the end.
+                                const size_t index = static_cast<size_t>(count - 1 - row);
                                 if (FileTrayRemoveHitTest(cp, row)) {
                                     g_state.fileTrayItems.erase(
                                         g_state.fileTrayItems.begin() + static_cast<std::ptrdiff_t>(index));
@@ -24307,57 +24042,6 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
             if (delta == 0) return 0;
 
-            // File Tray: with the cursor over the list, the wheel scrolls it row by row.
-            // At the top / bottom edge the list swallows leftover inertia of the same
-            // gesture; a fresh gesture there falls through and switches tabs as usual.
-            // Over the header or the pagination dots the wheel always switches tabs.
-            if (g_fileTrayWheelOn.load(std::memory_order_relaxed) &&
-                g_settings.fileTrayModule &&
-                NormalizedTabIndex(g_settings) == FileTrayTabIndex(g_settings)) {
-                POINT wheelPt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
-                ScreenToClient(hwnd, &wheelPt);
-                const MediaContentPoint wheelCp = MediaContentFromClient(wheelPt.x, wheelPt.y);
-
-                int trayCount = 0;
-                {
-                    std::lock_guard lock(g_stateMutex);
-                    trayCount = static_cast<int>(g_state.fileTrayItems.size());
-                }
-
-                if (trayCount > FileTrayRestCapacity() && FileTrayListHitTest(wheelCp)) {
-                    static int s_trayWheelAccum = 0;
-                    static ULONGLONG s_trayGestureTick = 0;
-
-                    const int dir = delta > 0 ? -1 : 1;  // wheel up = toward the newest files
-                    const int offset = FileTrayScrollOffset(trayCount);
-                    const bool canScroll =
-                        dir < 0 ? offset > 0 : offset < FileTrayMaxScroll(trayCount);
-
-                    if (canScroll) {
-                        s_trayGestureTick = wheelNow;
-                        if (s_trayWheelAccum != 0 && ((delta > 0) != (s_trayWheelAccum > 0))) {
-                            s_trayWheelAccum = 0;
-                        }
-                        s_trayWheelAccum += delta;
-                        const int steps = abs(s_trayWheelAccum) / WHEEL_DELTA;
-                        if (steps > 0) {
-                            s_trayWheelAccum -=
-                                (s_trayWheelAccum > 0 ? 1 : -1) * steps * WHEEL_DELTA;
-                            FileTrayScrollBy(trayCount, dir * steps);
-                            g_hoveredFileTrayRow = FileTrayRowAtContentPoint(wheelCp, trayCount);
-                            g_hoveredFileTrayAction = -1;
-                            g_layoutDirty = true;
-                        }
-                        return 0;
-                    }
-                    if (wheelNow - s_trayGestureTick < 300) {
-                        s_trayGestureTick = wheelNow;  // inertia of the gesture that hit the edge
-                        return 0;
-                    }
-                    s_trayWheelAccum = 0;  // fresh gesture at the edge: fall through to tab switching
-                }
-            }
-
             // New gesture (pause, or direction change): forget the leftover.
             if (wheelNow - s_lastWheelEvent > 220 ||
                 (s_wheelAccum != 0 && ((delta > 0) != (s_wheelAccum > 0)))) {
@@ -24399,10 +24083,6 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         case WM_HOTKEY: {
             if (wParam == ID_LOOKUP_HOTKEY) {
                 StartQuickLookup(hwnd);
-                return 0;
-            }
-            if (wParam == ID_SONGID_HOTKEY) {
-                StartSongRecognition(hwnd);
                 return 0;
             }
             if (wParam == ID_HIDE_SHOW_HOTKEY) {
@@ -24801,8 +24481,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool pinned = g_pinnedExpanded.load();
 
         if (primary.kind != previousPrimary) {
-            if (primary.kind != IslandKind::Idle &&
-                !(g_settings.stripMode && primary.kind == IslandKind::Media)) {
+            if (primary.kind != IslandKind::Idle) {
                 nudgeSpring.value = -6.0f;
                 nudgeSpring.velocity = 0.0f;
                 nudgeSpring.target = 0.0f;
@@ -24830,22 +24509,7 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         bool hover = false;
         if (widthSpring.value > 1.0f && heightSpring.value > 1.0f) {
-            RECT hoverRect = pillRect;
-            if (g_settings.stripMode) {
-                // Padding follows the chosen sensitivity while the island is still strip-sized,
-                // and eases back to the Medium margin as it opens so it can't flicker shut mid-expand.
-                const float stripH = StripModeLayout::kHeight * g_settings.sizeScale;
-                const float openH = MediaLayout::kExpandedHeight * g_settings.sizeScale;
-                const float openT = Clamp((heightSpring.value - stripH) / std::max(1.0f, openH - stripH), 0.0f, 1.0f);
-                const float padMul = StripModeLayout::HoverPadScale(g_settings.stripSensitivity) * (1.0f - openT) + openT;
-                const int padX = static_cast<int>(std::lround(StripModeLayout::kHoverPadX * g_settings.sizeScale * padMul));
-                const int padY = static_cast<int>(std::lround(StripModeLayout::kHoverPadY * g_settings.sizeScale * padMul));
-                hoverRect.left -= padX;
-                hoverRect.right += padX;
-                hoverRect.top -= padY;
-                hoverRect.bottom += padY;
-            }
-            hover = PtInRect(&hoverRect, cursor) != FALSE;
+            hover = PtInRect(&pillRect, cursor) != FALSE;
         } else if (g_settings.unhideOnHover) {
             RECT dockRect = GetIslandDockRect();
             hover = PtInRect(&dockRect, cursor) != FALSE;
@@ -24890,7 +24554,6 @@ DWORD WINAPI RenderThreadProc(void*) {
                                  primary.kind == IslandKind::Bluetooth ||
                                  primary.kind == IslandKind::DoNotDisturb ||
                                  primary.kind == IslandKind::Lookup ||
-                                 primary.kind == IslandKind::SongId ||
                                  recentTrackChange);
 
         const bool unhideGraceActive = (now < g_hotkeyUnhideUntil.load());
@@ -24960,10 +24623,6 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool camIndicatorActive = snapshot.system.cameraActive && g_settings.privacyDots && g_settings.privacyDotsCam;
         const bool privacyActive = micIndicatorActive || camIndicatorActive;
 
-        // Strip mode: rest as a thin strip unless something needs the full island.
-        const bool stripActive = g_settings.stripMode && !hover && !pinned && !isTransientAlert &&
-                                 !privacyActive && !snapshot.timer.justFinished;
-
         // Whether any surface that actually draws CPU / RAM / disk / GPU / network
         // figures is on screen: the in-game overlay, or the idle dashboard's
         // Hardware Monitor tab while expanded (hovered or pinned) and scrolled into
@@ -24976,7 +24635,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool onHardwareMonitorTab = (metricTabIdx == HardwareMonitorTabIndex(g_settings));
         const bool hwMonitorVisible = (primary.kind == IslandKind::Idle || primary.kind == IslandKind::Media) &&
             !isFullscreen && !gameMetricsPresent && (pinned || isHoverExpanded) && onHardwareMonitorTab;
-        const bool gameOverlayVisible = gameMetricsPresent && !isFullscreen && !stripActive;
+        const bool gameOverlayVisible = gameMetricsPresent && !isFullscreen;
         const bool systemMetricsVisible = hwMonitorVisible || gameOverlayVisible;
 
         if (g_settings.brightness && !pollBusy && now >= nextBrightnessPoll) {
@@ -24984,7 +24643,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             nextBrightnessPoll = now + 0.25;
         }
 
-        if (!pollBusy && !stripActive && now >= nextSystemPoll) {
+        if (!pollBusy && now >= nextSystemPoll) {
             const bool needGpuStats = gameOverlayVisible || hwMonitorVisible;
             const bool needNetStats = hwMonitorVisible;  // net is only ever drawn in the HW dashboard
 
@@ -25038,16 +24697,29 @@ DWORD WINAPI RenderThreadProc(void*) {
                     ? renderer.MeasureMediaPill(snapshot, g_settings).sectionWidth
                     : 0.0f;
                 if (CollapsedLyricsActive(snapshot, g_settings)) {
-                    // Collapsed but carrying lyrics: wider pill, same height.
-                    primary.width = (kCollapsedLyricsWidth + clockSection) * g_settings.sizeScale;
+                    // Collapsed but carrying lyrics. Dynamic mode follows the
+                    // current line (plus its translation), fixed mode applies the
+                    // user's total pill width. Both are clamped to the walkable
+                    // stage range; long lines pan instead of widening forever.
+                    const bool privacy =
+                        snapshot.system.micActive || snapshot.system.cameraActive;
+                    float pillWidth = static_cast<float>(g_settings.lyricWidth);
+                    if (g_settings.dynamicLyricWidth) {
+                        const float lyricWidth =
+                            renderer.MeasureCollapsedLyricWidth(snapshot, g_settings);
+                        const float chrome = CollapsedLyricLayout::Chrome(clockSection, privacy);
+                        pillWidth = chrome + std::max(0.0f, lyricWidth);
+                        pillWidth = std::ceil(pillWidth / CollapsedLyricLayout::kWidthQuantum) *
+                                    CollapsedLyricLayout::kWidthQuantum;
+                    }
+                    const float minWidth = CollapsedLyricLayout::kMinWidth + clockSection +
+                                           (privacy ? CollapsedLyricLayout::kPrivacyShift : 0.0f);
+                    pillWidth = Clamp(pillWidth, minWidth, CollapsedLyricLayout::kMaxWidth);
+                    primary.width = pillWidth * g_settings.sizeScale;
                 } else if (g_settings.mediaPillClock) {
                     primary.width = (MediaPillLayout::kBaseWidth + clockSection) * g_settings.sizeScale;
                 }
             }
-        }
-
-        if (primary.kind == IslandKind::SongId) {
-            secondary.reset();  // no split layout next to the recognition card
         }
 
         if (primary.kind == IslandKind::Lookup) {
@@ -25060,12 +24732,6 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
         }
 
-        if (stripActive && primary.width > 0.0f) {
-            primary.width = StripModeLayout::kWidth * g_settings.sizeScale;
-            primary.height = StripModeLayout::kHeight * g_settings.sizeScale;
-            secondary.reset();
-        }
-
         const bool fullscreenSuppressed =
             isFullscreen && !g_fullscreenOverrideVisible.load(std::memory_order_relaxed);
         if ((isHidden || fullscreenSuppressed) && !privacyActive && !pinned && !isHoverExpanded && !isTransientAlert) {
@@ -25075,7 +24741,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         }
 
         const bool mediaWaveformVisible =
-            g_settings.media && snapshot.media.playing && !stripActive &&
+            g_settings.media && snapshot.media.playing &&
             ((primary.kind == IslandKind::Media && primary.width > 1.0f && primary.height > 1.0f) ||
              (secondary && secondary->kind == IslandKind::Media && secondary->width > 1.0f && secondary->height > 1.0f));
         g_audioCaptureNeeded.store(mediaWaveformVisible, std::memory_order_relaxed);
@@ -25172,8 +24838,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool ctrlHeld = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
         const bool ctrlHoverCT = hover && ctrlHeld && !g_lookupUi.open;
 
-        SetClickThrough(hwnd, (primary.kind == IslandKind::Idle && !draggingOrHover && !pinned) ||
-                                  stripActive || ctrlHoverCT);
+        SetClickThrough(hwnd, (primary.kind == IslandKind::Idle && !draggingOrHover && !pinned) || ctrlHoverCT);
 
         // Check if animating structurally
         if (std::abs(widthSpring.velocity) > 0.01f || std::abs(widthSpring.target - widthSpring.value) > 0.01f ||
@@ -25274,7 +24939,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool mediaShown = primary.kind == IslandKind::Media ||
                                 (secondary && secondary->kind == IslandKind::Media);
         const bool mediaAnimating =
-            mediaShown && !stripActive && (snapshot.media.playing || isHoverExpanded || pinned);
+            mediaShown && (snapshot.media.playing || isHoverExpanded || pinned);
 
         // Transient alert pills. All expire within a few seconds, so treating them as
         // continuous cannot run away.
@@ -25291,9 +24956,8 @@ DWORD WINAPI RenderThreadProc(void*) {
         };
         const bool countdownBarsOn = g_settings.statusCountdownProgress;
 
-        const bool songIdAnimating = primary.kind == IslandKind::SongId;
         const bool continuousAnimation =
-            mediaAnimating || songIdAnimating || isTransientPill(primary.kind) ||
+            mediaAnimating || isTransientPill(primary.kind) ||
             (secondary && isTransientPill(secondary->kind)) ||
             (countdownBarsOn && (hasCountdownBar(primary.kind) ||
                                  (secondary && hasCountdownBar(secondary->kind))));
@@ -25308,9 +24972,9 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         // Idle dashboard clock changes once a minute
         static SYSTEMTIME prevTime = {};
-        const bool clockOnScreen = !stripActive &&
-            (primary.kind == IslandKind::Idle ||
-             (primary.kind == IslandKind::Media && g_settings.mediaPillClock));
+        const bool clockOnScreen =
+            primary.kind == IslandKind::Idle ||
+            (primary.kind == IslandKind::Media && g_settings.mediaPillClock);
         if (clockOnScreen && !isHidden) {
             SYSTEMTIME local = {};
             GetLocalTime(&local);
@@ -25339,7 +25003,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         int shownSecond = -1;
         const bool timerShown = primary.kind == IslandKind::Timer ||
                                (secondary && secondary->kind == IslandKind::Timer);
-        if (timerShown && !stripActive && snapshot.timer.running) {
+        if (timerShown && snapshot.timer.running) {
             shownSecond = static_cast<int>(std::ceil(snapshot.timer.endsAt - now));
         } else if (clockOnScreen && g_settings.showSeconds && !isHidden) {
             SYSTEMTIME st = {};
@@ -25519,8 +25183,9 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         if (!needsRender) {
             // Nothing changed on screen, so poll at ~60Hz rather than the target
-            // frame rate. A settled strip only needs to notice the cursor, so ~20Hz.
-            WaitForSingleObject(g_stopEvent, (stripActive && !springsAnimating) ? 50 : 16);
+            // frame rate. Accuracy does not matter here -- this is a poll interval,
+            // not frame pacing -- so it runs at whatever resolution is in effect.
+            WaitForSingleObject(g_stopEvent, 16);
             nextFrameTarget = std::chrono::steady_clock::now();
         } else if (springsAnimating && g_settings.targetFps <= 0 && SUCCEEDED(DwmFlush())) {
             // Auto FPS while the island is resizing: block until DWM's next
