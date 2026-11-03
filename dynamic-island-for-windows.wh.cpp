@@ -1,6 +1,6 @@
 // ==WindhawkMod==
-// @id              dynamic-island-for-windows-fork
-// @name            Dynamic Island for Windows - Fork
+// @id              dynamic-island-for-windows
+// @name            Dynamic Island for Windows
 // @description     A living, breathing pill overlay inspired by iPhone's Dynamic Island. Reacts to media, downloads, clipboard, battery, and more.
 // @version         1.5.0
 // @author          Himanshu
@@ -104,7 +104,6 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color sampling, reorganized settings, and addressed various UI/media edge cases.
 - **[David Ravelo (DavidRaveloU) @GitHub](https://github.com/DavidRaveloU)**: Added selectable audio spectrum styles with a live frequency analyzer, new progress bar styles, optional track-change animations for the title, cover flip, playback controls and pill cover spin, an optional clock in the collapsed media pill, and a brightness slider flyout.
 - **[Retr0dev-jpg @GitHub](https://github.com/Retr0dev-jpg)**: Event-driven volume flyout with animated bar and default device switching, plus a calendar that follows the Windows locale for weekday initials and first day of the week (with a Monday/Sunday override).
-- **Apple_Music_Dynamic_Lyrics**: Reference protocol for the NetEase Cloud Music and QQ Music lyric providers, ported from Python to C++ for this fork.
 
 ### 🤝 Contributing
 We love community contributions! To ensure high-quality updates, please follow these rules:
