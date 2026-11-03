@@ -377,9 +377,30 @@ We love community contributions! To ensure high-quality updates, please follow t
   - MediaAutoExpand: false
     $name: Auto-expand on track change
     $description: Automatically expand the island when a new song or video starts playing. If disabled, album art updates smoothly in the collapsed pill without unprompted expansion.
+  - MediaExpandHoldSeconds: '5'
+    $name: Auto-expand hold time (seconds)
+    $description: How long the island stays expanded after a track change, in seconds (1 to 60). Raise it when the track-change animation finishes before the island has finished opening.
+  - MediaTrackChangeAnim: false
+    $name: Play the track-change animation after opening
+    $description: When the island expands because a new track started, the cover flip and the title swap used to be skipped because the card was not on screen yet when the track changed. With this on, that transition is held back and then played in full once the island has finished opening. Off by default.
+  - MediaTrackChangeAnimDelayMs: '400'
+    $name: Track-change animation delay (milliseconds)
+    $description: How long to wait after a track change before the held-back cover flip and title swap start, in milliseconds (0 to 1500). Raise it if the animation still starts before the island has finished opening. Only used when "Play the track-change animation after opening" is on.
   - MediaPillClock: false
     $name: Show clock in the collapsed media pill
     $description: While media is playing, the collapsed pill also shows the current time on the left, separated from the album cover by a thin divider. Hovering still opens the normal player. Uses the same 12h/24h and seconds options as the clock below. Off by default.
+  - MediaPillTitle: false
+    $name: Show the track title in the collapsed pill
+    $description: Shows the current track title in the collapsed pill, between the cover and the visualiser. The pill is sized to the title so it never scrolls, and no lyrics are fetched or shown there. Off by default.
+  - MediaPillTitlePad: '12'
+    $name: Title gap in the collapsed pill
+    $description: Empty space kept on each side of the title, in pixels (0 to 60). The pill width is the title plus twice this value, so both gaps stay equal.
+  - MediaPillTitleMode: title
+    $name: Collapsed pill title style
+    $description: What the collapsed pill shows once the track title option above is on. Title only is a single centred line. Title and artist stacks the artist under the title. Either way the pill is measured from the real text, so nothing scrolls and no lyrics are fetched.
+    $options:
+      - title: Title only
+      - title-artist: Title and artist
   - Volume: true
     $name: Volume slider flyout
     $description: Shows a volume slider banner on the island when adjusting system volume. Disable if you prefer the default Windows volume flyout.
@@ -922,6 +943,16 @@ namespace MediaPillLayout {
     constexpr float kDividerWidth = 1.0f;
     constexpr float kDividerInsetY = 10.0f;
     constexpr float kWidthQuantum = 2.0f;
+
+    // Collapsed pill sized to the track title (Modules.MediaPillTitle): cover,
+    // title, visualiser, with the same padding on each side of the title. The
+    // chrome numbers mirror what DrawMedia uses for the collapsed pill.
+    constexpr float kTitleArtPad = 6.0f;      // pill left edge -> cover
+    constexpr float kTitleArtSize = 32.0f;    // kCollapsedPillHeight - 2 * kTitleArtPad
+    constexpr float kTitleWaveWidth = 28.0f;  // visualiser: right - 42 .. right - 14
+    constexpr float kTitleWaveInset = 14.0f;  // visualiser -> pill right edge
+    constexpr float kTitleMaxText = 420.0f;   // longest title the pill will reserve
+    constexpr float kTitleMaxWidth = 620.0f;  // hard cap on the whole pill
 }
 
 // Layout for the game overlay strip. The size the island animates to is decided
@@ -1225,6 +1256,9 @@ struct Settings {
     float animationSpeed = 1.0f;
     bool media = true;
     bool mediaAutoExpand = false;
+    int mediaExpandHoldSeconds = 5;   // Modules.MediaExpandHoldSeconds, seconds expanded
+    bool mediaTrackChangeAnim = false;      // Modules.MediaTrackChangeAnim
+    int mediaTrackChangeAnimDelayMs = 400;  // Modules.MediaTrackChangeAnimDelayMs
     bool clipboard = true;
     bool statusCountdownProgress = false;
     bool battery = true;
@@ -1328,6 +1362,9 @@ struct Settings {
     bool clockFollowSystem = true;
     std::wstring dateFormat;        // empty = locale default
     bool mediaPillClock = false;    // show the clock inside the collapsed media pill
+    bool mediaPillTitle = false;    // collapsed pill shows the track title, sized to it
+    bool mediaPillTitleArtist = false;  // Modules.MediaPillTitleMode: artist under the title
+    int mediaPillTitlePad = 12;     // Modules.MediaPillTitlePad, px on each side of the title
     bool dateFirst = false;
     int firstDayOfWeek = -1;        // 0 = Sunday .. 6 = Saturday, -1 = follow Windows
 
@@ -3152,6 +3189,16 @@ void LoadSettings() {
 
     next.media = Wh_GetIntSetting(L"Modules.Media") != 0;
     next.mediaAutoExpand = Wh_GetIntSetting(L"Modules.MediaAutoExpand") != 0;
+    {
+        const std::wstring holdStr = GetStringSettingCopy(L"Modules.MediaExpandHoldSeconds");
+        next.mediaExpandHoldSeconds = holdStr.empty() ? 5 : ClampInt(_wtoi(holdStr.c_str()), 1, 60);
+    }
+    next.mediaTrackChangeAnim = Wh_GetIntSetting(L"Modules.MediaTrackChangeAnim") != 0;
+    {
+        const std::wstring delayStr = GetStringSettingCopy(L"Modules.MediaTrackChangeAnimDelayMs");
+        next.mediaTrackChangeAnimDelayMs =
+            delayStr.empty() ? 400 : ClampInt(_wtoi(delayStr.c_str()), 0, 1500);
+    }
     next.volume = Wh_GetIntSetting(L"Modules.Volume") != 0;
     if (!next.volume) {
         std::lock_guard lock(g_stateMutex);
@@ -3282,6 +3329,18 @@ void LoadSettings() {
         next.firstDayOfWeek = -1;
     }
     next.mediaPillClock = Wh_GetIntSetting(L"Modules.MediaPillClock") != 0;
+    next.mediaPillTitle = Wh_GetIntSetting(L"Modules.MediaPillTitle") != 0;
+    {
+        // Two flavours of the collapsed pill: the title alone, or the title with
+        // the artist stacked under it (what PR #118's MediaPillMeta aimed at).
+        // Both are measured from the real text, so neither ever scrolls.
+        const std::wstring titleMode = GetStringSettingCopy(L"Modules.MediaPillTitleMode");
+        next.mediaPillTitleArtist = EqualsNoCase(titleMode, L"title-artist");
+    }
+    {
+        const std::wstring padStr = GetStringSettingCopy(L"Modules.MediaPillTitlePad");
+        next.mediaPillTitlePad = padStr.empty() ? 12 : ClampInt(_wtoi(padStr.c_str()), 0, 60);
+    }
 
     // ── Localization (#35) ───────────────────────────────────────────────────
     {
@@ -12965,7 +13024,8 @@ constexpr float kCollapsedLyricsWidth = 320.0f;
 bool CollapsedLyricsActive(const SharedState& state, const Settings& settings) {
     // Stays wide for as long as media is available. If there are no lyrics to
     // show, DrawCollapsedLyrics shows the media title instead.
-    return settings.collapsedLyrics && settings.media && state.media.available;
+    return settings.collapsedLyrics && settings.media && state.media.available &&
+           !settings.mediaPillTitle;
 }
 
 // One pre-built lyric line. Built once when the line changes, then reused every
@@ -13344,6 +13404,43 @@ class Renderer {
         return metrics;
     }
 
+    // Collapsed pill sized to the track title (Modules.MediaPillTitle). The width
+    // is measured from the very layout DrawCollapsedTitle paints, so the space
+    // reserved and the text drawn cannot disagree: cover, then the title with an
+    // equal gap on each side, then the visualiser.
+    float MeasureCollapsedTitle(const SharedState& state, const Settings& settings) {
+        EnsureTextFormats(settings.sizeScale, settings.fontFamily, settings.textScale);
+        if (!textFormat_) {
+            return MediaPillLayout::kBaseWidth;
+        }
+
+        const std::wstring title = CollapsedTitleText(state);
+        float titleWidth = std::min(TitleFitWidth(title), MediaPillLayout::kTitleMaxText);
+        // Title + artist: the longer of the two lines sets the box, so the
+        // shorter one stays centred and neither line has to scroll.
+        if (settings.mediaPillTitleArtist && !state.media.artist.empty()) {
+            const float artistWidth =
+                std::min(ArtistFitWidth(state.media.artist), MediaPillLayout::kTitleMaxText);
+            titleWidth = std::max(titleWidth, artistWidth);
+        }
+        const float pad = static_cast<float>(ClampInt(settings.mediaPillTitlePad, 0, 60));
+
+        float total = MediaPillLayout::kTitleArtPad + MediaPillLayout::kTitleArtSize + pad +
+                      titleWidth + pad + MediaPillLayout::kTitleWaveInset +
+                      MediaPillLayout::kTitleWaveWidth;
+        if (settings.mediaPillClock) {
+            total += MeasureMediaPill(state, settings).sectionWidth;
+        }
+        // DrawMedia moves the visualiser 22px left while a privacy dot is up, so
+        // the title box shrinks by the same amount. Mirror it here or the text
+        // would be clipped for as long as the dot shows.
+        if (state.system.micActive || state.system.cameraActive) {
+            total += 22.0f;
+        }
+        total = std::ceil(total / MediaPillLayout::kWidthQuantum) * MediaPillLayout::kWidthQuantum;
+        return Clamp(total, MediaPillLayout::kBaseWidth, MediaPillLayout::kTitleMaxWidth);
+    }
+
    private:
     // Keyed on the string alone. EnsureTextFormats invalidates both caches
     // whenever it rebuilds the formats, so a cached width can never outlive the
@@ -13356,6 +13453,39 @@ class Renderer {
     };
     TextWidthCache idleClockWidthCache_;
     TextWidthCache idleWeatherWidthCache_;
+
+    // One cached layout for the collapsed title, shared by the sizer and the
+    // painter, so the pill is never sized for a different string than it draws.
+    CollapsedLyricLine collapsedTitleFit_;
+    CollapsedLyricLine collapsedArtistFit_;
+
+    std::wstring CollapsedTitleText(const SharedState& state) {
+        if (!state.media.title.empty()) {
+            return state.media.title;
+        }
+        if (!state.media.sourceName.empty()) {
+            return state.media.sourceName;
+        }
+        return std::wstring(Loc(L"Media"));
+    }
+
+    float TitleFitWidth(const std::wstring& title) {
+        if (collapsedTitleFit_.text != title || !collapsedTitleFit_.layout) {
+            BuildCollapsedLyricLine(collapsedTitleFit_, title, textFormat_.Get());
+        }
+        return collapsedTitleFit_.width;
+    }
+
+    // Same idea for the artist line (Modules.MediaPillTitleMode = title-artist).
+    float ArtistFitWidth(const std::wstring& artist) {
+        if (!smallTextFormat_) {
+            return 0.0f;
+        }
+        if (collapsedArtistFit_.text != artist || !collapsedArtistFit_.layout) {
+            BuildCollapsedLyricLine(collapsedArtistFit_, artist, smallTextFormat_.Get());
+        }
+        return collapsedArtistFit_.width;
+    }
 
     float MeasureTextWidthCached(const std::wstring& text, IDWriteTextFormat* fmt,
                                  TextWidthCache& cache) {
@@ -13459,6 +13589,10 @@ class Renderer {
         // width measured against the old ones is stale.
         idleClockWidthCache_.valid = false;
         idleWeatherWidthCache_.valid = false;
+        collapsedTitleFit_.layout.Reset();
+        collapsedTitleFit_.text.clear();
+        collapsedArtistFit_.layout.Reset();
+        collapsedArtistFit_.text.clear();
 
         textFormat_ = nullptr;
         smallTextFormat_ = nullptr;
@@ -17056,6 +17190,13 @@ class Renderer {
 
         expandedAnim_ = settings.expandedMediaAnim;
         pillCoverAnim_ = settings.pillCoverAnim;
+        trackChangeAnim_ = settings.mediaTrackChangeAnim;
+        trackChangeAnimDelayMs_ = settings.mediaTrackChangeAnimDelayMs;
+        // The held-back transition only makes sense for a change that just
+        // happened; opening the card minutes later must not replay an old swap.
+        constexpr double kTrackAnimWindow = 2.5;
+        trackAnimEligible_ = trackChangeAnim_ && state.media.titleChangedAt > 0.0 &&
+                             (now - state.media.titleChangedAt) <= kTrackAnimWindow;
 
         // The old side panel is replaced by the immersive lyrics view, so the island never widens.
         const bool sideLyricsOn = false;
@@ -17476,6 +17617,18 @@ class Renderer {
                     const float dotX = waveRect.left + i * (barWidth + gap) + barWidth * 0.5f;
                     target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, cy), 1.2f, 1.2f), mutedBrush_.Get());
                 }
+            }
+
+            // Title-only collapsed pill (Modules.MediaPillTitle). Centred between
+            // the cover and the visualiser with the same gap on each side; the
+            // island is sized to the title, so this never has to scroll.
+            if (settings.mediaPillTitle && settings.media && state.media.available) {
+                const float titlePad =
+                    static_cast<float>(ClampInt(settings.mediaPillTitlePad, 0, 60));
+                DrawCollapsedTitle(state,
+                                   D2D1::RectF(artRect.right + titlePad, rect.top,
+                                               waveRect.left - titlePad, rect.bottom),
+                                   settings.mediaPillTitleArtist);
             }
 
             // Lyrics between the album art and the visualiser. Fades in as the
@@ -18209,6 +18362,64 @@ class Renderer {
     }
 
     // Builds the cached layout for one lyric line.
+    // Collapsed pill title (Modules.MediaPillTitle): one static line, centred
+    // between the cover and the visualiser with the same gap on both sides. The
+    // island is sized to it, so it never scrolls; if a title reaches the width cap
+    // the box crops it symmetrically instead of running it off the island.
+    void DrawCollapsedTitle(const SharedState& state, D2D1_RECT_F area, bool showArtist) {
+        IDWriteTextFormat* fmt = textFormat_.Get();
+        if (!fmt || !dwriteFactory_) {
+            return;
+        }
+        const std::wstring title = CollapsedTitleText(state);
+        const float width = TitleFitWidth(title);
+        if (!collapsedTitleFit_.layout) {
+            return;
+        }
+        const float availW = area.right - area.left;
+        if (availW <= 1.0f) {
+            return;
+        }
+        // Title + artist: the artist takes a second line inside the same
+        // centred box, so both lines stay symmetric inside the pill.
+        const bool hasArtist = showArtist && !state.media.artist.empty();
+        float artistWidth = 0.0f;
+        if (hasArtist) {
+            artistWidth = ArtistFitWidth(state.media.artist);
+            if (!collapsedArtistFit_.layout) {
+                return;
+            }
+        }
+
+        const float cy = (area.top + area.bottom) * 0.5f;
+        const float titleH = collapsedTitleFit_.height;
+        const float artistH = hasArtist ? collapsedArtistFit_.height : 0.0f;
+        const float blockH = titleH + artistH;
+        const float areaH = area.bottom - area.top;
+        // Centre the stack. With a large Text size the two lines can outgrow the
+        // 44px pill, so hang them from the top instead of letting the clip eat
+        // the title and leave only the artist.
+        const float top = (blockH > areaH) ? area.top : cy - blockH * 0.5f;
+
+        // Centred in the box, which is itself symmetric between cover and
+        // visualiser, so the two gaps come out equal.
+        const float titleX = area.left + (availW - width) * 0.5f;
+
+        target_->PushAxisAlignedClip(area, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        textBrush_->SetOpacity(0.96f);
+        target_->DrawTextLayout(D2D1::Point2F(titleX, top), collapsedTitleFit_.layout.Get(),
+                                textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        if (hasArtist && mutedBrush_) {
+            mutedBrush_->SetOpacity(0.72f);
+            const float artistX = area.left + (availW - artistWidth) * 0.5f;
+            target_->DrawTextLayout(D2D1::Point2F(artistX, top + titleH),
+                                    collapsedArtistFit_.layout.Get(), mutedBrush_.Get(),
+                                    D2D1_DRAW_TEXT_OPTIONS_NONE);
+            mutedBrush_->SetOpacity(0.75f);
+        }
+        target_->PopAxisAlignedClip();
+    }
+
     void BuildCollapsedLyricLine(CollapsedLyricLine& out, const std::wstring& text,
                                  IDWriteTextFormat* fmt) {
         out.text = text;
@@ -19288,11 +19499,31 @@ class Renderer {
             titleNew_.clear();
             if (expandedAnim_ && recentlyDrawn && realTitle && oldWasReal && !oldText.empty()) {
                 StartTitleTransition(oldText, text, rect, now);
+            } else if (expandedAnim_ && trackAnimEligible_ && realTitle && oldWasReal &&
+                       !oldText.empty()) {
+                // Modules.MediaTrackChangeAnim: the title changed while the card was
+                // off screen; play the same swap once the island has opened instead
+                // of snapping straight to the new text.
+                titleAnimPendingText_ = oldText;
+                titleAnimPendingAt_ = now + TrackAnimDelaySeconds();
             }
         } else if (titleAnimActive_ && (!recentlyDrawn || !expandedAnim_)) {
             titleAnimActive_ = false;
             titleOld_.clear();
             titleNew_.clear();
+        }
+
+        if (titleAnimPendingAt_ >= 0.0) {
+            if (now < titleAnimPendingAt_) {
+                g_layoutDirty = true;  // keep frames coming until it starts
+            } else {
+                std::wstring pendingOld;
+                pendingOld.swap(titleAnimPendingText_);
+                titleAnimPendingAt_ = -1.0;
+                if (expandedAnim_ && !pendingOld.empty()) {
+                    StartTitleTransition(pendingOld, text, rect, now);
+                }
+            }
         }
 
         if (!titleAnimActive_) return false;
@@ -19585,6 +19816,11 @@ class Renderer {
         }
     }
 
+    // Modules.MediaTrackChangeAnimDelayMs as seconds.
+    double TrackAnimDelaySeconds() const {
+        return static_cast<double>(ClampInt(trackChangeAnimDelayMs_, 0, 1500)) / 1000.0;
+    }
+
     void DrawAlbumArtFlip(const MediaSnapshot& media, D2D1_RECT_F rect, double now,
                           float radius, bool drawBadge) {
         constexpr double kFlipDuration = 0.62;
@@ -19592,18 +19828,39 @@ class Renderer {
         artFlipLastDrawn_ = now;
 
         const uint64_t hash = ArtContentHash(media);
-        if (!artFlipInit_ || !recentlyDrawn) {
+        // Modules.MediaTrackChangeAnim: the card was off screen while the track
+        // changed (the island is still opening), so the flip is armed with a short
+        // delay instead of being dropped -- without it the cover just snaps.
+        const bool deferred = trackAnimEligible_ && artFlipInit_ && !recentlyDrawn &&
+                              hash != 0 && hash != artFlipHash_;
+        if (!artFlipInit_ || (!recentlyDrawn && !deferred)) {
             artFlipInit_ = true;
             artFlipHash_ = hash;
             artFlipStart_ = -1.0;
+            artFlipPendingAt_ = -1.0;
             artFlipOld_.Reset();
         } else if (hash != artFlipHash_) {
             // Mid-flip changes just retarget the face shown after the turn.
             if (expandedAnim_ && artFlipStart_ < 0.0 && hash != 0) {
                 artFlipOld_ = artBitmap_;  // still the previous cover: not rebuilt yet
-                artFlipStart_ = now;
+                if (recentlyDrawn) {
+                    artFlipStart_ = now;
+                } else if (artFlipPendingAt_ < 0.0) {
+                    artFlipPendingAt_ = now + TrackAnimDelaySeconds();
+                }
             }
-            artFlipHash_ = hash;
+            if (recentlyDrawn) artFlipHash_ = hash;
+        }
+
+        // Deferred start: the island has finished opening, play the turn now.
+        if (artFlipPendingAt_ >= 0.0) {
+            if (now < artFlipPendingAt_) {
+                g_layoutDirty = true;  // keep frames coming until it starts
+            } else {
+                artFlipPendingAt_ = -1.0;
+                artFlipHash_ = hash;
+                if (expandedAnim_ && artFlipStart_ < 0.0) artFlipStart_ = now;
+            }
         }
 
         float p = -1.0f;
@@ -22200,6 +22457,15 @@ class Renderer {
     bool         pillArtInit_ = false;
     bool         expandedAnim_ = false;   // Settings::expandedMediaAnim, latched per frame
     bool         pillCoverAnim_ = false;  // Settings::pillCoverAnim, latched per frame
+    // Modules.MediaTrackChangeAnim: the track-change transition (cover flip, title
+    // swap) is held back and played once the island has finished opening, so a
+    // change that landed while it was still closed is not skipped.
+    bool         trackChangeAnim_ = false;       // Settings::mediaTrackChangeAnim
+    int          trackChangeAnimDelayMs_ = 400;  // Settings::mediaTrackChangeAnimDelayMs
+    bool         trackAnimEligible_ = false;     // a track change just happened
+    double       artFlipPendingAt_ = -1.0;       // <0 = nothing armed
+    double       titleAnimPendingAt_ = -1.0;     // <0 = nothing armed
+    std::wstring titleAnimPendingText_;
     bool         specInit_ = false;     // audio spectrum state
     double       specLastDrawn_ = -1.0;
     double       specStart_ = -1.0;     // -1 = no track-change animation running
@@ -24878,7 +25144,9 @@ DWORD WINAPI RenderThreadProc(void*) {
                                        primary.kind == IslandKind::Media &&
                                        snapshot.media.playing &&
                                        !snapshot.media.title.empty() &&
-                                       (now - snapshot.media.titleChangedAt < 5.0);
+                                       (now - snapshot.media.titleChangedAt <
+                                        static_cast<double>(ClampInt(
+                                            g_settings.mediaExpandHoldSeconds, 1, 60)));
 
         bool isTransientAlert = (primary.kind == IslandKind::Clipboard ||
                                  primary.kind == IslandKind::Notification ||
@@ -25028,7 +25296,8 @@ DWORD WINAPI RenderThreadProc(void*) {
             primary.height = GameOverlayLayout::For(compact).height * g_settings.sizeScale;
         }
         if (primary.kind == IslandKind::Media) {
-            if (!isFullscreen && (isHoverExpanded || pinned || recentTrackChange)) {
+            if (!isFullscreen &&
+                (isHoverExpanded || pinned || recentTrackChange)) {
                 primary.width = MediaLayout::kExpandedWidth * g_settings.sizeScale;
                 primary.height = MediaLayout::kExpandedHeight * g_settings.sizeScale;
                 // (Immersive lyrics: the island keeps its normal 380px width.)
@@ -25037,7 +25306,12 @@ DWORD WINAPI RenderThreadProc(void*) {
                 const float clockSection = g_settings.mediaPillClock
                     ? renderer.MeasureMediaPill(snapshot, g_settings).sectionWidth
                     : 0.0f;
-                if (CollapsedLyricsActive(snapshot, g_settings)) {
+                if (g_settings.mediaPillTitle && g_settings.media && snapshot.media.available) {
+                    // Title-only pill: width follows the title (plus the clock
+                    // section when that is on), so the text is never scrolled.
+                    primary.width = renderer.MeasureCollapsedTitle(snapshot, g_settings) *
+                                    g_settings.sizeScale;
+                } else if (CollapsedLyricsActive(snapshot, g_settings)) {
                     // Collapsed but carrying lyrics: wider pill, same height.
                     primary.width = (kCollapsedLyricsWidth + clockSection) * g_settings.sizeScale;
                 } else if (g_settings.mediaPillClock) {
