@@ -13409,6 +13409,9 @@ class Renderer {
         karaokeCache_.layout.Reset();
 
         artBitmap_.Reset();
+        artHoldOld_.Reset();
+        artHoldActive_ = false;
+        artHoldUntil_ = -1.0;
         notificationIconBitmap_.Reset();
         mediaSourceIconBitmap_.Reset();
         clipboardIconBitmap_.Reset();
@@ -17398,6 +17401,13 @@ class Renderer {
         constexpr double kTrackAnimWindow = 2.5;
         trackAnimEligible_ = trackChangeAnim_ && state.media.titleChangedAt > 0.0 &&
                              (now - state.media.titleChangedAt) <= kTrackAnimWindow;
+        // Modules.MediaTrackChangeAnim: a cover hold must not outlive the change it
+        // belongs to; an island that never opens would otherwise keep a stale face.
+        if (artHoldActive_ && (artHoldUntil_ < 0.0 || now > artHoldUntil_)) {
+            artHoldActive_ = false;
+            artHoldOld_.Reset();
+            artHoldUntil_ = -1.0;
+        }
 
         // The old side panel is replaced by the immersive lyrics view, so the island never widens.
         const bool sideLyricsOn = false;
@@ -20072,9 +20082,15 @@ class Renderer {
         } else if (hash != artFlipHash_) {
             // Mid-flip changes just retarget the face shown after the turn.
             if (expandedAnim_ && artFlipStart_ < 0.0 && hash != 0) {
-                artFlipOld_ = artBitmap_;  // still the previous cover: not rebuilt yet
+                // Modules.MediaTrackChangeAnim: artBitmap_ has already been rebuilt to
+                // the new cover by the time the card is open, so the face held from
+                // before the change is the only correct outgoing one.
+                artFlipOld_ = (artHoldActive_ && artHoldOld_) ? artHoldOld_ : artBitmap_;
                 if (recentlyDrawn) {
                     artFlipStart_ = now;
+                    artHoldActive_ = false;
+                    artHoldOld_.Reset();
+                    artHoldUntil_ = -1.0;
                 } else if (artFlipPendingAt_ < 0.0) {
                     artFlipPendingAt_ = now + TrackAnimDelaySeconds();
                 }
@@ -20090,6 +20106,12 @@ class Renderer {
                 artFlipPendingAt_ = -1.0;
                 artFlipHash_ = hash;
                 if (expandedAnim_ && artFlipStart_ < 0.0) artFlipStart_ = now;
+                if (artFlipStart_ >= 0.0) {
+                    // artFlipOld_ holds its own reference, so the hold can be released.
+                    artHoldActive_ = false;
+                    artHoldOld_.Reset();
+                    artHoldUntil_ = -1.0;
+                }
             }
         }
 
@@ -20103,6 +20125,13 @@ class Renderer {
             }
         }
         if (p < 0.0f) {
+            // Modules.MediaTrackChangeAnim: still inside the hold, so the outgoing cover
+            // stays put instead of the new one appearing before the turn.
+            if (artHoldActive_ && artHoldOld_) {
+                g_layoutDirty = true;
+                DrawArtFace(artHoldOld_.Get(), rect, radius);
+                return;
+            }
             DrawAlbumArt(media, rect, now, radius, drawBadge);
             return;
         }
@@ -20141,6 +20170,16 @@ class Renderer {
         if (!media.art) return;
         const BitmapPixels& art = *media.art;
         if (artGeneration_ != art.generation || !artBitmap_) {
+            // Modules.MediaTrackChangeAnim: remember the cover still on screen before
+            // this rebuild replaces it, so the pill and the flip can keep showing it
+            // until the deferred transition actually starts.
+            if (trackChangeAnim_ && trackAnimEligible_ && artBitmap_ && !artHoldActive_ &&
+                artGeneration_ != art.generation) {
+                artHoldOld_ = artBitmap_;
+                artHoldActive_ = true;
+                artHoldUntil_ = NowSeconds() + TrackAnimDelaySeconds() + 2.5;
+                g_layoutDirty = true;
+            }
             D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
                 D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
             target_->CreateBitmap(D2D1::SizeU(art.width, art.height),
@@ -20304,6 +20343,18 @@ class Renderer {
         }
 
         EnsureArtBitmap(media);
+        // Modules.MediaTrackChangeAnim: the outgoing cover stays on the pill until the
+        // deferred transition starts, so the art does not swap ahead of the animation.
+        if (artHoldActive_ && artHoldOld_) {
+            pillArtInit_ = true;
+            pillArtHash_ = hash;
+            pillArtStart_ = -1.0;
+            pillArtOld_.Reset();
+            pillArtLast_ = artBitmap_;
+            g_layoutDirty = true;
+            DrawArtFace(artHoldOld_.Get(), rect, radius);
+            return;
+        }
         ID2D1Bitmap* fresh = !media.art ? nullptr : artBitmap_.Get();
 
         float p = -1.0f;
@@ -22693,6 +22744,11 @@ class Renderer {
     bool         trackChangeAnim_ = false;       // Settings::mediaTrackChangeAnim
     int          trackChangeAnimDelayMs_ = 400;  // Settings::mediaTrackChangeAnimDelayMs
     bool         trackAnimEligible_ = false;     // a track change just happened
+    // Modules.MediaTrackChangeAnim: the cover that was on screen before the change,
+    // kept there until the deferred transition starts.
+    ComPtr<ID2D1Bitmap> artHoldOld_;
+    bool         artHoldActive_ = false;
+    double       artHoldUntil_ = -1.0;
     double       artFlipPendingAt_ = -1.0;       // <0 = nothing armed
     double       titleAnimPendingAt_ = -1.0;     // <0 = nothing armed
     std::wstring titleAnimPendingText_;
