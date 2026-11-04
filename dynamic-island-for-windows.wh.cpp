@@ -377,9 +377,54 @@ We love community contributions! To ensure high-quality updates, please follow t
   - MediaAutoExpand: false
     $name: Auto-expand on track change
     $description: Automatically expand the island when a new song or video starts playing. If disabled, album art updates smoothly in the collapsed pill without unprompted expansion.
+  - MediaExpandHoldSeconds: '5'
+    $name: Auto-expand hold time (seconds)
+    $description: How long the island stays expanded after a track change, in seconds (1 to 60). Raise it when the track-change animation finishes before the island has finished opening.
+  - MediaTrackChangeAnim: false
+    $name: Play the track-change animation after opening
+    $description: When the island expands because a new track started, the cover flip and the title swap used to be skipped because the card was not on screen yet when the track changed. With this on, that transition is held back and then played in full once the island has finished opening. Off by default.
+  - MediaTrackChangeAnimDelayMs: '400'
+    $name: Track-change animation delay (milliseconds)
+    $description: How long to wait after a track change before the held-back cover flip and title swap start, in milliseconds (0 to 1500). Raise it if the animation still starts before the island has finished opening. Only used when "Play the track-change animation after opening" is on.
   - MediaPillClock: false
     $name: Show clock in the collapsed media pill
     $description: While media is playing, the collapsed pill also shows the current time on the left, separated from the album cover by a thin divider. Hovering still opens the normal player. Uses the same 12h/24h and seconds options as the clock below. Off by default.
+  - MediaPillTitle: false
+    $name: Show the track title in the collapsed pill
+    $description: Shows the current track title in the collapsed pill, between the cover and the visualiser. The pill is sized to the title so it never scrolls, and no lyrics are fetched or shown there. Off by default.
+  - MediaPillTitlePad: '12'
+    $name: Title gap in the collapsed pill
+    $description: Empty space kept on each side of the title, in pixels (0 to 60). The pill width is the title plus twice this value, so both gaps stay equal.
+  - MediaPillTitleMode: title
+    $name: Collapsed pill title style
+    $description: What the collapsed pill shows once the track title option above is on. Title only is a single centred line. Title and artist stacks the artist under the title. Either way the pill is measured from the real text, so nothing scrolls and no lyrics are fetched.
+    $options:
+      - title: Title only
+      - title-artist: Title and artist
+  - MediaExpandedCustomLayout: false
+    $name: Customize the expanded player text
+    $description: Turns the four line switches and the line order below on. While this is off the expanded card keeps its stock layout, so nothing about the default look changes.
+  - MediaExpandedShowTitle: true
+    $name: Expanded card - show the title
+    $description: First line candidate of the text block. Only used with "Customize the expanded player text" above.
+  - MediaExpandedShowArtist: true
+    $name: Expanded card - show the artist
+    $description: Second line candidate of the text block. Only used with "Customize the expanded player text" above.
+  - MediaExpandedShowAlbum: true
+    $name: Expanded card - show the album
+    $description: Album line candidate of the text block. Also hidden automatically while the track reports no album. Only used with "Customize the expanded player text" above.
+  - MediaExpandedShowSource: true
+    $name: Expanded card - show where it is playing from
+    $description: The "Playing from ..." line. Also hidden while no app name is known. Only used with "Customize the expanded player text" above.
+  - MediaExpandedLineOrder: 'title,artist,album,source'
+    $name: Expanded card - line order
+    $description: Comma separated order of title, artist, album and source. Unknown or repeated names are ignored, and any of the four left out is appended in the stock order.
+  - MediaExpandedTop: '34'
+    $name: Expanded card - text top offset (pixels)
+    $description: Distance from the top of the expanded card to the first line, in pixels (0 to 80). The stock layout uses 34.
+  - MediaExpandedGap: '0'
+    $name: Expanded card - gap between lines (pixels)
+    $description: Extra space between two text lines, in pixels (0 to 20). The stock layout uses 0.
   - Volume: true
     $name: Volume slider flyout
     $description: Shows a volume slider banner on the island when adjusting system volume. Disable if you prefer the default Windows volume flyout.
@@ -922,6 +967,16 @@ namespace MediaPillLayout {
     constexpr float kDividerWidth = 1.0f;
     constexpr float kDividerInsetY = 10.0f;
     constexpr float kWidthQuantum = 2.0f;
+
+    // Collapsed pill sized to the track title (Modules.MediaPillTitle): cover,
+    // title, visualiser, with the same padding on each side of the title. The
+    // chrome numbers mirror what DrawMedia uses for the collapsed pill.
+    constexpr float kTitleArtPad = 6.0f;      // pill left edge -> cover
+    constexpr float kTitleArtSize = 32.0f;    // kCollapsedPillHeight - 2 * kTitleArtPad
+    constexpr float kTitleWaveWidth = 28.0f;  // visualiser: right - 42 .. right - 14
+    constexpr float kTitleWaveInset = 14.0f;  // visualiser -> pill right edge
+    constexpr float kTitleMaxText = 420.0f;   // longest title the pill will reserve
+    constexpr float kTitleMaxWidth = 620.0f;  // hard cap on the whole pill
 }
 
 // Layout for the game overlay strip. The size the island animates to is decided
@@ -1225,6 +1280,9 @@ struct Settings {
     float animationSpeed = 1.0f;
     bool media = true;
     bool mediaAutoExpand = false;
+    int mediaExpandHoldSeconds = 5;   // Modules.MediaExpandHoldSeconds, seconds expanded
+    bool mediaTrackChangeAnim = false;      // Modules.MediaTrackChangeAnim
+    int mediaTrackChangeAnimDelayMs = 400;  // Modules.MediaTrackChangeAnimDelayMs
     bool clipboard = true;
     bool statusCountdownProgress = false;
     bool battery = true;
@@ -1328,6 +1386,15 @@ struct Settings {
     bool clockFollowSystem = true;
     std::wstring dateFormat;        // empty = locale default
     bool mediaPillClock = false;    // show the clock inside the collapsed media pill
+    bool mediaPillTitle = false;    // collapsed pill shows the track title, sized to it
+    bool mediaPillTitleArtist = false;  // Modules.MediaPillTitleMode: artist under the title
+    int mediaPillTitlePad = 12;     // Modules.MediaPillTitlePad, px on each side of the title
+    // ── Expanded player text block (configurable) ────────────────────────────
+    bool mediaExpandedCustomLayout = false;  // Modules.MediaExpandedCustomLayout
+    int mediaExpandedTop = 34;      // Modules.MediaExpandedTop, px from the card top
+    int mediaExpandedGap = 0;       // Modules.MediaExpandedGap, px between two lines
+    // Resolved line order, kinds: 0 title, 1 artist, 2 album, 3 source.
+    std::vector<int> mediaExpandedOrder;
     bool dateFirst = false;
     int firstDayOfWeek = -1;        // 0 = Sunday .. 6 = Saturday, -1 = follow Windows
 
@@ -1400,7 +1467,70 @@ struct MediaSnapshot {
     int64_t positionTicks = 0;
     int64_t endTicks = 0;
     int64_t lastUpdatedTicks = 0;
+    // True when the source was not moving its own timeline at the moment this
+    // snapshot was taken. Such a source still tells the truth about the instant it
+    // last spoke, so the age of lastUpdatedTicks is real elapsed playback time and
+    // the display may use it in full instead of the 2s anti-runaway ceiling.
+    bool frozenTimeline = false;
 };
+
+// How far past the last snapshot anything is allowed to extrapolate. The media
+// thread polls every 1.5s, so a gap larger than this means the source stopped
+// refreshing its timeline and the position must stop with it instead of running
+// away from the truth.
+constexpr double kMaxPositionExtrapolationSec = 2.0;
+constexpr int64_t kMaxExtrapolationTicks =
+    static_cast<int64_t>(kMaxPositionExtrapolationSec * 10000000.0);
+
+// Ceiling for the age of a timeline the source stopped refreshing on its own. Such a
+// source still tells the truth about where it was when it last spoke, so that age is
+// used in full (Lycia Player sits 100s+ behind by design: it publishes once when the
+// track starts and then never again). This number only guards against a timestamp
+// from a different era, it is never reached by a real frozen timeline.
+constexpr double kMaxFrozenAgeSec = 6.0 * 3600.0;
+constexpr int64_t kMaxFrozenAgeTicks = static_cast<int64_t>(kMaxFrozenAgeSec * 10000000.0);
+
+// Shortest duration (seconds) that still counts as a real timeline. Live streams,
+// HLS/RTSP and the first frame after a track change all report 0 or a few ticks.
+constexpr double kMinUsableDurationSec = 1.0;
+
+inline bool MediaDurationUsableTicks(int64_t endTicks) {
+    return endTicks > 0 && endTicks >= static_cast<int64_t>(kMinUsableDurationSec * 10000000.0);
+}
+
+// The one place that answers "where is the track right now", in seconds. Every
+// consumer (scrubber and all four lyrics paths) goes through this, otherwise the
+// bar and the lyrics each extrapolate their own way and disagree.
+//
+// Rules, all of them there to keep a lying source from dragging the display with it:
+//  - never extrapolate while the source is paused or reports no usable duration;
+//  - never extrapolate more than kMaxPositionExtrapolationSec past the snapshot;
+//  - never extrapolate past the end of the track.
+inline double MediaPositionNowSec(const MediaSnapshot& media) {
+    double pos = media.positionTicks / 10000000.0;
+    if (pos < 0.0) {
+        pos = 0.0;
+    }
+    const double duration = media.endTicks / 10000000.0;
+    if (!media.playing || media.lastUpdatedTicks <= 0 || !MediaDurationUsableTicks(media.endTicks)) {
+        return pos;
+    }
+    double elapsed =
+        (static_cast<double>(GetTickCount64()) - static_cast<double>(media.lastUpdatedTicks)) / 1000.0;
+    if (elapsed <= 0.0) {
+        return pos;
+    }
+    const double cap = media.frozenTimeline ? kMaxFrozenAgeSec : kMaxPositionExtrapolationSec;
+    if (elapsed > cap) {
+        elapsed = cap;
+    }
+    pos += elapsed;
+    return pos > duration ? duration : pos;
+}
+
+inline int64_t MediaPositionNowTicks(const MediaSnapshot& media) {
+    return static_cast<int64_t>(MediaPositionNowSec(media) * 10000000.0);
+}
 
 // One SMTC media session the dock can switch to.
 struct MediaSourceInfo {
@@ -1835,6 +1965,11 @@ std::atomic<bool> g_tabAnimating{false};      // a tab transition is in motion (
 bool g_oleInitialized = false;
 std::atomic<bool> g_scrubbing = false;           // true while press-dragging the media timeline scrubber
 std::atomic<float> g_scrubDragFraction = 0.0f;   // live 0..1 drag position while g_scrubbing is true
+// A seek is the one position change that is known to be true the moment it is issued.
+// The UI thread bumps the serial and parks the target here so the poll loop can seed
+// its confirmation baseline instead of treating the user's own seek as source noise.
+std::atomic<uint64_t> g_seekSerial{0};
+std::atomic<int64_t> g_seekTargetTicks{0};
 std::atomic<double> g_lastLiveSeekTime = 0.0;    // throttle gate for live seeks while dragging
 std::atomic<bool> g_audioCaptureNeeded = false;  // gates the WASAPI loopback thread
 std::atomic<bool> g_spectrumBandsNeeded = false; // only Pulse Orb / Plasma Thread read the frequency bands
@@ -3152,6 +3287,16 @@ void LoadSettings() {
 
     next.media = Wh_GetIntSetting(L"Modules.Media") != 0;
     next.mediaAutoExpand = Wh_GetIntSetting(L"Modules.MediaAutoExpand") != 0;
+    {
+        const std::wstring holdStr = GetStringSettingCopy(L"Modules.MediaExpandHoldSeconds");
+        next.mediaExpandHoldSeconds = holdStr.empty() ? 5 : ClampInt(_wtoi(holdStr.c_str()), 1, 60);
+    }
+    next.mediaTrackChangeAnim = Wh_GetIntSetting(L"Modules.MediaTrackChangeAnim") != 0;
+    {
+        const std::wstring delayStr = GetStringSettingCopy(L"Modules.MediaTrackChangeAnimDelayMs");
+        next.mediaTrackChangeAnimDelayMs =
+            delayStr.empty() ? 400 : ClampInt(_wtoi(delayStr.c_str()), 0, 1500);
+    }
     next.volume = Wh_GetIntSetting(L"Modules.Volume") != 0;
     if (!next.volume) {
         std::lock_guard lock(g_stateMutex);
@@ -3282,6 +3427,67 @@ void LoadSettings() {
         next.firstDayOfWeek = -1;
     }
     next.mediaPillClock = Wh_GetIntSetting(L"Modules.MediaPillClock") != 0;
+    next.mediaPillTitle = Wh_GetIntSetting(L"Modules.MediaPillTitle") != 0;
+    {
+        // Two flavours of the collapsed pill: the title alone, or the title with
+        // the artist stacked under it (what PR #118's MediaPillMeta aimed at).
+        // Both are measured from the real text, so neither ever scrolls.
+        const std::wstring titleMode = GetStringSettingCopy(L"Modules.MediaPillTitleMode");
+        next.mediaPillTitleArtist = EqualsNoCase(titleMode, L"title-artist");
+    }
+    {
+        const std::wstring padStr = GetStringSettingCopy(L"Modules.MediaPillTitlePad");
+        next.mediaPillTitlePad = padStr.empty() ? 12 : ClampInt(_wtoi(padStr.c_str()), 0, 60);
+    }
+    {
+        // Configurable text block of the expanded player. The stock layout stays in
+        // charge until the switch is on, so the default look cannot drift.
+        next.mediaExpandedCustomLayout = Wh_GetIntSetting(L"Modules.MediaExpandedCustomLayout") != 0;
+        bool visible[4] = {
+            Wh_GetIntSetting(L"Modules.MediaExpandedShowTitle") != 0,
+            Wh_GetIntSetting(L"Modules.MediaExpandedShowArtist") != 0,
+            Wh_GetIntSetting(L"Modules.MediaExpandedShowAlbum") != 0,
+            Wh_GetIntSetting(L"Modules.MediaExpandedShowSource") != 0,
+        };
+        const std::wstring topStr = GetStringSettingCopy(L"Modules.MediaExpandedTop");
+        next.mediaExpandedTop = topStr.empty() ? 34 : ClampInt(_wtoi(topStr.c_str()), 0, 80);
+        const std::wstring gapStr = GetStringSettingCopy(L"Modules.MediaExpandedGap");
+        next.mediaExpandedGap = gapStr.empty() ? 0 : ClampInt(_wtoi(gapStr.c_str()), 0, 20);
+
+        // "title,artist,album,source" in any order. Unknown and repeated names are
+        // dropped; anything the user left out is appended in the stock order so a
+        // typo can never make a line disappear silently.
+        next.mediaExpandedOrder.clear();
+        const std::wstring orderStr = GetStringSettingCopy(L"Modules.MediaExpandedLineOrder");
+        bool used[4] = {false, false, false, false};
+        size_t parseAt = 0;
+        while (parseAt <= orderStr.size()) {
+            const size_t comma = orderStr.find(L',', parseAt);
+            std::wstring token = orderStr.substr(
+                parseAt, comma == std::wstring::npos ? std::wstring::npos : comma - parseAt);
+            while (!token.empty() && (token.front() == L' ' || token.front() == L'\t')) token.erase(0, 1);
+            while (!token.empty() && (token.back() == L' ' || token.back() == L'\t')) token.pop_back();
+            int kind = -1;
+            if (EqualsNoCase(token, L"title")) {
+                kind = 0;
+            } else if (EqualsNoCase(token, L"artist")) {
+                kind = 1;
+            } else if (EqualsNoCase(token, L"album")) {
+                kind = 2;
+            } else if (EqualsNoCase(token, L"source")) {
+                kind = 3;
+            }
+            if (kind >= 0 && !used[kind]) {
+                used[kind] = true;
+                if (visible[kind]) next.mediaExpandedOrder.push_back(kind);
+            }
+            if (comma == std::wstring::npos) break;
+            parseAt = comma + 1;
+        }
+        for (int kind = 0; kind < 4; ++kind) {
+            if (visible[kind] && !used[kind]) next.mediaExpandedOrder.push_back(kind);
+        }
+    }
 
     // ── Localization (#35) ───────────────────────────────────────────────────
     {
@@ -5576,9 +5782,41 @@ DWORD WINAPI MediaThreadProc(void*) {
 
     Manager manager{nullptr};
     bool loggedUnavailable = false;
-    int64_t pendingSeekBaseline = -1;  // guards against bogus "went backwards" readings
+    int64_t pendingSeekBaseline = -1;  // guards against bogus position readings
     MediaSourceTracker sourceTracker;
     ULONGLONG pendingSeekBaselineTickCount = 0;
+
+    // Some sources freeze BOTH Position() and LastUpdatedTime while the track keeps
+    // playing, so their timestamp looks like decoration. It is not: the frozen position
+    // plus the age of the frozen timestamp is exactly where the track is. Measured on
+    // Lycia Player (com.wover.lyciaplayer): seek to 20s, play 12.4s, pause -> it then
+    // reported 32.385s, which matches that formula to within 0.015s over the whole
+    // window. So the age of a frozen timestamp is signal, not noise. Wall time spent
+    // paused is not media time and is accumulated here so a resume does not jump.
+    int64_t lastFreezeRawPos = -1;
+    int64_t lastFreezeEndTicks = -1;
+    int64_t frozenPausedTicks = 0;
+    int64_t lastTruthTicks = -1;
+    bool wasPollPlaying = false;
+    ULONGLONG lastPollTickCount = 0;
+
+    // Title of the track the current position belongs to. A title change is the one
+    // moment where the position is known without asking the source: the new track
+    // starts at zero. Sources that freeze their timeline (Lycia Player) keep reporting
+    // the previous track's position for a poll or two, together with a timestamp that
+    // can be minutes stale, so neither may seed the track that just began.
+    std::wstring lastTrackKey;
+    // Wall clock at which the current track began advancing from zero, 0 while no track
+    // change has been witnessed yet (the mod started mid-track).
+    ULONGLONG trackFirstSeenTickCount = 0;
+
+    // How many polls a held reading may overrule the estimate before it is accepted.
+    int unconfirmedHolds = 0;
+
+    // Last seek the user issued, as seen by this loop. When the serial moves, the
+    // target becomes the confirmation seed, so a real seek does not have to win a
+    // three-poll fight against its own noise filter.
+    uint64_t seenSeekSerial = 0;
 
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         MediaSnapshot next;
@@ -5612,33 +5850,173 @@ DWORD WINAPI MediaThreadProc(void*) {
                         int64_t np = rawPos;
                         int64_t ne = timeline.EndTime().count();
                         bool npP = (playback.PlaybackStatus() == PlaybackStatus::Playing);
-                        if (npP) {
-                            // Position() is the position at LastUpdatedTime, not "now".
+                        const ULONGLONG nowTicks64 = GetTickCount64();
+
+                        // A new track resets every position anchor here, before any of the
+                        // estimates below read them.
+                        const bool trackBeginsNow = !next.title.empty() &&
+                            !lastTrackKey.empty() && next.title != lastTrackKey;
+                        if (trackBeginsNow) {
+                            trackFirstSeenTickCount = nowTicks64;
+                            lastTruthTicks = 0;
+                            frozenPausedTicks = 0;
+                            lastFreezeRawPos = -1;
+                            lastFreezeEndTicks = -1;
+                            pendingSeekBaseline = -1;
+                            unconfirmedHolds = 0;
+                        }
+                        if (!next.title.empty()) {
+                            lastTrackKey = next.title;
+                        }
+
+                        // Where is the track right now? A source that refreshes its
+                        // timeline normally gets the old 2s ceiling, which keeps a stale
+                        // timestamp from walking the bar forward. A source that has
+                        // stopped refreshing while it keeps playing is the opposite case:
+                        // its timestamp age is the true elapsed playback time, so it is
+                        // used in full, bounded only by the end of the track.
+                        const bool sourceSpoke = rawPos != lastFreezeRawPos;
+                        const bool trackChanged = ne != lastFreezeEndTicks;
+                        if (sourceSpoke || trackChanged) {
+                            lastFreezeRawPos = rawPos;
+                            lastFreezeEndTicks = ne;
+                            frozenPausedTicks = 0;  // a fresh timeline carries no pause
+                        }
+
+                        if (!npP) {
+                            // Paused: hold the last real position and bank the wall time,
+                            // so resuming continues where the track actually stopped.
+                            if (!wasPollPlaying) {
+                                frozenPausedTicks +=
+                                    static_cast<int64_t>(nowTicks64 - lastPollTickCount) * 10000;
+                            }
+                            np = lastTruthTicks >= 0 ? lastTruthTicks : rawPos;
+                        } else {
+                            int64_t ageTicks = 0;
                             try {
-                                const auto lastUpdated = timeline.LastUpdatedTime();
-                                const int64_t ageTicks = (winrt::clock::now() - lastUpdated).count();
-                                if (ageTicks > 0 && ageTicks < 10 * 10000000LL) {
-                                    np = rawPos + ageTicks;
-                                }
+                                ageTicks = (winrt::clock::now() -
+                                            timeline.LastUpdatedTime()).count();
                             } catch (...) {
+                                ageTicks = 0;
+                            }
+                            int64_t cap = kMaxExtrapolationTicks;
+                            if (!sourceSpoke) {
+                                // The timeline is not moving on its own, so its age is
+                                // genuinely the elapsed playback time.
+                                cap = kMaxFrozenAgeTicks;
+                                if (MediaDurationUsableTicks(ne)) {
+                                    const int64_t toEnd = ne - rawPos;
+                                    if (toEnd >= 0 && toEnd < cap) {
+                                        cap = toEnd;
+                                    }
+                                }
+                            }
+                            int64_t mediaAge = ageTicks - frozenPausedTicks;
+                            if (mediaAge < 0) {
+                                mediaAge = 0;
+                            }
+                            if (mediaAge > cap) {
+                                mediaAge = cap;
+                            }
+                            if (ageTicks > 0 && MediaDurationUsableTicks(ne)) {
+                                np = rawPos + mediaAge;
+                            }
+                            if (MediaDurationUsableTicks(ne) && np > ne) {
+                                np = ne;
+                            }
+                            lastTruthTicks = np;
+                        }
+                        wasPollPlaying = npP;
+                        lastPollTickCount = nowTicks64;
+
+                        std::lock_guard lock(g_stateMutex);
+                        // The user's own seek is the one position change known to be
+                        // correct the instant it is issued. Seed the confirmation
+                        // baseline from it, otherwise the noise filter spends up to
+                        // kMaxUnconfirmedHolds polls rejecting a jump the user asked for.
+                        // pendingSeekBaseline used to be written only by the hold branch
+                        // itself, so a seek had to lose three times before it won.
+                        const uint64_t seekSerialNow = g_seekSerial.load(std::memory_order_relaxed);
+                        if (seekSerialNow != seenSeekSerial) {
+                            seenSeekSerial = seekSerialNow;
+                            pendingSeekBaseline = g_seekTargetTicks.load(std::memory_order_relaxed);
+                            pendingSeekBaselineTickCount = nowTicks64;
+                            unconfirmedHolds = 0;
+                            // The seek target is the new anchor, so the wall-clock clamp
+                            // below does not pull the bar back to where it was.
+                            if (trackFirstSeenTickCount != 0) {
+                                int64_t targetMs = pendingSeekBaseline / 10000;
+                                if (targetMs < 0) {
+                                    targetMs = 0;
+                                }
+                                trackFirstSeenTickCount =
+                                    static_cast<ULONGLONG>(targetMs) < nowTicks64
+                                        ? nowTicks64 - static_cast<ULONGLONG>(targetMs)
+                                        : 0;
                             }
                         }
 
-                        std::lock_guard lock(g_stateMutex);
-                        // Some sources (notably the Spotify desktop app) refresh LastUpdatedTime
-                        // without moving Position(), which makes the estimate jump backwards.
-                        // Hold off until a second poll confirms it is a real seek.
+                        // Some sources refresh LastUpdatedTime without moving Position(), and
+                        // others move Position() before the timeline catches up. Either way a
+                        // single poll can be off by more than a poll period, in EITHER
+                        // direction, so hold the reading until a second poll confirms it. The
+                        // old version only did this for backwards jumps and let every forwards
+                        // jump through unchecked.
                         constexpr int64_t kJitterToleranceTicks = 15000000LL;   // 1.5s
                         constexpr int64_t kConfirmToleranceTicks = 5000000LL;   // 0.5s
+                        // A source that is consistently offset from real time would reset the
+                        // baseline on every poll and stay locked on the estimate forever, so
+                        // the hold expires instead of blocking the measured value indefinitely.
+                        constexpr int kMaxUnconfirmedHolds = 3;
+                        // Only a position the source actually published needs the noise
+                        // filter. A frozen timeline is advanced by the local clock here,
+                        // so there is no reading to second-guess, and filtering it would
+                        // reject the one correct jump for three polls.
                         const bool sameTrackPlaying =
-                            npP && g_state.media.playing && ne == g_state.media.endTicks;
+                            npP && g_state.media.playing && ne == g_state.media.endTicks &&
+                            sourceSpoke;
+
+                        // A source that alternates between publishing a position and
+                        // freezing again (Lycia Player does this around pause/resume and
+                        // metadata refreshes) used to make the bar jump backwards by the
+                        // whole frozen window, then crawl forward again. Within one track,
+                        // and with no seek of ours in flight, playback only moves forward.
+                        const bool sameTrackStill = npP && g_state.media.playing &&
+                            next.title == g_state.media.title && ne == g_state.media.endTicks &&
+                            seekSerialNow == seenSeekSerial;
+                        if (sameTrackStill && g_state.media.positionTicks > 0) {
+                            const int64_t sinceLastPoll =
+                                static_cast<int64_t>(nowTicks64 - lastPollTickCount) * 10000;
+                            if (sinceLastPoll > 0) {
+                                const int64_t atLeast = g_state.media.positionTicks + sinceLastPoll;
+                                if (np < atLeast) {
+                                    np = atLeast;
+                                }
+                            }
+                        }
+                        // A track that just began cannot be further along than the wall
+                        // time that has passed since it was first seen. This is what stops
+                        // the previous track's position (or a stale timestamp) from seeding
+                        // the new one, and it never touches a track that has been playing
+                        // for a while, because the allowance only grows with time.
+                        if (trackFirstSeenTickCount != 0 && pendingSeekBaseline < 0 &&
+                            seekSerialNow == seenSeekSerial) {
+                            const int64_t sinceTrackStart =
+                                static_cast<int64_t>(nowTicks64 - trackFirstSeenTickCount) * 10000;
+                            if (sinceTrackStart >= 0 && np > sinceTrackStart) {
+                                np = sinceTrackStart;
+                            }
+                        }
+                        if (MediaDurationUsableTicks(ne) && np > ne) {
+                            np = ne;
+                        }
 
                         if (sameTrackPlaying) {
                             const int64_t predictedNow = g_state.media.positionTicks +
                                 (static_cast<int64_t>(GetTickCount64()) - g_state.media.lastUpdatedTicks) * 10000;
+                            const int64_t drift = np - predictedNow;
 
-                            if (np < predictedNow - kJitterToleranceTicks) {
-                                const ULONGLONG nowTicks64 = GetTickCount64();
+                            if (drift > kJitterToleranceTicks || drift < -kJitterToleranceTicks) {
                                 bool confirmed = false;
                                 if (pendingSeekBaseline >= 0) {
                                     const int64_t expectedIfRealSeek = pendingSeekBaseline +
@@ -5652,16 +6030,23 @@ DWORD WINAPI MediaThreadProc(void*) {
 
                                 if (confirmed) {
                                     pendingSeekBaseline = -1;
+                                    unconfirmedHolds = 0;
+                                } else if (unconfirmedHolds >= kMaxUnconfirmedHolds) {
+                                    pendingSeekBaseline = -1;
+                                    unconfirmedHolds = 0;
                                 } else {
                                     pendingSeekBaseline = np;
                                     pendingSeekBaselineTickCount = nowTicks64;
+                                    ++unconfirmedHolds;
                                     np = predictedNow;
                                 }
                             } else {
                                 pendingSeekBaseline = -1;
+                                unconfirmedHolds = 0;
                             }
                         } else {
                             pendingSeekBaseline = -1;
+                            unconfirmedHolds = 0;
                         }
                         if (np != g_state.media.positionTicks ||
                             ne != g_state.media.endTicks ||
@@ -5674,6 +6059,7 @@ DWORD WINAPI MediaThreadProc(void*) {
                             next.endTicks = g_state.media.endTicks;
                             next.lastUpdatedTicks = g_state.media.lastUpdatedTicks;
                         }
+                        next.frozenTimeline = !sourceSpoke;
                     }
 
                     next.sourceAppUserModelId = session.SourceAppUserModelId().c_str();
@@ -12077,6 +12463,12 @@ void ToggleEndpointMute() {
 
 // Shared by the scrubber's live drag updates and its on-release commit.
 void SeekMediaToTicks(int64_t targetTicks) {
+    // Publish the seek before the request goes out: the poll thread watches the
+    // serial to seed its baseline at the target and to demand confirmation of the
+    // next raw position, so the bar cannot snap back to the old spot while the
+    // source catches up.
+    g_seekTargetTicks.store(targetTicks, std::memory_order_relaxed);
+    g_seekSerial.fetch_add(1, std::memory_order_relaxed);
     std::thread([targetTicks]() {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         try {
@@ -12931,6 +13323,11 @@ struct SwapTextState {
     double start = -1.0;              // animation start, -1 = idle
     double lastDrawn = -1.0;          // last frame this row was drawn
     MarqueeLayoutCache prevCache;     // layout cache for the outgoing text
+    // Modules.MediaTrackChangeAnim: text that is waiting for the deferred swap.
+    // `shown` keeps the outgoing line until holdAt, so the row never flashes the
+    // new text before animating the old one in.
+    std::wstring hold;
+    double holdAt = -1.0;             // -1 = no hold armed
 };
 
 struct MediaPillMetrics {
@@ -12965,7 +13362,8 @@ constexpr float kCollapsedLyricsWidth = 320.0f;
 bool CollapsedLyricsActive(const SharedState& state, const Settings& settings) {
     // Stays wide for as long as media is available. If there are no lyrics to
     // show, DrawCollapsedLyrics shows the media title instead.
-    return settings.collapsedLyrics && settings.media && state.media.available;
+    return settings.collapsedLyrics && settings.media && state.media.available &&
+           !settings.mediaPillTitle;
 }
 
 // One pre-built lyric line. Built once when the line changes, then reused every
@@ -13197,6 +13595,9 @@ class Renderer {
         karaokeCache_.layout.Reset();
 
         artBitmap_.Reset();
+        artHoldOld_.Reset();
+        artHoldActive_ = false;
+        artHoldUntil_ = -1.0;
         notificationIconBitmap_.Reset();
         mediaSourceIconBitmap_.Reset();
         clipboardIconBitmap_.Reset();
@@ -13344,6 +13745,43 @@ class Renderer {
         return metrics;
     }
 
+    // Collapsed pill sized to the track title (Modules.MediaPillTitle). The width
+    // is measured from the very layout DrawCollapsedTitle paints, so the space
+    // reserved and the text drawn cannot disagree: cover, then the title with an
+    // equal gap on each side, then the visualiser.
+    float MeasureCollapsedTitle(const SharedState& state, const Settings& settings) {
+        EnsureTextFormats(settings.sizeScale, settings.fontFamily, settings.textScale);
+        if (!textFormat_) {
+            return MediaPillLayout::kBaseWidth;
+        }
+
+        const std::wstring title = CollapsedTitleText(state);
+        float titleWidth = std::min(TitleFitWidth(title), MediaPillLayout::kTitleMaxText);
+        // Title + artist: the longer of the two lines sets the box, so the
+        // shorter one stays centred and neither line has to scroll.
+        if (settings.mediaPillTitleArtist && !state.media.artist.empty()) {
+            const float artistWidth =
+                std::min(ArtistFitWidth(state.media.artist), MediaPillLayout::kTitleMaxText);
+            titleWidth = std::max(titleWidth, artistWidth);
+        }
+        const float pad = static_cast<float>(ClampInt(settings.mediaPillTitlePad, 0, 60));
+
+        float total = MediaPillLayout::kTitleArtPad + MediaPillLayout::kTitleArtSize + pad +
+                      titleWidth + pad + MediaPillLayout::kTitleWaveInset +
+                      MediaPillLayout::kTitleWaveWidth;
+        if (settings.mediaPillClock) {
+            total += MeasureMediaPill(state, settings).sectionWidth;
+        }
+        // DrawMedia moves the visualiser 22px left while a privacy dot is up, so
+        // the title box shrinks by the same amount. Mirror it here or the text
+        // would be clipped for as long as the dot shows.
+        if (state.system.micActive || state.system.cameraActive) {
+            total += 22.0f;
+        }
+        total = std::ceil(total / MediaPillLayout::kWidthQuantum) * MediaPillLayout::kWidthQuantum;
+        return Clamp(total, MediaPillLayout::kBaseWidth, MediaPillLayout::kTitleMaxWidth);
+    }
+
    private:
     // Keyed on the string alone. EnsureTextFormats invalidates both caches
     // whenever it rebuilds the formats, so a cached width can never outlive the
@@ -13356,6 +13794,90 @@ class Renderer {
     };
     TextWidthCache idleClockWidthCache_;
     TextWidthCache idleWeatherWidthCache_;
+
+    // One cached layout for the collapsed title, shared by the sizer and the
+    // painter, so the pill is never sized for a different string than it draws.
+    CollapsedLyricLine collapsedTitleFit_;
+    CollapsedLyricLine collapsedArtistFit_;
+
+    std::wstring CollapsedTitleText(const SharedState& state) {
+        std::wstring live;
+        if (!state.media.title.empty()) {
+            live = state.media.title;
+        } else if (!state.media.sourceName.empty()) {
+            live = state.media.sourceName;
+        } else {
+            live = std::wstring(Loc(L"Media"));
+        }
+        // Both the sizer and the painter come through here, so the pill is never
+        // measured for one string and painted with another during the hold.
+        return EffectiveTitle(live, NowSeconds());
+    }
+
+    // Modules.MediaTrackChangeAnim: a track change usually lands while the island is
+    // still opening, so painting the live title straight away shows the new name and
+    // only afterwards replays the swap, which reads as new -> old -> new. Hold the
+    // outgoing text on screen for the configured delay instead and hand the new one
+    // over at the moment the transition starts. A hold is dropped as soon as the
+    // source reports a different title again, or goes back to the text already on
+    // screen, so no stale name can survive a skip.
+    std::wstring EffectiveTitle(const std::wstring& live, double now) {
+        if (mediaTitleHold_.empty()) {
+            if (live == mediaTitleShown_) {
+                return mediaTitleShown_;
+            }
+            const bool eligible = trackChangeAnim_ && trackAnimEligible_ &&
+                                  !mediaTitleShown_.empty() && !live.empty();
+            if (!eligible) {
+                mediaTitleShown_ = live;
+                return mediaTitleShown_;
+            }
+            mediaTitleHold_ = live;
+            mediaTitleHoldAt_ = now + TrackAnimDelaySeconds();
+            g_layoutDirty = true;  // keep frames coming until the hold expires
+            return mediaTitleShown_;
+        }
+
+        if (live == mediaTitleShown_) {
+            // Skipped back to the track that is still on screen: nothing to show.
+            mediaTitleHold_.clear();
+            mediaTitleHoldAt_ = -1.0;
+            return mediaTitleShown_;
+        }
+        if (live != mediaTitleHold_) {
+            // Changed again before the hold expired: re-arm on the latest title.
+            mediaTitleHold_ = live;
+            mediaTitleHoldAt_ = now + TrackAnimDelaySeconds();
+            g_layoutDirty = true;
+            return mediaTitleShown_;
+        }
+        if (now < mediaTitleHoldAt_) {
+            g_layoutDirty = true;
+            return mediaTitleShown_;
+        }
+        mediaTitleShown_ = mediaTitleHold_;
+        mediaTitleHold_.clear();
+        mediaTitleHoldAt_ = -1.0;
+        return mediaTitleShown_;
+    }
+
+    float TitleFitWidth(const std::wstring& title) {
+        if (collapsedTitleFit_.text != title || !collapsedTitleFit_.layout) {
+            BuildCollapsedLyricLine(collapsedTitleFit_, title, textFormat_.Get());
+        }
+        return collapsedTitleFit_.width;
+    }
+
+    // Same idea for the artist line (Modules.MediaPillTitleMode = title-artist).
+    float ArtistFitWidth(const std::wstring& artist) {
+        if (!smallTextFormat_) {
+            return 0.0f;
+        }
+        if (collapsedArtistFit_.text != artist || !collapsedArtistFit_.layout) {
+            BuildCollapsedLyricLine(collapsedArtistFit_, artist, smallTextFormat_.Get());
+        }
+        return collapsedArtistFit_.width;
+    }
 
     float MeasureTextWidthCached(const std::wstring& text, IDWriteTextFormat* fmt,
                                  TextWidthCache& cache) {
@@ -13459,6 +13981,10 @@ class Renderer {
         // width measured against the old ones is stale.
         idleClockWidthCache_.valid = false;
         idleWeatherWidthCache_.valid = false;
+        collapsedTitleFit_.layout.Reset();
+        collapsedTitleFit_.text.clear();
+        collapsedArtistFit_.layout.Reset();
+        collapsedArtistFit_.text.clear();
 
         textFormat_ = nullptr;
         smallTextFormat_ = nullptr;
@@ -15949,10 +16475,8 @@ class Renderer {
         }
 
         if (state.lyrics.synced) {
-            double currentPositionSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                currentPositionSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
+            // Shared position math (capped extrapolation, paused-safe).
+            double currentPositionSec = MediaPositionNowSec(state.media);
 
             // The reported position lags what you hear by a bit; nudge it forward.
             // Raise this if lyrics feel late, lower it if they feel early.
@@ -17056,6 +17580,20 @@ class Renderer {
 
         expandedAnim_ = settings.expandedMediaAnim;
         pillCoverAnim_ = settings.pillCoverAnim;
+        trackChangeAnim_ = settings.mediaTrackChangeAnim;
+        trackChangeAnimDelayMs_ = settings.mediaTrackChangeAnimDelayMs;
+        // The held-back transition only makes sense for a change that just
+        // happened; opening the card minutes later must not replay an old swap.
+        constexpr double kTrackAnimWindow = 2.5;
+        trackAnimEligible_ = trackChangeAnim_ && state.media.titleChangedAt > 0.0 &&
+                             (now - state.media.titleChangedAt) <= kTrackAnimWindow;
+        // Modules.MediaTrackChangeAnim: a cover hold must not outlive the change it
+        // belongs to; an island that never opens would otherwise keep a stale face.
+        if (artHoldActive_ && (artHoldUntil_ < 0.0 || now > artHoldUntil_)) {
+            artHoldActive_ = false;
+            artHoldOld_.Reset();
+            artHoldUntil_ = -1.0;
+        }
 
         // The old side panel is replaced by the immersive lyrics view, so the island never widens.
         const bool sideLyricsOn = false;
@@ -17217,10 +17755,51 @@ class Renderer {
                 const float textLeft = artRect.right + 18.0f;
                 const float textRight = waveRect.left - 16.0f;
 
+                if (settings.mediaExpandedCustomLayout) {
+                    // Configurable text block: which of the four lines are shown and
+                    // in what order. The row heights match the stock ones so the text
+                    // keeps its weight; the top offset and the spacing are settings.
+                    const float rowH[4] = {20.0f, 20.0f, 16.0f, 14.0f};
+                    float rowTop = rect.top + static_cast<float>(settings.mediaExpandedTop);
+                    for (const int kind : settings.mediaExpandedOrder) {
+                        if (kind == 2 && state.media.albumTitle.empty()) continue;
+                        if (kind == 3 && state.media.sourceName.empty()) continue;
+                        const D2D1_RECT_F row =
+                            D2D1::RectF(textLeft, rowTop, textRight, rowTop + rowH[kind]);
+                        if (kind == 0) {
+                            const std::wstring titleLive = state.media.title.empty()
+                                                               ? std::wstring(Loc(L"Unknown"))
+                                                               : state.media.title;
+                            const std::wstring titleText = EffectiveTitle(titleLive, now);
+                            if (!DrawTitleTransition(titleText, row, textBrush_.Get(), now,
+                                                     !state.media.title.empty())) {
+                                DrawMarqueeText(titleText, row, textFormat_.Get(), textBrush_.Get(),
+                                                now, 42.0f, marqueeTitleCache_);
+                            }
+                        } else if (kind == 1) {
+                            mutedBrush_->SetOpacity(0.80f);
+                            DrawSwapMarquee(swapArtist_, state.media.artist, row,
+                                            smallTextFormat_.Get(), mutedBrush_.Get(), now, 30.0f,
+                                            marqueeArtistCache_, 0.06f);
+                            mutedBrush_->SetOpacity(0.75f);
+                        } else if (kind == 2) {
+                            mutedBrush_->SetOpacity(0.70f);
+                            DrawSwapMarquee(swapAlbum_, state.media.albumTitle, row,
+                                            smallTextFormat_.Get(), mutedBrush_.Get(), now, 28.0f,
+                                            marqueeAlbumCache_, 0.12f);
+                            mutedBrush_->SetOpacity(0.75f);
+                        } else {
+                            DrawSourceLine(state.media, row, now);
+                        }
+                        rowTop += rowH[kind] + static_cast<float>(settings.mediaExpandedGap);
+                    }
+                } else {
                 // Title — bold, prominent.
                 D2D1_RECT_F titleRect = D2D1::RectF(textLeft, rect.top + 34.0f, textRight, rect.top + 54.0f);
-                const std::wstring titleText =
+                const std::wstring titleLive =
                     state.media.title.empty() ? std::wstring(Loc(L"Unknown")) : state.media.title;
+                // Held back until the deferred swap starts (Modules.MediaTrackChangeAnim).
+                const std::wstring titleText = EffectiveTitle(titleLive, now);
                 if (!DrawTitleTransition(titleText, titleRect, textBrush_.Get(), now, !state.media.title.empty())) {
                     DrawMarqueeText(titleText, titleRect, textFormat_.Get(), textBrush_.Get(), now, 42.0f,
                                     marqueeTitleCache_);
@@ -17240,6 +17819,7 @@ class Renderer {
                                     mutedBrush_.Get(), now, 28.0f, marqueeAlbumCache_, 0.12f);
                     mutedBrush_->SetOpacity(0.75f);
                 }
+                }  // end of stock / custom text block choice
 
                 if (state.media.playing) {
                     DrawSpectrum(state, waveRect, settings, now);
@@ -17257,8 +17837,11 @@ class Renderer {
                 }
 
                 // Source line, under the artist (or under the album when there is one).
-                const float srcLineTop = rect.top + (state.media.albumTitle.empty() ? 70.0f : 85.0f);
-                DrawSourceLine(state.media, D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 14.0f), now);
+                // A custom block already placed it in the configured order.
+                if (!settings.mediaExpandedCustomLayout) {
+                    const float srcLineTop = rect.top + (state.media.albumTitle.empty() ? 70.0f : 85.0f);
+                    DrawSourceLine(state.media, D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 14.0f), now);
+                }
                 }  // end of `if (immersiveMix < 0.999f)`
                 EndImmersiveFade(normalFaded);
                 DrawImmersiveLyricsView(state, rect, settings, now, immersiveMix);
@@ -17284,20 +17867,32 @@ class Renderer {
 
                 // Timeline (Scrubber)
                 const float scrubberY = rect.top + MediaLayout::kScrubberY;
-                double currentPosition = state.media.positionTicks / 10000000.0;
-                double duration = state.media.endTicks / 10000000.0;
-                if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                    currentPosition += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
+                const bool durationUsable = MediaDurationUsableTicks(state.media.endTicks);
+                double duration = durationUsable ? state.media.endTicks / 10000000.0 : 0.0;
+                // (a)/(c)/(d) One shared position, capped extrapolation, no extrapolation
+                // while paused, and no duration clamp when the source has no usable
+                // duration. The old code clamped with duration unconditionally, so a
+                // live stream (endTicks = 0) pinned the time labels to 0:00 forever.
+                double currentPosition = MediaPositionNowSec(state.media);
+                if (durationUsable) {
+                    currentPosition = std::max(0.0, std::min(currentPosition, duration));
                 }
-                currentPosition = std::max(0.0, std::min(currentPosition, duration));
 
                 const bool isDraggingThisBar = g_scrubbing.load(std::memory_order_relaxed);
                 float progress;
                 if (isDraggingThisBar) {
-                    progress = Clamp(g_scrubDragFraction.load(std::memory_order_relaxed), 0.0f, 1.0f);
-                    currentPosition = duration * progress;
+                    progress = durationUsable
+                                   ? Clamp(g_scrubDragFraction.load(std::memory_order_relaxed), 0.0f, 1.0f)
+                                   : 0.0f;
+                    if (durationUsable) {
+                        currentPosition = duration * progress;
+                    }
                 } else {
-                    progress = duration > 0.0 ? static_cast<float>(currentPosition / duration) : 0.0f;
+                    // (d) No usable duration means no ratio to draw. Zero the bar
+                    // instead of dividing by a duration that is not a duration.
+                    progress = durationUsable && duration > 0.0
+                                   ? static_cast<float>(currentPosition / duration)
+                                   : 0.0f;
                 }
 
                 auto FormatTime = [](double seconds) -> std::wstring {
@@ -17476,6 +18071,18 @@ class Renderer {
                     const float dotX = waveRect.left + i * (barWidth + gap) + barWidth * 0.5f;
                     target_->FillEllipse(D2D1::Ellipse(D2D1::Point2F(dotX, cy), 1.2f, 1.2f), mutedBrush_.Get());
                 }
+            }
+
+            // Title-only collapsed pill (Modules.MediaPillTitle). Centred between
+            // the cover and the visualiser with the same gap on each side; the
+            // island is sized to the title, so this never has to scroll.
+            if (settings.mediaPillTitle && settings.media && state.media.available) {
+                const float titlePad =
+                    static_cast<float>(ClampInt(settings.mediaPillTitlePad, 0, 60));
+                DrawCollapsedTitle(state,
+                                   D2D1::RectF(artRect.right + titlePad, rect.top,
+                                               waveRect.left - titlePad, rect.bottom),
+                                   settings.mediaPillTitleArtist);
             }
 
             // Lyrics between the album art and the visualiser. Fades in as the
@@ -17820,10 +18427,7 @@ class Renderer {
             EnsureImmersiveFormat(settings);
 
             // Same position math as the Lyrics tab, including the sync offset.
-            double posSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                posSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
+            double posSec = MediaPositionNowSec(state.media);
             if (state.media.playing) {
                 posSec += LyricsLookaheadSec();
             }
@@ -18099,10 +18703,7 @@ class Renderer {
             }
         } else {
             // Same position math as the Lyrics tab, including the lookahead nudge.
-            double posSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                posSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
+            double posSec = MediaPositionNowSec(state.media);
             if (state.media.playing) {
                 posSec += LyricsLookaheadSec();
                             }
@@ -18209,6 +18810,64 @@ class Renderer {
     }
 
     // Builds the cached layout for one lyric line.
+    // Collapsed pill title (Modules.MediaPillTitle): one static line, centred
+    // between the cover and the visualiser with the same gap on both sides. The
+    // island is sized to it, so it never scrolls; if a title reaches the width cap
+    // the box crops it symmetrically instead of running it off the island.
+    void DrawCollapsedTitle(const SharedState& state, D2D1_RECT_F area, bool showArtist) {
+        IDWriteTextFormat* fmt = textFormat_.Get();
+        if (!fmt || !dwriteFactory_) {
+            return;
+        }
+        const std::wstring title = CollapsedTitleText(state);
+        const float width = TitleFitWidth(title);
+        if (!collapsedTitleFit_.layout) {
+            return;
+        }
+        const float availW = area.right - area.left;
+        if (availW <= 1.0f) {
+            return;
+        }
+        // Title + artist: the artist takes a second line inside the same
+        // centred box, so both lines stay symmetric inside the pill.
+        const bool hasArtist = showArtist && !state.media.artist.empty();
+        float artistWidth = 0.0f;
+        if (hasArtist) {
+            artistWidth = ArtistFitWidth(state.media.artist);
+            if (!collapsedArtistFit_.layout) {
+                return;
+            }
+        }
+
+        const float cy = (area.top + area.bottom) * 0.5f;
+        const float titleH = collapsedTitleFit_.height;
+        const float artistH = hasArtist ? collapsedArtistFit_.height : 0.0f;
+        const float blockH = titleH + artistH;
+        const float areaH = area.bottom - area.top;
+        // Centre the stack. With a large Text size the two lines can outgrow the
+        // 44px pill, so hang them from the top instead of letting the clip eat
+        // the title and leave only the artist.
+        const float top = (blockH > areaH) ? area.top : cy - blockH * 0.5f;
+
+        // Centred in the box, which is itself symmetric between cover and
+        // visualiser, so the two gaps come out equal.
+        const float titleX = area.left + (availW - width) * 0.5f;
+
+        target_->PushAxisAlignedClip(area, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        textBrush_->SetOpacity(0.96f);
+        target_->DrawTextLayout(D2D1::Point2F(titleX, top), collapsedTitleFit_.layout.Get(),
+                                textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+        if (hasArtist && mutedBrush_) {
+            mutedBrush_->SetOpacity(0.72f);
+            const float artistX = area.left + (availW - artistWidth) * 0.5f;
+            target_->DrawTextLayout(D2D1::Point2F(artistX, top + titleH),
+                                    collapsedArtistFit_.layout.Get(), mutedBrush_.Get(),
+                                    D2D1_DRAW_TEXT_OPTIONS_NONE);
+            mutedBrush_->SetOpacity(0.75f);
+        }
+        target_->PopAxisAlignedClip();
+    }
+
     void BuildCollapsedLyricLine(CollapsedLyricLine& out, const std::wstring& text,
                                  IDWriteTextFormat* fmt) {
         out.text = text;
@@ -18256,10 +18915,7 @@ class Renderer {
         int64_t posMs = 0;
         if (lyricsUsable) {
             // Same position math as the Lyrics tab, including the lookahead nudge.
-            double posSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                posSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
+            double posSec = MediaPositionNowSec(state.media);
             if (state.media.playing) {
                 posSec += LyricsLookaheadSec();
                             }
@@ -19288,11 +19944,31 @@ class Renderer {
             titleNew_.clear();
             if (expandedAnim_ && recentlyDrawn && realTitle && oldWasReal && !oldText.empty()) {
                 StartTitleTransition(oldText, text, rect, now);
+            } else if (expandedAnim_ && trackAnimEligible_ && realTitle && oldWasReal &&
+                       !oldText.empty()) {
+                // Modules.MediaTrackChangeAnim: the title changed while the card was
+                // off screen; play the same swap once the island has opened instead
+                // of snapping straight to the new text.
+                titleAnimPendingText_ = oldText;
+                titleAnimPendingAt_ = now + TrackAnimDelaySeconds();
             }
         } else if (titleAnimActive_ && (!recentlyDrawn || !expandedAnim_)) {
             titleAnimActive_ = false;
             titleOld_.clear();
             titleNew_.clear();
+        }
+
+        if (titleAnimPendingAt_ >= 0.0) {
+            if (now < titleAnimPendingAt_) {
+                g_layoutDirty = true;  // keep frames coming until it starts
+            } else {
+                std::wstring pendingOld;
+                pendingOld.swap(titleAnimPendingText_);
+                titleAnimPendingAt_ = -1.0;
+                if (expandedAnim_ && !pendingOld.empty()) {
+                    StartTitleTransition(pendingOld, text, rect, now);
+                }
+            }
         }
 
         if (!titleAnimActive_) return false;
@@ -19501,6 +20177,30 @@ class Renderer {
         const bool recentlyDrawn = st.lastDrawn >= 0.0 && (now - st.lastDrawn) < 0.25;
         st.lastDrawn = now;
 
+        // Modules.MediaTrackChangeAnim: same rule as the title. The row keeps the
+        // outgoing line until the deferred swap starts, otherwise the new text shows
+        // up first and the animation replays the old one afterwards. A hold armed
+        // for a text that is no longer current is dropped on the spot.
+        if (!st.hold.empty() && st.hold != text) {
+            st.hold.clear();
+            st.holdAt = -1.0;
+        }
+        if (st.hold.empty() && text != st.shown) {
+            if (trackChangeAnim_ && trackAnimEligible_ && !st.shown.empty()) {
+                st.hold = text;
+                st.holdAt = now + TrackAnimDelaySeconds();
+            }
+        }
+        if (!st.hold.empty()) {
+            if (now < st.holdAt) {
+                g_layoutDirty = true;  // keep frames coming until the hold expires
+                DrawMarqueeText(st.shown, rect, format, brush, now, speed, cache);
+                return;
+            }
+            st.hold.clear();
+            st.holdAt = -1.0;
+        }
+
         if (text != st.shown) {
             if (recentlyDrawn && expandedAnim_) {
                 st.prev = st.shown;
@@ -19585,6 +20285,11 @@ class Renderer {
         }
     }
 
+    // Modules.MediaTrackChangeAnimDelayMs as seconds.
+    double TrackAnimDelaySeconds() const {
+        return static_cast<double>(ClampInt(trackChangeAnimDelayMs_, 0, 1500)) / 1000.0;
+    }
+
     void DrawAlbumArtFlip(const MediaSnapshot& media, D2D1_RECT_F rect, double now,
                           float radius, bool drawBadge) {
         constexpr double kFlipDuration = 0.62;
@@ -19592,18 +20297,51 @@ class Renderer {
         artFlipLastDrawn_ = now;
 
         const uint64_t hash = ArtContentHash(media);
-        if (!artFlipInit_ || !recentlyDrawn) {
+        // Modules.MediaTrackChangeAnim: the card was off screen while the track
+        // changed (the island is still opening), so the flip is armed with a short
+        // delay instead of being dropped -- without it the cover just snaps.
+        const bool deferred = trackAnimEligible_ && artFlipInit_ && !recentlyDrawn &&
+                              hash != 0 && hash != artFlipHash_;
+        if (!artFlipInit_ || (!recentlyDrawn && !deferred)) {
             artFlipInit_ = true;
             artFlipHash_ = hash;
             artFlipStart_ = -1.0;
+            artFlipPendingAt_ = -1.0;
             artFlipOld_.Reset();
         } else if (hash != artFlipHash_) {
             // Mid-flip changes just retarget the face shown after the turn.
             if (expandedAnim_ && artFlipStart_ < 0.0 && hash != 0) {
-                artFlipOld_ = artBitmap_;  // still the previous cover: not rebuilt yet
-                artFlipStart_ = now;
+                // Modules.MediaTrackChangeAnim: artBitmap_ has already been rebuilt to
+                // the new cover by the time the card is open, so the face held from
+                // before the change is the only correct outgoing one.
+                artFlipOld_ = (artHoldActive_ && artHoldOld_) ? artHoldOld_ : artBitmap_;
+                if (recentlyDrawn) {
+                    artFlipStart_ = now;
+                    artHoldActive_ = false;
+                    artHoldOld_.Reset();
+                    artHoldUntil_ = -1.0;
+                } else if (artFlipPendingAt_ < 0.0) {
+                    artFlipPendingAt_ = now + TrackAnimDelaySeconds();
+                }
             }
-            artFlipHash_ = hash;
+            if (recentlyDrawn) artFlipHash_ = hash;
+        }
+
+        // Deferred start: the island has finished opening, play the turn now.
+        if (artFlipPendingAt_ >= 0.0) {
+            if (now < artFlipPendingAt_) {
+                g_layoutDirty = true;  // keep frames coming until it starts
+            } else {
+                artFlipPendingAt_ = -1.0;
+                artFlipHash_ = hash;
+                if (expandedAnim_ && artFlipStart_ < 0.0) artFlipStart_ = now;
+                if (artFlipStart_ >= 0.0) {
+                    // artFlipOld_ holds its own reference, so the hold can be released.
+                    artHoldActive_ = false;
+                    artHoldOld_.Reset();
+                    artHoldUntil_ = -1.0;
+                }
+            }
         }
 
         float p = -1.0f;
@@ -19616,6 +20354,13 @@ class Renderer {
             }
         }
         if (p < 0.0f) {
+            // Modules.MediaTrackChangeAnim: still inside the hold, so the outgoing cover
+            // stays put instead of the new one appearing before the turn.
+            if (artHoldActive_ && artHoldOld_) {
+                g_layoutDirty = true;
+                DrawArtFace(artHoldOld_.Get(), rect, radius);
+                return;
+            }
             DrawAlbumArt(media, rect, now, radius, drawBadge);
             return;
         }
@@ -19654,6 +20399,16 @@ class Renderer {
         if (!media.art) return;
         const BitmapPixels& art = *media.art;
         if (artGeneration_ != art.generation || !artBitmap_) {
+            // Modules.MediaTrackChangeAnim: remember the cover still on screen before
+            // this rebuild replaces it, so the pill and the flip can keep showing it
+            // until the deferred transition actually starts.
+            if (trackChangeAnim_ && trackAnimEligible_ && artBitmap_ && !artHoldActive_ &&
+                artGeneration_ != art.generation) {
+                artHoldOld_ = artBitmap_;
+                artHoldActive_ = true;
+                artHoldUntil_ = NowSeconds() + TrackAnimDelaySeconds() + 2.5;
+                g_layoutDirty = true;
+            }
             D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
                 D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
             target_->CreateBitmap(D2D1::SizeU(art.width, art.height),
@@ -19817,6 +20572,18 @@ class Renderer {
         }
 
         EnsureArtBitmap(media);
+        // Modules.MediaTrackChangeAnim: the outgoing cover stays on the pill until the
+        // deferred transition starts, so the art does not swap ahead of the animation.
+        if (artHoldActive_ && artHoldOld_) {
+            pillArtInit_ = true;
+            pillArtHash_ = hash;
+            pillArtStart_ = -1.0;
+            pillArtOld_.Reset();
+            pillArtLast_ = artBitmap_;
+            g_layoutDirty = true;
+            DrawArtFace(artHoldOld_.Get(), rect, radius);
+            return;
+        }
         ID2D1Bitmap* fresh = !media.art ? nullptr : artBitmap_.Get();
 
         float p = -1.0f;
@@ -22200,6 +22967,26 @@ class Renderer {
     bool         pillArtInit_ = false;
     bool         expandedAnim_ = false;   // Settings::expandedMediaAnim, latched per frame
     bool         pillCoverAnim_ = false;  // Settings::pillCoverAnim, latched per frame
+    // Modules.MediaTrackChangeAnim: the track-change transition (cover flip, title
+    // swap) is held back and played once the island has finished opening, so a
+    // change that landed while it was still closed is not skipped.
+    bool         trackChangeAnim_ = false;       // Settings::mediaTrackChangeAnim
+    int          trackChangeAnimDelayMs_ = 400;  // Settings::mediaTrackChangeAnimDelayMs
+    bool         trackAnimEligible_ = false;     // a track change just happened
+    // Modules.MediaTrackChangeAnim: the cover that was on screen before the change,
+    // kept there until the deferred transition starts.
+    ComPtr<ID2D1Bitmap> artHoldOld_;
+    bool         artHoldActive_ = false;
+    double       artHoldUntil_ = -1.0;
+    double       artFlipPendingAt_ = -1.0;       // <0 = nothing armed
+    double       titleAnimPendingAt_ = -1.0;     // <0 = nothing armed
+    std::wstring titleAnimPendingText_;
+    // Modules.MediaTrackChangeAnim: the title that is on screen, and the one waiting
+    // for the hold to expire. Shared by the collapsed pill sizer/painter and the
+    // expanded card so both show the same string on the same frame.
+    std::wstring mediaTitleShown_;
+    std::wstring mediaTitleHold_;
+    double       mediaTitleHoldAt_ = -1.0;
     bool         specInit_ = false;     // audio spectrum state
     double       specLastDrawn_ = -1.0;
     double       specStart_ = -1.0;     // -1 = no track-change animation running
@@ -24878,7 +25665,9 @@ DWORD WINAPI RenderThreadProc(void*) {
                                        primary.kind == IslandKind::Media &&
                                        snapshot.media.playing &&
                                        !snapshot.media.title.empty() &&
-                                       (now - snapshot.media.titleChangedAt < 5.0);
+                                       (now - snapshot.media.titleChangedAt <
+                                        static_cast<double>(ClampInt(
+                                            g_settings.mediaExpandHoldSeconds, 1, 60)));
 
         bool isTransientAlert = (primary.kind == IslandKind::Clipboard ||
                                  primary.kind == IslandKind::Notification ||
@@ -25028,7 +25817,8 @@ DWORD WINAPI RenderThreadProc(void*) {
             primary.height = GameOverlayLayout::For(compact).height * g_settings.sizeScale;
         }
         if (primary.kind == IslandKind::Media) {
-            if (!isFullscreen && (isHoverExpanded || pinned || recentTrackChange)) {
+            if (!isFullscreen &&
+                (isHoverExpanded || pinned || recentTrackChange)) {
                 primary.width = MediaLayout::kExpandedWidth * g_settings.sizeScale;
                 primary.height = MediaLayout::kExpandedHeight * g_settings.sizeScale;
                 // (Immersive lyrics: the island keeps its normal 380px width.)
@@ -25037,7 +25827,12 @@ DWORD WINAPI RenderThreadProc(void*) {
                 const float clockSection = g_settings.mediaPillClock
                     ? renderer.MeasureMediaPill(snapshot, g_settings).sectionWidth
                     : 0.0f;
-                if (CollapsedLyricsActive(snapshot, g_settings)) {
+                if (g_settings.mediaPillTitle && g_settings.media && snapshot.media.available) {
+                    // Title-only pill: width follows the title (plus the clock
+                    // section when that is on), so the text is never scrolled.
+                    primary.width = renderer.MeasureCollapsedTitle(snapshot, g_settings) *
+                                    g_settings.sizeScale;
+                } else if (CollapsedLyricsActive(snapshot, g_settings)) {
                     // Collapsed but carrying lyrics: wider pill, same height.
                     primary.width = (kCollapsedLyricsWidth + clockSection) * g_settings.sizeScale;
                 } else if (g_settings.mediaPillClock) {
