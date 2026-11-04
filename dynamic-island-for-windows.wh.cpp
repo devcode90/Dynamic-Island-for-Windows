@@ -1439,6 +1439,55 @@ struct MediaSnapshot {
     int64_t lastUpdatedTicks = 0;
 };
 
+// How far past the last snapshot anything is allowed to extrapolate. The media
+// thread polls every 1.5s, so a gap larger than this means the source stopped
+// refreshing its timeline and the position must stop with it instead of running
+// away from the truth.
+constexpr double kMaxPositionExtrapolationSec = 2.0;
+constexpr int64_t kMaxExtrapolationTicks =
+    static_cast<int64_t>(kMaxPositionExtrapolationSec * 10000000.0);
+
+// Shortest duration (seconds) that still counts as a real timeline. Live streams,
+// HLS/RTSP and the first frame after a track change all report 0 or a few ticks.
+constexpr double kMinUsableDurationSec = 1.0;
+
+inline bool MediaDurationUsableTicks(int64_t endTicks) {
+    return endTicks > 0 && endTicks >= static_cast<int64_t>(kMinUsableDurationSec * 10000000.0);
+}
+
+// The one place that answers "where is the track right now", in seconds. Every
+// consumer (scrubber and all four lyrics paths) goes through this, otherwise the
+// bar and the lyrics each extrapolate their own way and disagree.
+//
+// Rules, all of them there to keep a lying source from dragging the display with it:
+//  - never extrapolate while the source is paused or reports no usable duration;
+//  - never extrapolate more than kMaxPositionExtrapolationSec past the snapshot;
+//  - never extrapolate past the end of the track.
+inline double MediaPositionNowSec(const MediaSnapshot& media) {
+    double pos = media.positionTicks / 10000000.0;
+    if (pos < 0.0) {
+        pos = 0.0;
+    }
+    const double duration = media.endTicks / 10000000.0;
+    if (!media.playing || media.lastUpdatedTicks <= 0 || !MediaDurationUsableTicks(media.endTicks)) {
+        return pos;
+    }
+    double elapsed =
+        (static_cast<double>(GetTickCount64()) - static_cast<double>(media.lastUpdatedTicks)) / 1000.0;
+    if (elapsed <= 0.0) {
+        return pos;
+    }
+    if (elapsed > kMaxPositionExtrapolationSec) {
+        elapsed = kMaxPositionExtrapolationSec;
+    }
+    pos += elapsed;
+    return pos > duration ? duration : pos;
+}
+
+inline int64_t MediaPositionNowTicks(const MediaSnapshot& media) {
+    return static_cast<int64_t>(MediaPositionNowSec(media) * 10000000.0);
+}
+
 // One SMTC media session the dock can switch to.
 struct MediaSourceInfo {
     std::wstring aumid;
@@ -1872,6 +1921,11 @@ std::atomic<bool> g_tabAnimating{false};      // a tab transition is in motion (
 bool g_oleInitialized = false;
 std::atomic<bool> g_scrubbing = false;           // true while press-dragging the media timeline scrubber
 std::atomic<float> g_scrubDragFraction = 0.0f;   // live 0..1 drag position while g_scrubbing is true
+// A seek is the one position change that is known to be true the moment it is issued.
+// The UI thread bumps the serial and parks the target here so the poll loop can seed
+// its confirmation baseline instead of treating the user's own seek as source noise.
+std::atomic<uint64_t> g_seekSerial{0};
+std::atomic<int64_t> g_seekTargetTicks{0};
 std::atomic<double> g_lastLiveSeekTime = 0.0;    // throttle gate for live seeks while dragging
 std::atomic<bool> g_audioCaptureNeeded = false;  // gates the WASAPI loopback thread
 std::atomic<bool> g_spectrumBandsNeeded = false; // only Pulse Orb / Plasma Thread read the frequency bands
@@ -5635,9 +5689,26 @@ DWORD WINAPI MediaThreadProc(void*) {
 
     Manager manager{nullptr};
     bool loggedUnavailable = false;
-    int64_t pendingSeekBaseline = -1;  // guards against bogus "went backwards" readings
+    int64_t pendingSeekBaseline = -1;  // guards against bogus position readings
     MediaSourceTracker sourceTracker;
     ULONGLONG pendingSeekBaselineTickCount = 0;
+
+    // (e) Some sources freeze both Position() and LastUpdatedTime while the track
+    // keeps playing, so every timestamp they hand out lies. Counting identical raw
+    // positions lets the loop notice that and re-anchor on the local monotonic
+    // clock instead of extrapolating from a timestamp that never changes.
+    constexpr int kAnchorAfterStablePolls = 3;
+    int64_t lastRawPos = -1;
+    int stableRawPosPolls = 0;
+    ULONGLONG rawPosStableSince = 0;
+
+    // How many polls a held reading may overrule the estimate before it is accepted.
+    int unconfirmedHolds = 0;
+
+    // Last seek the user issued, as seen by this loop. When the serial moves, the
+    // target becomes the confirmation seed, so a real seek does not have to win a
+    // three-poll fight against its own noise filter.
+    uint64_t seenSeekSerial = 0;
 
     while (WaitForSingleObject(g_stopEvent, 0) == WAIT_TIMEOUT) {
         MediaSnapshot next;
@@ -5671,33 +5742,96 @@ DWORD WINAPI MediaThreadProc(void*) {
                         int64_t np = rawPos;
                         int64_t ne = timeline.EndTime().count();
                         bool npP = (playback.PlaybackStatus() == PlaybackStatus::Playing);
+                        const ULONGLONG nowTicks64 = GetTickCount64();
+
+                        // (e) Notice sources whose timeline never moves. Lycia Player (probe5)
+                        // froze Position() AND LastUpdatedTime for the whole 40s trial, so
+                        // every timestamp it hands out is decoration and the position has to
+                        // come from the local monotonic clock instead.
+                        if (npP && rawPos == lastRawPos) {
+                            ++stableRawPosPolls;
+                        } else {
+                            lastRawPos = rawPos;
+                            stableRawPosPolls = 0;
+                            rawPosStableSince = nowTicks64;
+                        }
+
+                        int64_t anchoredTicks = -1;
+                        if (npP && stableRawPosPolls >= kAnchorAfterStablePolls &&
+                            MediaDurationUsableTicks(ne)) {
+                            // Same position N polls in a row while claiming to play: the
+                            // source's timeline is stale. Re-anchor on how long ago that
+                            // position was first reported.
+                            anchoredTicks = rawPos +
+                                static_cast<int64_t>(nowTicks64 - rawPosStableSince) * 10000;
+                            if (anchoredTicks > ne) {
+                                anchoredTicks = ne;
+                            }
+                        }
+
                         if (npP) {
                             // Position() is the position at LastUpdatedTime, not "now".
                             try {
                                 const auto lastUpdated = timeline.LastUpdatedTime();
                                 const int64_t ageTicks = (winrt::clock::now() - lastUpdated).count();
-                                if (ageTicks > 0 && ageTicks < 10 * 10000000LL) {
-                                    np = rawPos + ageTicks;
+                                // (a) Extrapolate at most kMaxExtrapolationTicks. A bigger age
+                                // means the source stopped refreshing its timeline, and adding
+                                // all of it walked the bar seconds past the audio. The old code
+                                // instead had a 10s cliff that read as a fake seek on recovery.
+                                // (c) No extrapolation while paused, and none without a usable
+                                // duration: age says nothing about a track that is not running.
+                                if (ageTicks > 0 && MediaDurationUsableTicks(ne)) {
+                                    np = rawPos + (ageTicks < kMaxExtrapolationTicks
+                                                       ? ageTicks
+                                                       : kMaxExtrapolationTicks);
                                 }
                             } catch (...) {
                             }
                         }
 
+                        // The local-clock anchor is the better estimate whenever it is ahead
+                        // of the source-provided one, which is exactly the frozen-timeline case.
+                        if (anchoredTicks > np) {
+                            np = anchoredTicks;
+                        }
+
                         std::lock_guard lock(g_stateMutex);
-                        // Some sources (notably the Spotify desktop app) refresh LastUpdatedTime
-                        // without moving Position(), which makes the estimate jump backwards.
-                        // Hold off until a second poll confirms it is a real seek.
+                        // The user's own seek is the one position change known to be
+                        // correct the instant it is issued. Seed the confirmation
+                        // baseline from it, otherwise the noise filter spends up to
+                        // kMaxUnconfirmedHolds polls rejecting a jump the user asked for.
+                        // pendingSeekBaseline used to be written only by the hold branch
+                        // itself, so a seek had to lose three times before it won.
+                        const uint64_t seekSerialNow = g_seekSerial.load(std::memory_order_relaxed);
+                        if (seekSerialNow != seenSeekSerial) {
+                            seenSeekSerial = seekSerialNow;
+                            pendingSeekBaseline = g_seekTargetTicks.load(std::memory_order_relaxed);
+                            pendingSeekBaselineTickCount = nowTicks64;
+                            unconfirmedHolds = 0;
+                        }
+
+                        // Some sources refresh LastUpdatedTime without moving Position(), and
+                        // others move Position() before the timeline catches up. Either way a
+                        // single poll can be off by more than a poll period, in EITHER
+                        // direction, so hold the reading until a second poll confirms it. The
+                        // old version only did this for backwards jumps and let every forwards
+                        // jump through unchecked.
                         constexpr int64_t kJitterToleranceTicks = 15000000LL;   // 1.5s
                         constexpr int64_t kConfirmToleranceTicks = 5000000LL;   // 0.5s
+                        // A source that is consistently offset from real time would reset the
+                        // baseline on every poll and stay locked on the estimate forever, so
+                        // the hold expires instead of blocking the measured value indefinitely.
+                        constexpr int kMaxUnconfirmedHolds = 3;
                         const bool sameTrackPlaying =
-                            npP && g_state.media.playing && ne == g_state.media.endTicks;
+                            npP && g_state.media.playing && ne == g_state.media.endTicks &&
+                            anchoredTicks <= 0;
 
                         if (sameTrackPlaying) {
                             const int64_t predictedNow = g_state.media.positionTicks +
                                 (static_cast<int64_t>(GetTickCount64()) - g_state.media.lastUpdatedTicks) * 10000;
+                            const int64_t drift = np - predictedNow;
 
-                            if (np < predictedNow - kJitterToleranceTicks) {
-                                const ULONGLONG nowTicks64 = GetTickCount64();
+                            if (drift > kJitterToleranceTicks || drift < -kJitterToleranceTicks) {
                                 bool confirmed = false;
                                 if (pendingSeekBaseline >= 0) {
                                     const int64_t expectedIfRealSeek = pendingSeekBaseline +
@@ -5711,16 +5845,23 @@ DWORD WINAPI MediaThreadProc(void*) {
 
                                 if (confirmed) {
                                     pendingSeekBaseline = -1;
+                                    unconfirmedHolds = 0;
+                                } else if (unconfirmedHolds >= kMaxUnconfirmedHolds) {
+                                    pendingSeekBaseline = -1;
+                                    unconfirmedHolds = 0;
                                 } else {
                                     pendingSeekBaseline = np;
                                     pendingSeekBaselineTickCount = nowTicks64;
+                                    ++unconfirmedHolds;
                                     np = predictedNow;
                                 }
                             } else {
                                 pendingSeekBaseline = -1;
+                                unconfirmedHolds = 0;
                             }
                         } else {
                             pendingSeekBaseline = -1;
+                            unconfirmedHolds = 0;
                         }
                         if (np != g_state.media.positionTicks ||
                             ne != g_state.media.endTicks ||
@@ -12136,6 +12277,12 @@ void ToggleEndpointMute() {
 
 // Shared by the scrubber's live drag updates and its on-release commit.
 void SeekMediaToTicks(int64_t targetTicks) {
+    // Publish the seek before the request goes out: the poll thread watches the
+    // serial to seed its baseline at the target and to demand confirmation of the
+    // next raw position, so the bar cannot snap back to the old spot while the
+    // source catches up.
+    g_seekTargetTicks.store(targetTicks, std::memory_order_relaxed);
+    g_seekSerial.fetch_add(1, std::memory_order_relaxed);
     std::thread([targetTicks]() {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         try {
@@ -12990,6 +13137,11 @@ struct SwapTextState {
     double start = -1.0;              // animation start, -1 = idle
     double lastDrawn = -1.0;          // last frame this row was drawn
     MarqueeLayoutCache prevCache;     // layout cache for the outgoing text
+    // Modules.MediaTrackChangeAnim: text that is waiting for the deferred swap.
+    // `shown` keeps the outgoing line until holdAt, so the row never flashes the
+    // new text before animating the old one in.
+    std::wstring hold;
+    double holdAt = -1.0;             // -1 = no hold armed
 };
 
 struct MediaPillMetrics {
@@ -13460,13 +13612,64 @@ class Renderer {
     CollapsedLyricLine collapsedArtistFit_;
 
     std::wstring CollapsedTitleText(const SharedState& state) {
+        std::wstring live;
         if (!state.media.title.empty()) {
-            return state.media.title;
+            live = state.media.title;
+        } else if (!state.media.sourceName.empty()) {
+            live = state.media.sourceName;
+        } else {
+            live = std::wstring(Loc(L"Media"));
         }
-        if (!state.media.sourceName.empty()) {
-            return state.media.sourceName;
+        // Both the sizer and the painter come through here, so the pill is never
+        // measured for one string and painted with another during the hold.
+        return EffectiveTitle(live, NowSeconds());
+    }
+
+    // Modules.MediaTrackChangeAnim: a track change usually lands while the island is
+    // still opening, so painting the live title straight away shows the new name and
+    // only afterwards replays the swap, which reads as new -> old -> new. Hold the
+    // outgoing text on screen for the configured delay instead and hand the new one
+    // over at the moment the transition starts. A hold is dropped as soon as the
+    // source reports a different title again, or goes back to the text already on
+    // screen, so no stale name can survive a skip.
+    std::wstring EffectiveTitle(const std::wstring& live, double now) {
+        if (mediaTitleHold_.empty()) {
+            if (live == mediaTitleShown_) {
+                return mediaTitleShown_;
+            }
+            const bool eligible = trackChangeAnim_ && trackAnimEligible_ &&
+                                  !mediaTitleShown_.empty() && !live.empty();
+            if (!eligible) {
+                mediaTitleShown_ = live;
+                return mediaTitleShown_;
+            }
+            mediaTitleHold_ = live;
+            mediaTitleHoldAt_ = now + TrackAnimDelaySeconds();
+            g_layoutDirty = true;  // keep frames coming until the hold expires
+            return mediaTitleShown_;
         }
-        return std::wstring(Loc(L"Media"));
+
+        if (live == mediaTitleShown_) {
+            // Skipped back to the track that is still on screen: nothing to show.
+            mediaTitleHold_.clear();
+            mediaTitleHoldAt_ = -1.0;
+            return mediaTitleShown_;
+        }
+        if (live != mediaTitleHold_) {
+            // Changed again before the hold expired: re-arm on the latest title.
+            mediaTitleHold_ = live;
+            mediaTitleHoldAt_ = now + TrackAnimDelaySeconds();
+            g_layoutDirty = true;
+            return mediaTitleShown_;
+        }
+        if (now < mediaTitleHoldAt_) {
+            g_layoutDirty = true;
+            return mediaTitleShown_;
+        }
+        mediaTitleShown_ = mediaTitleHold_;
+        mediaTitleHold_.clear();
+        mediaTitleHoldAt_ = -1.0;
+        return mediaTitleShown_;
     }
 
     float TitleFitWidth(const std::wstring& title) {
@@ -16083,10 +16286,8 @@ class Renderer {
         }
 
         if (state.lyrics.synced) {
-            double currentPositionSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                currentPositionSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
+            // Shared position math (capped extrapolation, paused-safe).
+            double currentPositionSec = MediaPositionNowSec(state.media);
 
             // The reported position lags what you hear by a bit; nudge it forward.
             // Raise this if lyrics feel late, lower it if they feel early.
@@ -17360,8 +17561,10 @@ class Renderer {
 
                 // Title — bold, prominent.
                 D2D1_RECT_F titleRect = D2D1::RectF(textLeft, rect.top + 34.0f, textRight, rect.top + 54.0f);
-                const std::wstring titleText =
+                const std::wstring titleLive =
                     state.media.title.empty() ? std::wstring(Loc(L"Unknown")) : state.media.title;
+                // Held back until the deferred swap starts (Modules.MediaTrackChangeAnim).
+                const std::wstring titleText = EffectiveTitle(titleLive, now);
                 if (!DrawTitleTransition(titleText, titleRect, textBrush_.Get(), now, !state.media.title.empty())) {
                     DrawMarqueeText(titleText, titleRect, textFormat_.Get(), textBrush_.Get(), now, 42.0f,
                                     marqueeTitleCache_);
@@ -17425,20 +17628,32 @@ class Renderer {
 
                 // Timeline (Scrubber)
                 const float scrubberY = rect.top + MediaLayout::kScrubberY;
-                double currentPosition = state.media.positionTicks / 10000000.0;
-                double duration = state.media.endTicks / 10000000.0;
-                if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                    currentPosition += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
+                const bool durationUsable = MediaDurationUsableTicks(state.media.endTicks);
+                double duration = durationUsable ? state.media.endTicks / 10000000.0 : 0.0;
+                // (a)/(c)/(d) One shared position, capped extrapolation, no extrapolation
+                // while paused, and no duration clamp when the source has no usable
+                // duration. The old code clamped with duration unconditionally, so a
+                // live stream (endTicks = 0) pinned the time labels to 0:00 forever.
+                double currentPosition = MediaPositionNowSec(state.media);
+                if (durationUsable) {
+                    currentPosition = std::max(0.0, std::min(currentPosition, duration));
                 }
-                currentPosition = std::max(0.0, std::min(currentPosition, duration));
 
                 const bool isDraggingThisBar = g_scrubbing.load(std::memory_order_relaxed);
                 float progress;
                 if (isDraggingThisBar) {
-                    progress = Clamp(g_scrubDragFraction.load(std::memory_order_relaxed), 0.0f, 1.0f);
-                    currentPosition = duration * progress;
+                    progress = durationUsable
+                                   ? Clamp(g_scrubDragFraction.load(std::memory_order_relaxed), 0.0f, 1.0f)
+                                   : 0.0f;
+                    if (durationUsable) {
+                        currentPosition = duration * progress;
+                    }
                 } else {
-                    progress = duration > 0.0 ? static_cast<float>(currentPosition / duration) : 0.0f;
+                    // (d) No usable duration means no ratio to draw. Zero the bar
+                    // instead of dividing by a duration that is not a duration.
+                    progress = durationUsable && duration > 0.0
+                                   ? static_cast<float>(currentPosition / duration)
+                                   : 0.0f;
                 }
 
                 auto FormatTime = [](double seconds) -> std::wstring {
@@ -17973,10 +18188,7 @@ class Renderer {
             EnsureImmersiveFormat(settings);
 
             // Same position math as the Lyrics tab, including the sync offset.
-            double posSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                posSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
+            double posSec = MediaPositionNowSec(state.media);
             if (state.media.playing) {
                 posSec += LyricsLookaheadSec();
             }
@@ -18252,10 +18464,7 @@ class Renderer {
             }
         } else {
             // Same position math as the Lyrics tab, including the lookahead nudge.
-            double posSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                posSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
+            double posSec = MediaPositionNowSec(state.media);
             if (state.media.playing) {
                 posSec += LyricsLookaheadSec();
                             }
@@ -18467,10 +18676,7 @@ class Renderer {
         int64_t posMs = 0;
         if (lyricsUsable) {
             // Same position math as the Lyrics tab, including the lookahead nudge.
-            double posSec = state.media.positionTicks / 10000000.0;
-            if (state.media.playing && state.media.lastUpdatedTicks > 0) {
-                posSec += (GetTickCount64() - state.media.lastUpdatedTicks) / 1000.0;
-            }
+            double posSec = MediaPositionNowSec(state.media);
             if (state.media.playing) {
                 posSec += LyricsLookaheadSec();
                             }
@@ -19731,6 +19937,30 @@ class Renderer {
         constexpr float kDur = 0.38f;
         const bool recentlyDrawn = st.lastDrawn >= 0.0 && (now - st.lastDrawn) < 0.25;
         st.lastDrawn = now;
+
+        // Modules.MediaTrackChangeAnim: same rule as the title. The row keeps the
+        // outgoing line until the deferred swap starts, otherwise the new text shows
+        // up first and the animation replays the old one afterwards. A hold armed
+        // for a text that is no longer current is dropped on the spot.
+        if (!st.hold.empty() && st.hold != text) {
+            st.hold.clear();
+            st.holdAt = -1.0;
+        }
+        if (st.hold.empty() && text != st.shown) {
+            if (trackChangeAnim_ && trackAnimEligible_ && !st.shown.empty()) {
+                st.hold = text;
+                st.holdAt = now + TrackAnimDelaySeconds();
+            }
+        }
+        if (!st.hold.empty()) {
+            if (now < st.holdAt) {
+                g_layoutDirty = true;  // keep frames coming until the hold expires
+                DrawMarqueeText(st.shown, rect, format, brush, now, speed, cache);
+                return;
+            }
+            st.hold.clear();
+            st.holdAt = -1.0;
+        }
 
         if (text != st.shown) {
             if (recentlyDrawn && expandedAnim_) {
@@ -22466,6 +22696,12 @@ class Renderer {
     double       artFlipPendingAt_ = -1.0;       // <0 = nothing armed
     double       titleAnimPendingAt_ = -1.0;     // <0 = nothing armed
     std::wstring titleAnimPendingText_;
+    // Modules.MediaTrackChangeAnim: the title that is on screen, and the one waiting
+    // for the hold to expire. Shared by the collapsed pill sizer/painter and the
+    // expanded card so both show the same string on the same frame.
+    std::wstring mediaTitleShown_;
+    std::wstring mediaTitleHold_;
+    double       mediaTitleHoldAt_ = -1.0;
     bool         specInit_ = false;     // audio spectrum state
     double       specLastDrawn_ = -1.0;
     double       specStart_ = -1.0;     // -1 = no track-change animation running
