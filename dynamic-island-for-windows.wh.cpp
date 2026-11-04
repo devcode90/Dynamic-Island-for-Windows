@@ -5800,6 +5800,16 @@ DWORD WINAPI MediaThreadProc(void*) {
     bool wasPollPlaying = false;
     ULONGLONG lastPollTickCount = 0;
 
+    // Title of the track the current position belongs to. A title change is the one
+    // moment where the position is known without asking the source: the new track
+    // starts at zero. Sources that freeze their timeline (Lycia Player) keep reporting
+    // the previous track's position for a poll or two, together with a timestamp that
+    // can be minutes stale, so neither may seed the track that just began.
+    std::wstring lastTrackKey;
+    // Wall clock at which the current track began advancing from zero, 0 while no track
+    // change has been witnessed yet (the mod started mid-track).
+    ULONGLONG trackFirstSeenTickCount = 0;
+
     // How many polls a held reading may overrule the estimate before it is accepted.
     int unconfirmedHolds = 0;
 
@@ -5841,6 +5851,23 @@ DWORD WINAPI MediaThreadProc(void*) {
                         int64_t ne = timeline.EndTime().count();
                         bool npP = (playback.PlaybackStatus() == PlaybackStatus::Playing);
                         const ULONGLONG nowTicks64 = GetTickCount64();
+
+                        // A new track resets every position anchor here, before any of the
+                        // estimates below read them.
+                        const bool trackBeginsNow = !next.title.empty() &&
+                            !lastTrackKey.empty() && next.title != lastTrackKey;
+                        if (trackBeginsNow) {
+                            trackFirstSeenTickCount = nowTicks64;
+                            lastTruthTicks = 0;
+                            frozenPausedTicks = 0;
+                            lastFreezeRawPos = -1;
+                            lastFreezeEndTicks = -1;
+                            pendingSeekBaseline = -1;
+                            unconfirmedHolds = 0;
+                        }
+                        if (!next.title.empty()) {
+                            lastTrackKey = next.title;
+                        }
 
                         // Where is the track right now? A source that refreshes its
                         // timeline normally gets the old 2s ceiling, which keeps a stale
@@ -5915,6 +5942,18 @@ DWORD WINAPI MediaThreadProc(void*) {
                             pendingSeekBaseline = g_seekTargetTicks.load(std::memory_order_relaxed);
                             pendingSeekBaselineTickCount = nowTicks64;
                             unconfirmedHolds = 0;
+                            // The seek target is the new anchor, so the wall-clock clamp
+                            // below does not pull the bar back to where it was.
+                            if (trackFirstSeenTickCount != 0) {
+                                int64_t targetMs = pendingSeekBaseline / 10000;
+                                if (targetMs < 0) {
+                                    targetMs = 0;
+                                }
+                                trackFirstSeenTickCount =
+                                    static_cast<ULONGLONG>(targetMs) < nowTicks64
+                                        ? nowTicks64 - static_cast<ULONGLONG>(targetMs)
+                                        : 0;
+                            }
                         }
 
                         // Some sources refresh LastUpdatedTime without moving Position(), and
@@ -5953,6 +5992,19 @@ DWORD WINAPI MediaThreadProc(void*) {
                                 if (np < atLeast) {
                                     np = atLeast;
                                 }
+                            }
+                        }
+                        // A track that just began cannot be further along than the wall
+                        // time that has passed since it was first seen. This is what stops
+                        // the previous track's position (or a stale timestamp) from seeding
+                        // the new one, and it never touches a track that has been playing
+                        // for a while, because the allowance only grows with time.
+                        if (trackFirstSeenTickCount != 0 && pendingSeekBaseline < 0 &&
+                            seekSerialNow == seenSeekSerial) {
+                            const int64_t sinceTrackStart =
+                                static_cast<int64_t>(nowTicks64 - trackFirstSeenTickCount) * 10000;
+                            if (sinceTrackStart >= 0 && np > sinceTrackStart) {
+                                np = sinceTrackStart;
                             }
                         }
                         if (MediaDurationUsableTicks(ne) && np > ne) {
