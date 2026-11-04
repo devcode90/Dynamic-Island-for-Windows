@@ -1467,6 +1467,11 @@ struct MediaSnapshot {
     int64_t positionTicks = 0;
     int64_t endTicks = 0;
     int64_t lastUpdatedTicks = 0;
+    // True when the source was not moving its own timeline at the moment this
+    // snapshot was taken. Such a source still tells the truth about the instant it
+    // last spoke, so the age of lastUpdatedTicks is real elapsed playback time and
+    // the display may use it in full instead of the 2s anti-runaway ceiling.
+    bool frozenTimeline = false;
 };
 
 // How far past the last snapshot anything is allowed to extrapolate. The media
@@ -1515,8 +1520,9 @@ inline double MediaPositionNowSec(const MediaSnapshot& media) {
     if (elapsed <= 0.0) {
         return pos;
     }
-    if (elapsed > kMaxPositionExtrapolationSec) {
-        elapsed = kMaxPositionExtrapolationSec;
+    const double cap = media.frozenTimeline ? kMaxFrozenAgeSec : kMaxPositionExtrapolationSec;
+    if (elapsed > cap) {
+        elapsed = cap;
     }
     pos += elapsed;
     return pos > duration ? duration : pos;
@@ -5931,6 +5937,28 @@ DWORD WINAPI MediaThreadProc(void*) {
                             npP && g_state.media.playing && ne == g_state.media.endTicks &&
                             sourceSpoke;
 
+                        // A source that alternates between publishing a position and
+                        // freezing again (Lycia Player does this around pause/resume and
+                        // metadata refreshes) used to make the bar jump backwards by the
+                        // whole frozen window, then crawl forward again. Within one track,
+                        // and with no seek of ours in flight, playback only moves forward.
+                        const bool sameTrackStill = npP && g_state.media.playing &&
+                            next.title == g_state.media.title && ne == g_state.media.endTicks &&
+                            seekSerialNow == seenSeekSerial;
+                        if (sameTrackStill && g_state.media.positionTicks > 0) {
+                            const int64_t sinceLastPoll =
+                                static_cast<int64_t>(nowTicks64 - lastPollTickCount) * 10000;
+                            if (sinceLastPoll > 0) {
+                                const int64_t atLeast = g_state.media.positionTicks + sinceLastPoll;
+                                if (np < atLeast) {
+                                    np = atLeast;
+                                }
+                            }
+                        }
+                        if (MediaDurationUsableTicks(ne) && np > ne) {
+                            np = ne;
+                        }
+
                         if (sameTrackPlaying) {
                             const int64_t predictedNow = g_state.media.positionTicks +
                                 (static_cast<int64_t>(GetTickCount64()) - g_state.media.lastUpdatedTicks) * 10000;
@@ -5979,6 +6007,7 @@ DWORD WINAPI MediaThreadProc(void*) {
                             next.endTicks = g_state.media.endTicks;
                             next.lastUpdatedTicks = g_state.media.lastUpdatedTicks;
                         }
+                        next.frozenTimeline = !sourceSpoke;
                     }
 
                     next.sourceAppUserModelId = session.SourceAppUserModelId().c_str();
