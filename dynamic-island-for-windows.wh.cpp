@@ -401,6 +401,30 @@ We love community contributions! To ensure high-quality updates, please follow t
     $options:
       - title: Title only
       - title-artist: Title and artist
+  - MediaExpandedCustomLayout: false
+    $name: Customize the expanded player text
+    $description: Turns the four line switches and the line order below on. While this is off the expanded card keeps its stock layout, so nothing about the default look changes.
+  - MediaExpandedShowTitle: true
+    $name: Expanded card - show the title
+    $description: First line candidate of the text block. Only used with "Customize the expanded player text" above.
+  - MediaExpandedShowArtist: true
+    $name: Expanded card - show the artist
+    $description: Second line candidate of the text block. Only used with "Customize the expanded player text" above.
+  - MediaExpandedShowAlbum: true
+    $name: Expanded card - show the album
+    $description: Album line candidate of the text block. Also hidden automatically while the track reports no album. Only used with "Customize the expanded player text" above.
+  - MediaExpandedShowSource: true
+    $name: Expanded card - show where it is playing from
+    $description: The "Playing from ..." line. Also hidden while no app name is known. Only used with "Customize the expanded player text" above.
+  - MediaExpandedLineOrder: 'title,artist,album,source'
+    $name: Expanded card - line order
+    $description: Comma separated order of title, artist, album and source. Unknown or repeated names are ignored, and any of the four left out is appended in the stock order.
+  - MediaExpandedTop: '34'
+    $name: Expanded card - text top offset (pixels)
+    $description: Distance from the top of the expanded card to the first line, in pixels (0 to 80). The stock layout uses 34.
+  - MediaExpandedGap: '0'
+    $name: Expanded card - gap between lines (pixels)
+    $description: Extra space between two text lines, in pixels (0 to 20). The stock layout uses 0.
   - Volume: true
     $name: Volume slider flyout
     $description: Shows a volume slider banner on the island when adjusting system volume. Disable if you prefer the default Windows volume flyout.
@@ -1365,6 +1389,12 @@ struct Settings {
     bool mediaPillTitle = false;    // collapsed pill shows the track title, sized to it
     bool mediaPillTitleArtist = false;  // Modules.MediaPillTitleMode: artist under the title
     int mediaPillTitlePad = 12;     // Modules.MediaPillTitlePad, px on each side of the title
+    // ── Expanded player text block (configurable) ────────────────────────────
+    bool mediaExpandedCustomLayout = false;  // Modules.MediaExpandedCustomLayout
+    int mediaExpandedTop = 34;      // Modules.MediaExpandedTop, px from the card top
+    int mediaExpandedGap = 0;       // Modules.MediaExpandedGap, px between two lines
+    // Resolved line order, kinds: 0 title, 1 artist, 2 album, 3 source.
+    std::vector<int> mediaExpandedOrder;
     bool dateFirst = false;
     int firstDayOfWeek = -1;        // 0 = Sunday .. 6 = Saturday, -1 = follow Windows
 
@@ -3394,6 +3424,55 @@ void LoadSettings() {
     {
         const std::wstring padStr = GetStringSettingCopy(L"Modules.MediaPillTitlePad");
         next.mediaPillTitlePad = padStr.empty() ? 12 : ClampInt(_wtoi(padStr.c_str()), 0, 60);
+    }
+    {
+        // Configurable text block of the expanded player. The stock layout stays in
+        // charge until the switch is on, so the default look cannot drift.
+        next.mediaExpandedCustomLayout = Wh_GetIntSetting(L"Modules.MediaExpandedCustomLayout") != 0;
+        bool visible[4] = {
+            Wh_GetIntSetting(L"Modules.MediaExpandedShowTitle") != 0,
+            Wh_GetIntSetting(L"Modules.MediaExpandedShowArtist") != 0,
+            Wh_GetIntSetting(L"Modules.MediaExpandedShowAlbum") != 0,
+            Wh_GetIntSetting(L"Modules.MediaExpandedShowSource") != 0,
+        };
+        const std::wstring topStr = GetStringSettingCopy(L"Modules.MediaExpandedTop");
+        next.mediaExpandedTop = topStr.empty() ? 34 : ClampInt(_wtoi(topStr.c_str()), 0, 80);
+        const std::wstring gapStr = GetStringSettingCopy(L"Modules.MediaExpandedGap");
+        next.mediaExpandedGap = gapStr.empty() ? 0 : ClampInt(_wtoi(gapStr.c_str()), 0, 20);
+
+        // "title,artist,album,source" in any order. Unknown and repeated names are
+        // dropped; anything the user left out is appended in the stock order so a
+        // typo can never make a line disappear silently.
+        next.mediaExpandedOrder.clear();
+        const std::wstring orderStr = GetStringSettingCopy(L"Modules.MediaExpandedLineOrder");
+        bool used[4] = {false, false, false, false};
+        size_t parseAt = 0;
+        while (parseAt <= orderStr.size()) {
+            const size_t comma = orderStr.find(L',', parseAt);
+            std::wstring token = orderStr.substr(
+                parseAt, comma == std::wstring::npos ? std::wstring::npos : comma - parseAt);
+            while (!token.empty() && (token.front() == L' ' || token.front() == L'\t')) token.erase(0, 1);
+            while (!token.empty() && (token.back() == L' ' || token.back() == L'\t')) token.pop_back();
+            int kind = -1;
+            if (EqualsNoCase(token, L"title")) {
+                kind = 0;
+            } else if (EqualsNoCase(token, L"artist")) {
+                kind = 1;
+            } else if (EqualsNoCase(token, L"album")) {
+                kind = 2;
+            } else if (EqualsNoCase(token, L"source")) {
+                kind = 3;
+            }
+            if (kind >= 0 && !used[kind]) {
+                used[kind] = true;
+                if (visible[kind]) next.mediaExpandedOrder.push_back(kind);
+            }
+            if (comma == std::wstring::npos) break;
+            parseAt = comma + 1;
+        }
+        for (int kind = 0; kind < 4; ++kind) {
+            if (visible[kind] && !used[kind]) next.mediaExpandedOrder.push_back(kind);
+        }
     }
 
     // ── Localization (#35) ───────────────────────────────────────────────────
@@ -5697,10 +5776,14 @@ DWORD WINAPI MediaThreadProc(void*) {
     // keeps playing, so every timestamp they hand out lies. Counting identical raw
     // positions lets the loop notice that and re-anchor on the local monotonic
     // clock instead of extrapolating from a timestamp that never changes.
-    constexpr int kAnchorAfterStablePolls = 3;
+    constexpr int kAnchorAfterStablePolls = 2;
     int64_t lastRawPos = -1;
     int stableRawPosPolls = 0;
     ULONGLONG rawPosStableSince = 0;
+    // Playback state the anchor counter last advanced under. The anchor timer must
+    // never span a pause or a track change: rawPosStableSince used to survive both,
+    // so every second spent paused was added to the position on resume.
+    int64_t lastAnchorEndTicks = -1;
 
     // How many polls a held reading may overrule the estimate before it is accepted.
     int unconfirmedHolds = 0;
@@ -5748,7 +5831,19 @@ DWORD WINAPI MediaThreadProc(void*) {
                         // froze Position() AND LastUpdatedTime for the whole 40s trial, so
                         // every timestamp it hands out is decoration and the position has to
                         // come from the local monotonic clock instead.
-                        if (npP && rawPos == lastRawPos) {
+                        //
+                        // The timer may only run while the same track keeps playing.
+                        // A pause, a resume or a new track restarts it, otherwise the
+                        // time spent paused was added to the position on resume.
+                        if (!npP || ne != lastAnchorEndTicks) {
+                            lastAnchorEndTicks = ne;
+                            stableRawPosPolls = 0;
+                            rawPosStableSince = 0;
+                            lastRawPos = rawPos;
+                        } else if (rawPos == lastRawPos) {
+                            if (rawPosStableSince == 0) {
+                                rawPosStableSince = nowTicks64;
+                            }
                             ++stableRawPosPolls;
                         } else {
                             lastRawPos = rawPos;
@@ -17569,6 +17664,45 @@ class Renderer {
                 const float textLeft = artRect.right + 18.0f;
                 const float textRight = waveRect.left - 16.0f;
 
+                if (settings.mediaExpandedCustomLayout) {
+                    // Configurable text block: which of the four lines are shown and
+                    // in what order. The row heights match the stock ones so the text
+                    // keeps its weight; the top offset and the spacing are settings.
+                    const float rowH[4] = {20.0f, 20.0f, 16.0f, 14.0f};
+                    float rowTop = rect.top + static_cast<float>(settings.mediaExpandedTop);
+                    for (const int kind : settings.mediaExpandedOrder) {
+                        if (kind == 2 && state.media.albumTitle.empty()) continue;
+                        if (kind == 3 && state.media.sourceName.empty()) continue;
+                        const D2D1_RECT_F row =
+                            D2D1::RectF(textLeft, rowTop, textRight, rowTop + rowH[kind]);
+                        if (kind == 0) {
+                            const std::wstring titleLive = state.media.title.empty()
+                                                               ? std::wstring(Loc(L"Unknown"))
+                                                               : state.media.title;
+                            const std::wstring titleText = EffectiveTitle(titleLive, now);
+                            if (!DrawTitleTransition(titleText, row, textBrush_.Get(), now,
+                                                     !state.media.title.empty())) {
+                                DrawMarqueeText(titleText, row, textFormat_.Get(), textBrush_.Get(),
+                                                now, 42.0f, marqueeTitleCache_);
+                            }
+                        } else if (kind == 1) {
+                            mutedBrush_->SetOpacity(0.80f);
+                            DrawSwapMarquee(swapArtist_, state.media.artist, row,
+                                            smallTextFormat_.Get(), mutedBrush_.Get(), now, 30.0f,
+                                            marqueeArtistCache_, 0.06f);
+                            mutedBrush_->SetOpacity(0.75f);
+                        } else if (kind == 2) {
+                            mutedBrush_->SetOpacity(0.70f);
+                            DrawSwapMarquee(swapAlbum_, state.media.albumTitle, row,
+                                            smallTextFormat_.Get(), mutedBrush_.Get(), now, 28.0f,
+                                            marqueeAlbumCache_, 0.12f);
+                            mutedBrush_->SetOpacity(0.75f);
+                        } else {
+                            DrawSourceLine(state.media, row, now);
+                        }
+                        rowTop += rowH[kind] + static_cast<float>(settings.mediaExpandedGap);
+                    }
+                } else {
                 // Title — bold, prominent.
                 D2D1_RECT_F titleRect = D2D1::RectF(textLeft, rect.top + 34.0f, textRight, rect.top + 54.0f);
                 const std::wstring titleLive =
@@ -17594,6 +17728,7 @@ class Renderer {
                                     mutedBrush_.Get(), now, 28.0f, marqueeAlbumCache_, 0.12f);
                     mutedBrush_->SetOpacity(0.75f);
                 }
+                }  // end of stock / custom text block choice
 
                 if (state.media.playing) {
                     DrawSpectrum(state, waveRect, settings, now);
@@ -17611,8 +17746,11 @@ class Renderer {
                 }
 
                 // Source line, under the artist (or under the album when there is one).
-                const float srcLineTop = rect.top + (state.media.albumTitle.empty() ? 70.0f : 85.0f);
-                DrawSourceLine(state.media, D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 14.0f), now);
+                // A custom block already placed it in the configured order.
+                if (!settings.mediaExpandedCustomLayout) {
+                    const float srcLineTop = rect.top + (state.media.albumTitle.empty() ? 70.0f : 85.0f);
+                    DrawSourceLine(state.media, D2D1::RectF(textLeft, srcLineTop, textRight, srcLineTop + 14.0f), now);
+                }
                 }  // end of `if (immersiveMix < 0.999f)`
                 EndImmersiveFade(normalFaded);
                 DrawImmersiveLyricsView(state, rect, settings, now, immersiveMix);
