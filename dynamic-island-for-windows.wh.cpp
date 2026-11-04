@@ -1477,6 +1477,14 @@ constexpr double kMaxPositionExtrapolationSec = 2.0;
 constexpr int64_t kMaxExtrapolationTicks =
     static_cast<int64_t>(kMaxPositionExtrapolationSec * 10000000.0);
 
+// Ceiling for the age of a timeline the source stopped refreshing on its own. Such a
+// source still tells the truth about where it was when it last spoke, so that age is
+// used in full (Lycia Player sits 100s+ behind by design: it publishes once when the
+// track starts and then never again). This number only guards against a timestamp
+// from a different era, it is never reached by a real frozen timeline.
+constexpr double kMaxFrozenAgeSec = 6.0 * 3600.0;
+constexpr int64_t kMaxFrozenAgeTicks = static_cast<int64_t>(kMaxFrozenAgeSec * 10000000.0);
+
 // Shortest duration (seconds) that still counts as a real timeline. Live streams,
 // HLS/RTSP and the first frame after a track change all report 0 or a few ticks.
 constexpr double kMinUsableDurationSec = 1.0;
@@ -5772,18 +5780,19 @@ DWORD WINAPI MediaThreadProc(void*) {
     MediaSourceTracker sourceTracker;
     ULONGLONG pendingSeekBaselineTickCount = 0;
 
-    // (e) Some sources freeze both Position() and LastUpdatedTime while the track
-    // keeps playing, so every timestamp they hand out lies. Counting identical raw
-    // positions lets the loop notice that and re-anchor on the local monotonic
-    // clock instead of extrapolating from a timestamp that never changes.
-    constexpr int kAnchorAfterStablePolls = 2;
-    int64_t lastRawPos = -1;
-    int stableRawPosPolls = 0;
-    ULONGLONG rawPosStableSince = 0;
-    // Playback state the anchor counter last advanced under. The anchor timer must
-    // never span a pause or a track change: rawPosStableSince used to survive both,
-    // so every second spent paused was added to the position on resume.
-    int64_t lastAnchorEndTicks = -1;
+    // Some sources freeze BOTH Position() and LastUpdatedTime while the track keeps
+    // playing, so their timestamp looks like decoration. It is not: the frozen position
+    // plus the age of the frozen timestamp is exactly where the track is. Measured on
+    // Lycia Player (com.wover.lyciaplayer): seek to 20s, play 12.4s, pause -> it then
+    // reported 32.385s, which matches that formula to within 0.015s over the whole
+    // window. So the age of a frozen timestamp is signal, not noise. Wall time spent
+    // paused is not media time and is accumulated here so a resume does not jump.
+    int64_t lastFreezeRawPos = -1;
+    int64_t lastFreezeEndTicks = -1;
+    int64_t frozenPausedTicks = 0;
+    int64_t lastTruthTicks = -1;
+    bool wasPollPlaying = false;
+    ULONGLONG lastPollTickCount = 0;
 
     // How many polls a held reading may overrule the estimate before it is accepted.
     int unconfirmedHolds = 0;
@@ -5827,68 +5836,65 @@ DWORD WINAPI MediaThreadProc(void*) {
                         bool npP = (playback.PlaybackStatus() == PlaybackStatus::Playing);
                         const ULONGLONG nowTicks64 = GetTickCount64();
 
-                        // (e) Notice sources whose timeline never moves. Lycia Player (probe5)
-                        // froze Position() AND LastUpdatedTime for the whole 40s trial, so
-                        // every timestamp it hands out is decoration and the position has to
-                        // come from the local monotonic clock instead.
-                        //
-                        // The timer may only run while the same track keeps playing.
-                        // A pause, a resume or a new track restarts it, otherwise the
-                        // time spent paused was added to the position on resume.
-                        if (!npP || ne != lastAnchorEndTicks) {
-                            lastAnchorEndTicks = ne;
-                            stableRawPosPolls = 0;
-                            rawPosStableSince = 0;
-                            lastRawPos = rawPos;
-                        } else if (rawPos == lastRawPos) {
-                            if (rawPosStableSince == 0) {
-                                rawPosStableSince = nowTicks64;
+                        // Where is the track right now? A source that refreshes its
+                        // timeline normally gets the old 2s ceiling, which keeps a stale
+                        // timestamp from walking the bar forward. A source that has
+                        // stopped refreshing while it keeps playing is the opposite case:
+                        // its timestamp age is the true elapsed playback time, so it is
+                        // used in full, bounded only by the end of the track.
+                        const bool sourceSpoke = rawPos != lastFreezeRawPos;
+                        const bool trackChanged = ne != lastFreezeEndTicks;
+                        if (sourceSpoke || trackChanged) {
+                            lastFreezeRawPos = rawPos;
+                            lastFreezeEndTicks = ne;
+                            frozenPausedTicks = 0;  // a fresh timeline carries no pause
+                        }
+
+                        if (!npP) {
+                            // Paused: hold the last real position and bank the wall time,
+                            // so resuming continues where the track actually stopped.
+                            if (!wasPollPlaying) {
+                                frozenPausedTicks +=
+                                    static_cast<int64_t>(nowTicks64 - lastPollTickCount) * 10000;
                             }
-                            ++stableRawPosPolls;
+                            np = lastTruthTicks >= 0 ? lastTruthTicks : rawPos;
                         } else {
-                            lastRawPos = rawPos;
-                            stableRawPosPolls = 0;
-                            rawPosStableSince = nowTicks64;
-                        }
-
-                        int64_t anchoredTicks = -1;
-                        if (npP && stableRawPosPolls >= kAnchorAfterStablePolls &&
-                            MediaDurationUsableTicks(ne)) {
-                            // Same position N polls in a row while claiming to play: the
-                            // source's timeline is stale. Re-anchor on how long ago that
-                            // position was first reported.
-                            anchoredTicks = rawPos +
-                                static_cast<int64_t>(nowTicks64 - rawPosStableSince) * 10000;
-                            if (anchoredTicks > ne) {
-                                anchoredTicks = ne;
-                            }
-                        }
-
-                        if (npP) {
-                            // Position() is the position at LastUpdatedTime, not "now".
+                            int64_t ageTicks = 0;
                             try {
-                                const auto lastUpdated = timeline.LastUpdatedTime();
-                                const int64_t ageTicks = (winrt::clock::now() - lastUpdated).count();
-                                // (a) Extrapolate at most kMaxExtrapolationTicks. A bigger age
-                                // means the source stopped refreshing its timeline, and adding
-                                // all of it walked the bar seconds past the audio. The old code
-                                // instead had a 10s cliff that read as a fake seek on recovery.
-                                // (c) No extrapolation while paused, and none without a usable
-                                // duration: age says nothing about a track that is not running.
-                                if (ageTicks > 0 && MediaDurationUsableTicks(ne)) {
-                                    np = rawPos + (ageTicks < kMaxExtrapolationTicks
-                                                       ? ageTicks
-                                                       : kMaxExtrapolationTicks);
-                                }
+                                ageTicks = (winrt::clock::now() -
+                                            timeline.LastUpdatedTime()).count();
                             } catch (...) {
+                                ageTicks = 0;
                             }
+                            int64_t cap = kMaxExtrapolationTicks;
+                            if (!sourceSpoke) {
+                                // The timeline is not moving on its own, so its age is
+                                // genuinely the elapsed playback time.
+                                cap = kMaxFrozenAgeTicks;
+                                if (MediaDurationUsableTicks(ne)) {
+                                    const int64_t toEnd = ne - rawPos;
+                                    if (toEnd >= 0 && toEnd < cap) {
+                                        cap = toEnd;
+                                    }
+                                }
+                            }
+                            int64_t mediaAge = ageTicks - frozenPausedTicks;
+                            if (mediaAge < 0) {
+                                mediaAge = 0;
+                            }
+                            if (mediaAge > cap) {
+                                mediaAge = cap;
+                            }
+                            if (ageTicks > 0 && MediaDurationUsableTicks(ne)) {
+                                np = rawPos + mediaAge;
+                            }
+                            if (MediaDurationUsableTicks(ne) && np > ne) {
+                                np = ne;
+                            }
+                            lastTruthTicks = np;
                         }
-
-                        // The local-clock anchor is the better estimate whenever it is ahead
-                        // of the source-provided one, which is exactly the frozen-timeline case.
-                        if (anchoredTicks > np) {
-                            np = anchoredTicks;
-                        }
+                        wasPollPlaying = npP;
+                        lastPollTickCount = nowTicks64;
 
                         std::lock_guard lock(g_stateMutex);
                         // The user's own seek is the one position change known to be
@@ -5917,9 +5923,13 @@ DWORD WINAPI MediaThreadProc(void*) {
                         // baseline on every poll and stay locked on the estimate forever, so
                         // the hold expires instead of blocking the measured value indefinitely.
                         constexpr int kMaxUnconfirmedHolds = 3;
+                        // Only a position the source actually published needs the noise
+                        // filter. A frozen timeline is advanced by the local clock here,
+                        // so there is no reading to second-guess, and filtering it would
+                        // reject the one correct jump for three polls.
                         const bool sameTrackPlaying =
                             npP && g_state.media.playing && ne == g_state.media.endTicks &&
-                            anchoredTicks <= 0;
+                            sourceSpoke;
 
                         if (sameTrackPlaying) {
                             const int64_t predictedNow = g_state.media.positionTicks +
