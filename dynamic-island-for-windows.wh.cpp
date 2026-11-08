@@ -104,6 +104,7 @@ The Dynamic Island intelligently expands to display context-aware dashboards. Yo
 - **[thevioletto @GitHub](https://github.com/thevioletto)**: Added custom font support, Windows Do Not Disturb integration and status alerts, improved album art color sampling, reorganized settings, and addressed various UI/media edge cases.
 - **[David Ravelo (DavidRaveloU) @GitHub](https://github.com/DavidRaveloU)**: Added selectable audio spectrum styles with a live frequency analyzer, new progress bar styles, optional track-change animations for the title, cover flip, playback controls and pill cover spin, an optional clock in the collapsed media pill, and a brightness slider flyout.
 - **[Retr0dev-jpg @GitHub](https://github.com/Retr0dev-jpg)**: Event-driven volume flyout with animated bar and default device switching, plus a calendar that follows the Windows locale for weekday initials and first day of the week (with a Monday/Sunday override).
+- **[Ekansh Kushwaha (Distrayer3526) @GitHub](https://github.com/Distrayer3526)**: Paused-media timeout that returns the island to the normal pill, an automatic game overlay that turns on while a game is in front (from your own list or games the Xbox Game Bar recognizes), and real game FPS in the overlay measured from the frames the game presents.
 
 ### 🤝 Contributing
 We love community contributions! To ensure high-quality updates, please follow these rules:
@@ -533,7 +534,7 @@ We love community contributions! To ensure high-quality updates, please follow t
     $description: 'Comma-separated app or site names that should not put the island into media mode (and never auto-expand on track change). Matched loosely against the media source, AUMID and title — .exe suffixes are optional. Examples: firefox, chrome.exe, youtube, tiktok.'
   - GameOverlayShowFps: true
     $name: Game overlay - show FPS
-    $description: Include the frame rate in the game overlay strip.
+    $description: Include the frame rate of the game (the app in front) in the game overlay strip, measured the same way as PresentMon / Game Bar. Requires running as administrator or adding your user to the Windows "Performance Log Users" group (then sign out and back in); otherwise shows "–".
   - GameOverlayShowCpu: true
     $name: Game overlay - show CPU
     $description: Include CPU utilization in the game overlay strip.
@@ -646,6 +647,8 @@ We love community contributions! To ensure high-quality updates, please follow t
 #include <winhttp.h>
 #include <pdh.h>
 #include <pdhmsg.h>
+#include <evntrace.h>
+#include <evntcons.h>
 
 #include <algorithm>
 #include <array>
@@ -1508,7 +1511,7 @@ struct SystemSnapshot {
     float memoryUsedGB = 0.0f;
     float memoryTotalGB = 0.0f;
     int diskFreePercent = 0;
-    int renderFps = 0;
+    int gameFps = -1;  // foreground app's presented FPS (FrameStats), -1 = unknown
     int gpuPercent = -1;
     float netUpMbps = 0.0f;
     float netDownMbps = 0.0f;
@@ -16672,7 +16675,11 @@ class Renderer {
             }
 
             wchar_t fpsValue[16] = {};
-            swprintf_s(fpsValue, L"%d", state.system.renderFps);
+            if (state.system.gameFps >= 0) {
+                swprintf_s(fpsValue, L"%d", state.system.gameFps);
+            } else {
+                wcscpy_s(fpsValue, L"\u2013");  // en dash: no measurement available
+            }
             IDWriteTextFormat* fpsFmt = clockFormat_ ? clockFormat_.Get() : textFormat_.Get();
             if (fpsFmt) {
                 // clockFormat_ is centre-aligned by default; the strip reads as a
@@ -24464,7 +24471,367 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+// ── Game FPS from ETW present events ────────────────────────────────────────
+// The overlay's FPS chip used to show the island's own render rate (1 / one
+// frame's dt), which jittered every frame and said nothing about the game. Real
+// FPS counters (PresentMon, Game Bar, CapFrameX) count the frames the game
+// presents, via ETW. This does the same for the foreground process:
+//
+//   - Microsoft-Windows-DXGI  Present_Start (42) / PresentMultiplaneOverlay_Start (55)
+//                             -> D3D10/11/12 games
+//   - Microsoft-Windows-D3D9  Present_Start (1) -> D3D9 games
+//   - Microsoft-Windows-DxgKrnl Present (184) -> fallback for Vulkan / OpenGL,
+//     used only for a process that has produced no DXGI/D3D9 present, so a
+//     DirectX frame (which emits both) is never counted twice.
+//
+// FPS is computed from the events' own QPC timestamps over the newest second
+// of frames, not from when events arrive: real-time ETW delivers in buffer-sized
+// bursts, and counting arrivals per second would bounce between 0 and 2x.
+//
+// Starting a real-time ETW session needs admin rights or membership of the
+// built-in "Performance Log Users" group. Without either, StartTrace fails with
+// ERROR_ACCESS_DENIED and the chip shows "–" instead of a made-up number.
+namespace FrameStats {
+
+constexpr wchar_t kSessionName[] = L"DynamicIslandFrameStats";
+// {CA11C036-0102-4A2D-A6AD-F03CFED5D3C9}
+constexpr GUID kDxgiProvider = {0xca11c036, 0x0102, 0x4a2d, {0xa6, 0xad, 0xf0, 0x3c, 0xfe, 0xd5, 0xd3, 0xc9}};
+// {783ACA0A-790E-4D7F-8451-AA850511C6B9}
+constexpr GUID kD3d9Provider = {0x783aca0a, 0x790e, 0x4d7f, {0x84, 0x51, 0xaa, 0x85, 0x05, 0x11, 0xc6, 0xb9}};
+// {802EC45A-1E99-4B83-9920-87C98277BA9D}
+constexpr GUID kDxgKrnlProvider = {0x802ec45a, 0x1e99, 0x4b83, {0x99, 0x20, 0x87, 0xc9, 0x82, 0x77, 0xba, 0x9d}};
+
+constexpr USHORT kDxgiPresentStart = 42;
+constexpr USHORT kDxgiPresentMpoStart = 55;
+constexpr USHORT kD3d9PresentStart = 1;
+constexpr USHORT kDxgKrnlPresent = 184;
+constexpr ULONGLONG kApiPresentKeyword = 0x2;          // DXGI / D3D9 "Present" keyword
+constexpr ULONGLONG kDxgKrnlPresentKeyword = 0x8000000;  // DxgKrnl "Present" keyword
+
+constexpr double kStopAfterUnusedSec = 20.0;  // keep the "zero idle CPU" promise
+constexpr double kRetryAfterFailureSec = 60.0;
+constexpr double kStaleFrameSec = 2.0;        // no frame this recent -> "–"
+
+// Present timestamps for the target process. Written by the ETW consumer
+// thread, read once a second by the render thread.
+struct FrameRing {
+    static constexpr size_t kCapacity = 2048;  // > 1s of frames even at 1000+ fps
+    std::mutex mutex;
+    DWORD pid = 0;
+    bool sawApiPresent = false;  // decided per pid: DXGI/D3D9 presents beat kernel ones
+    std::array<LONGLONG, kCapacity> ticks{};
+    size_t head = 0;   // next write slot
+    size_t count = 0;
+
+    void ResetLocked(DWORD newPid) {
+        pid = newPid;
+        sawApiPresent = false;
+        head = 0;
+        count = 0;
+    }
+};
+
+FrameRing g_ring;
+std::atomic<DWORD> g_targetPid{0};
+std::mutex g_controlMutex;  // start / stop: render thread vs StopThreads
+TRACEHANDLE g_session = 0;
+TRACEHANDLE g_consumer = INVALID_PROCESSTRACE_HANDLE;
+HANDLE g_consumerThread = nullptr;
+bool g_running = false;
+// Render-thread-only bookkeeping.
+double g_lastWantedAt = -1.0;
+double g_nextStartAttempt = 0.0;
+double g_nextSample = 0.0;
+double g_nextTargetPoll = 0.0;
+bool g_loggedDenied = false;
+int g_fps = -1;
+
+void WINAPI OnEventRecord(PEVENT_RECORD record) {
+    const DWORD target = g_targetPid.load(std::memory_order_relaxed);
+    if (!target || record->EventHeader.ProcessId != target) {
+        return;
+    }
+
+    const USHORT id = record->EventHeader.EventDescriptor.Id;
+    const GUID& provider = record->EventHeader.ProviderId;
+    bool apiPresent = false;
+    if (IsEqualGUID(provider, kDxgiProvider)) {
+        if (id != kDxgiPresentStart && id != kDxgiPresentMpoStart) return;
+        apiPresent = true;
+    } else if (IsEqualGUID(provider, kD3d9Provider)) {
+        if (id != kD3d9PresentStart) return;
+        apiPresent = true;
+    } else if (IsEqualGUID(provider, kDxgKrnlProvider)) {
+        if (id != kDxgKrnlPresent) return;
+    } else {
+        return;
+    }
+
+    std::lock_guard lock(g_ring.mutex);
+    if (g_ring.pid != target) {
+        g_ring.ResetLocked(target);
+    }
+    if (apiPresent && !g_ring.sawApiPresent) {
+        // First API-level present for this process: drop any kernel-counted
+        // frames so the two sources are never mixed in one window.
+        g_ring.sawApiPresent = true;
+        g_ring.head = 0;
+        g_ring.count = 0;
+    } else if (!apiPresent && g_ring.sawApiPresent) {
+        return;
+    }
+
+    // With Wnode.ClientContext = 1 the header timestamp is a raw QPC value.
+    g_ring.ticks[g_ring.head] = record->EventHeader.TimeStamp.QuadPart;
+    g_ring.head = (g_ring.head + 1) % FrameRing::kCapacity;
+    if (g_ring.count < FrameRing::kCapacity) {
+        ++g_ring.count;
+    }
+}
+
+// Handed to the consumer thread through a global rather than the thread
+// parameter: TRACEHANDLE is 64-bit and would not fit a pointer on x86.
+TRACEHANDLE g_consumerForThread = INVALID_PROCESSTRACE_HANDLE;
+
+DWORD WINAPI ConsumerThreadProc(void*) {
+    TRACEHANDLE handle = g_consumerForThread;
+    // Blocks until the session is stopped or the trace handle is closed.
+    ProcessTrace(&handle, 1, nullptr, nullptr);
+    return 0;
+}
+
+// EVENT_TRACE_PROPERTIES with room for the session name, as StartTrace /
+// ControlTrace require. Rebuilt for each call because both write into it.
+struct SessionProperties {
+    EVENT_TRACE_PROPERTIES props;
+    wchar_t name[ARRAYSIZE(kSessionName)];
+
+    SessionProperties() {
+        ZeroMemory(this, sizeof(*this));
+        props.Wnode.BufferSize = sizeof(*this);
+        props.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
+        props.Wnode.ClientContext = 1;  // QPC timestamps
+        props.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+        props.LoggerNameOffset = offsetof(SessionProperties, name);
+        // Present events are system-wide (every app and DWM), a few thousand a
+        // second at most; 64 KB x up to 64 buffers leaves ample headroom so a
+        // busy machine does not drop frames before the 1s flush.
+        props.BufferSize = 64;  // KB
+        props.MinimumBuffers = 8;
+        props.MaximumBuffers = 64;
+        props.FlushTimer = 1;   // seconds
+    }
+};
+
+// waitForConsumer: Shutdown waits for the consumer thread so nothing runs
+// after the mod unloads; the render thread only gives it a moment, because
+// the thread touches nothing but these statics and exits once the session
+// is gone anyway.
+void StopLocked(bool waitForConsumer) {
+    if (g_session) {
+        SessionProperties sp;
+        ControlTraceW(g_session, nullptr, &sp.props, EVENT_TRACE_CONTROL_STOP);
+        g_session = 0;
+    }
+    if (g_consumer != INVALID_PROCESSTRACE_HANDLE) {
+        CloseTrace(g_consumer);
+        g_consumer = INVALID_PROCESSTRACE_HANDLE;
+    }
+    if (g_consumerThread) {
+        // ProcessTrace returns promptly once the session is gone.
+        WaitForSingleObject(g_consumerThread, waitForConsumer ? 1000 : 50);
+        CloseHandle(g_consumerThread);
+        g_consumerThread = nullptr;
+    }
+    g_running = false;
+    std::lock_guard lock(g_ring.mutex);
+    g_ring.ResetLocked(0);
+}
+
+// Returns ERROR_SUCCESS or the Win32 error that stopped the session starting.
+ULONG StartLocked() {
+    SessionProperties sp;
+    ULONG status = StartTraceW(&g_session, kSessionName, &sp.props);
+    if (status == ERROR_ALREADY_EXISTS) {
+        // Left behind by a previous instance that was killed before it could
+        // stop it (ETW sessions outlive their owning process). Take it over.
+        SessionProperties stopProps;
+        ControlTraceW(0, kSessionName, &stopProps.props, EVENT_TRACE_CONTROL_STOP);
+        SessionProperties retry;
+        status = StartTraceW(&g_session, kSessionName, &retry.props);
+    }
+    if (status != ERROR_SUCCESS) {
+        g_session = 0;
+        return status;
+    }
+
+    struct ProviderToEnable {
+        const GUID* guid;
+        ULONGLONG keywords;
+        const wchar_t* name;
+    };
+    const ProviderToEnable providers[] = {
+        {&kDxgiProvider, kApiPresentKeyword, L"DXGI"},
+        {&kD3d9Provider, kApiPresentKeyword, L"D3D9"},
+        {&kDxgKrnlProvider, kDxgKrnlPresentKeyword, L"DxgKrnl"},
+    };
+    int enabled = 0;
+    ULONG lastEnableError = ERROR_SUCCESS;
+    for (const ProviderToEnable& p : providers) {
+        const ULONG enableStatus =
+            EnableTraceEx2(g_session, p.guid, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
+                           TRACE_LEVEL_INFORMATION, p.keywords, 0, 0, nullptr);
+        if (enableStatus == ERROR_SUCCESS) {
+            ++enabled;
+        } else {
+            lastEnableError = enableStatus;
+            Wh_Log(L"Game FPS: enabling the %s provider failed (%lu).", p.name, enableStatus);
+        }
+    }
+    if (enabled == 0) {
+        StopLocked(/*waitForConsumer=*/false);
+        return lastEnableError;
+    }
+
+    EVENT_TRACE_LOGFILEW logFile = {};
+    logFile.LoggerName = const_cast<LPWSTR>(kSessionName);
+    // RAW_TIMESTAMP keeps EventHeader.TimeStamp as the session's clock (QPC,
+    // from Wnode.ClientContext = 1). Without it ETW converts timestamps to
+    // FILETIME and every QPC-based duration below would be wrong.
+    logFile.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD |
+                               PROCESS_TRACE_MODE_RAW_TIMESTAMP;
+    logFile.EventRecordCallback = OnEventRecord;
+    g_consumer = OpenTraceW(&logFile);
+    if (g_consumer == INVALID_PROCESSTRACE_HANDLE) {
+        status = GetLastError();
+        StopLocked(/*waitForConsumer=*/false);
+        return status ? status : ERROR_GEN_FAILURE;
+    }
+
+    g_consumerForThread = g_consumer;
+    g_consumerThread = CreateThread(nullptr, 0, ConsumerThreadProc, nullptr, 0, nullptr);
+    if (!g_consumerThread) {
+        status = GetLastError();
+        StopLocked(/*waitForConsumer=*/false);
+        return status ? status : ERROR_GEN_FAILURE;
+    }
+    g_running = true;
+    return ERROR_SUCCESS;
+}
+
+// Frames per second over the newest second of presents, or -1 when unknown.
+int ComputeFps() {
+    LARGE_INTEGER freq = {};
+    LARGE_INTEGER now = {};
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&now);
+
+    std::lock_guard lock(g_ring.mutex);
+    if (g_ring.pid == 0 || g_ring.pid != g_targetPid.load(std::memory_order_relaxed) ||
+        g_ring.count < 2 || freq.QuadPart <= 0) {
+        return -1;
+    }
+
+    const size_t cap = FrameRing::kCapacity;
+    const LONGLONG newest = g_ring.ticks[(g_ring.head + cap - 1) % cap];
+    if (static_cast<double>(now.QuadPart - newest) / freq.QuadPart > kStaleFrameSec) {
+        return -1;
+    }
+
+    // Walk back from the newest frame while still inside a one-second window.
+    // Anchoring on the newest frame, not "now", keeps the delivery lag of
+    // real-time ETW out of the number.
+    const LONGLONG windowStart = newest - freq.QuadPart;
+    size_t framesInWindow = 1;
+    LONGLONG oldest = newest;
+    for (size_t i = 1; i < g_ring.count; ++i) {
+        const LONGLONG t = g_ring.ticks[(g_ring.head + cap - 1 - i) % cap];
+        if (t < windowStart) {
+            break;
+        }
+        oldest = t;
+        ++framesInWindow;
+    }
+    if (framesInWindow < 2 || newest <= oldest) {
+        return -1;
+    }
+    const double seconds = static_cast<double>(newest - oldest) / freq.QuadPart;
+    return ClampInt(static_cast<int>((framesInWindow - 1) / seconds + 0.5), 0, 9999);
+}
+
+// Render thread only. `wanted` is whether the FPS chip is on screen. Starts the
+// session on demand, stops it once unused for a while, follows the foreground
+// process, and returns the FPS to show (-1 = "–"), refreshed once a second.
+int Tick(bool wanted, double now, HWND islandHwnd) {
+    bool running = false;
+    if (wanted) {
+        g_lastWantedAt = now;
+    }
+
+    {
+        std::lock_guard control(g_controlMutex);
+        if (wanted && !g_running && now >= g_nextStartAttempt) {
+            const ULONG status = StartLocked();
+            if (status != ERROR_SUCCESS) {
+                g_nextStartAttempt = now + kRetryAfterFailureSec;
+                if (!g_loggedDenied) {
+                    Wh_Log(L"Game FPS unavailable: StartTrace failed (%lu). Needs admin or the "
+                           L"\"Performance Log Users\" group.", status);
+                    g_loggedDenied = true;
+                }
+            } else {
+                Wh_Log(L"Game FPS: ETW present tracing started.");
+            }
+        } else if (!wanted && g_running && now - g_lastWantedAt > kStopAfterUnusedSec) {
+            StopLocked(/*waitForConsumer=*/false);
+            g_fps = -1;
+        }
+        running = g_running;  // read under the lock (6): Shutdown may race us
+    }
+
+    if (!running) {
+        g_fps = -1;
+        return g_fps;
+    }
+
+    if (now >= g_nextTargetPoll) {
+        g_nextTargetPoll = now + 0.5;
+        HWND fg = GetForegroundWindow();
+        // Clicking the island makes it the foreground window; keep measuring
+        // whatever was in front before.
+        if (fg && fg != islandHwnd) {
+            DWORD pid = 0;
+            GetWindowThreadProcessId(fg, &pid);
+            g_targetPid.store(pid, std::memory_order_relaxed);
+        }
+    }
+
+    if (now >= g_nextSample) {
+        g_nextSample = now + 1.0;
+        g_fps = ComputeFps();
+    }
+    return g_fps;
+}
+
+// Called from StopThreads, before the tool process exits: ETW sessions are not
+// torn down with their owner, so it must be stopped explicitly.
+void Shutdown() {
+    std::lock_guard control(g_controlMutex);
+    StopLocked(/*waitForConsumer=*/true);
+}
+
+// 3) A crash or hard kill skips Shutdown and leaves the session (and its
+// system-wide providers) running with no consumer. Stop any such leftover
+// when the island starts, not only when the FPS chip next appears.
+void StopLeftoverSession() {
+    SessionProperties sp;
+    ControlTraceW(0, kSessionName, &sp.props, EVENT_TRACE_CONTROL_STOP);
+}
+
+}  // namespace FrameStats
+
 DWORD WINAPI RenderThreadProc(void*) {
+    FrameStats::StopLeftoverSession();
     HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     WNDCLASSEXW wc = {};
@@ -25160,8 +25527,13 @@ DWORD WINAPI RenderThreadProc(void*) {
         snapshot.volume.displayPercent = volumeBarSpring.value;
 
         {
-            std::lock_guard lock(g_stateMutex);
-            g_state.system.renderFps = ClampInt(static_cast<int>(1.0f / std::max(dt, 0.001f) + 0.5f), 0, 1000);
+            // Real FPS of the game in front, only while the FPS chip is on screen.
+            const bool fpsWanted = gameOverlayVisible && g_settings.gameOverlayShowFps;
+            const int gameFps = FrameStats::Tick(fpsWanted, now, hwnd);
+            if (gameFps != snapshot.system.gameFps) {
+                std::lock_guard lock(g_stateMutex);
+                g_state.system.gameFps = gameFps;
+            }
         }
 
         const bool draggingOrHover = hover || ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 && PtInRect(&pillRect, cursor));
@@ -25358,6 +25730,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         static uint64_t prevNotifIconGen = 0;
         static uint64_t prevClipIconGen = 0;
         static int prevCpu = -1;
+        static int prevFps = -1;
         static int prevRam = -1;
         static int prevDisk = -1;
         static int prevVol = -1;
@@ -25376,6 +25749,7 @@ DWORD WINAPI RenderThreadProc(void*) {
         // appear nowhere on the collapsed pill.
         const bool systemMetricsChanged =
             systemMetricsVisible && (snapshot.system.cpuPercent != prevCpu ||
+                                     snapshot.system.gameFps != prevFps ||
                                      snapshot.system.memoryPercent != prevRam ||
                                      snapshot.system.diskFreePercent != prevDisk);
 
@@ -25404,6 +25778,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             prevNotifIconGen = snapshot.notification.icon->generation;
             prevClipIconGen = snapshot.clipboard.appIcon->generation;
             prevCpu = snapshot.system.cpuPercent;
+            prevFps = snapshot.system.gameFps;
             prevRam = snapshot.system.memoryPercent;
             prevDisk = snapshot.system.diskFreePercent;
             prevVol = snapshot.system.volumePercent;
@@ -25621,6 +25996,9 @@ void StopThreads() {
             CloseHandle(handle);
         }
     }
+
+    // After the render thread is joined, so nothing else touches the session.
+    FrameStats::Shutdown();
 
     g_renderThread = nullptr;
     g_mediaThread = nullptr;
