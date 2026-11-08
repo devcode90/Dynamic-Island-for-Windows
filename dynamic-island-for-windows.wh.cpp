@@ -422,6 +422,15 @@ We love community contributions! To ensure high-quality updates, please follow t
   - GameOverlay: false
     $name: Enable game overlay mode
     $description: Replaces the clock with live stats like FPS, CPU, and RAM usage.
+  - GameOverlayAuto: false
+    $name: Switch to game overlay automatically
+    $description: Shows the game overlay while a game is the app in front, and goes back to the normal island when you close or leave it. A detected game takes priority over the media pill and stays visible even with "Hide on full screen" on (borderless/windowed games; exclusive full screen cannot show overlays).
+  - GameOverlayAutoKnownGames: true
+    $name: Auto game overlay - detect games Windows recognizes
+    $description: Also treat every game the Xbox Game Bar has recognized on this PC as a game, so most Steam / Epic / Xbox games work without adding them below.
+  - GameOverlayGameList: ""
+    $name: Auto game overlay - game programs
+    $description: 'Comma-separated program names to treat as games, for anything Windows does not recognize. .exe and folders are optional. Examples: valorant, cs2.exe, minecraft.'
   - ShowMetricText: false
     $name: Show labels in metric chips
     $description: Adds text labels (like "CPU") inside the game overlay bars.
@@ -1269,6 +1278,9 @@ struct Settings {
     float tintOpacity = 0.72f;
     float pillOpacity = 0.96f;
     bool gameOverlay = false;
+    bool gameOverlayAuto = false;              // Modules.GameOverlayAuto
+    bool gameOverlayAutoKnownGames = true;     // Modules.GameOverlayAutoKnownGames
+    std::vector<std::wstring> gameOverlayGameList;  // lowercase exe stems, Modules.GameOverlayGameList
     bool showMetricText = true;
     bool weather = true;
     std::wstring weatherCity;
@@ -1866,6 +1878,18 @@ std::atomic<bool> g_isDnDActive = false;
 void* g_wnfDndSubscription = nullptr;
 
 std::atomic<bool> g_gameOverlayPinned{false};
+// Set by the render loop while Modules.GameOverlayAuto finds a game in front.
+// Deliberately never persisted (unlike GameOverlayPinned), so the overlay can
+// not stick around after the game closes or across a restart.
+std::atomic<bool> g_gameDetected{false};
+
+// Single answer to "is the game overlay replacing the idle clock?" -- the
+// setting, the right-click pin, or an auto-detected game.
+inline bool GameOverlayActive(const Settings& settings) {
+    return settings.gameOverlay || g_gameOverlayPinned.load() ||
+           g_gameDetected.load(std::memory_order_relaxed);
+}
+
 std::atomic<bool> g_pinnedExpanded{false};
 std::atomic<int> g_pillOpacityOverride{-1};
 
@@ -3026,6 +3050,46 @@ UINT ParseHotkeyKeyName(std::wstring text, UINT fallback) {
     return fallback;
 }
 
+// Parses a comma-separated list of app names, as typed in the media blocklist
+// and the game list. Entries are trimmed and lowercased once here so matching
+// stays case-insensitive without re-lowering every frame. Users commonly paste
+// "firefox.exe" or full paths (#114), so only the basename is kept and a
+// trailing .exe/.com is stripped: "C:\Games\CS2.exe" -> "cs2".
+std::vector<std::wstring> ParseAppNameList(const std::wstring& raw) {
+    std::vector<std::wstring> entries;
+    size_t start = 0;
+    while (start <= raw.size()) {
+        const size_t comma = raw.find(L',', start);
+        const size_t end = (comma == std::wstring::npos) ? raw.size() : comma;
+        const std::wstring token = raw.substr(start, end - start);
+        const size_t a = token.find_first_not_of(L" \t\r\n");
+        if (a != std::wstring::npos) {
+            const size_t b = token.find_last_not_of(L" \t\r\n");
+            std::wstring entry = token.substr(a, b - a + 1);
+            std::transform(entry.begin(), entry.end(), entry.begin(),
+                           [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
+            const size_t slash = entry.find_last_of(L"\\/");
+            if (slash != std::wstring::npos && slash + 1 < entry.size()) {
+                entry = entry.substr(slash + 1);
+            }
+            if (entry.size() > 4) {
+                const std::wstring_view ext(entry.c_str() + (entry.size() - 4), 4);
+                if (ext == L".exe" || ext == L".com") {
+                    entry.resize(entry.size() - 4);
+                }
+            }
+            if (!entry.empty()) {
+                entries.push_back(std::move(entry));
+            }
+        }
+        if (comma == std::wstring::npos) {
+            break;
+        }
+        start = comma + 1;
+    }
+    return entries;
+}
+
 void LoadSettings() {
     Settings next;
 
@@ -3317,45 +3381,8 @@ void LoadSettings() {
     }
 
     // ── Media source exclusions (#62 / #114) ─────────────────────────────────
-    next.mediaExpandBlocklist.clear();
-    {
-        const std::wstring raw = GetStringSettingCopy(L"Modules.MediaExpandBlocklist");
-        size_t start = 0;
-        while (start <= raw.size()) {
-            const size_t comma = raw.find(L',', start);
-            const size_t end = (comma == std::wstring::npos) ? raw.size() : comma;
-            std::wstring token = raw.substr(start, end - start);
-            const size_t a = token.find_first_not_of(L" \t\r\n");
-            if (a != std::wstring::npos) {
-                const size_t b = token.find_last_not_of(L" \t\r\n");
-                std::wstring entry = token.substr(a, b - a + 1);
-                // Stored lowercase so matching against media source/title is
-                // case-insensitive without re-lowering on every frame.
-                std::transform(entry.begin(), entry.end(), entry.begin(),
-                               [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
-                // Users commonly paste "firefox.exe" / full paths (#114). Strip a
-                // trailing .exe/.com and keep only the basename so those forms
-                // still match the friendly source name and AUMID.
-                const size_t slash = entry.find_last_of(L"\\/");
-                if (slash != std::wstring::npos && slash + 1 < entry.size()) {
-                    entry = entry.substr(slash + 1);
-                }
-                if (entry.size() > 4) {
-                    const std::wstring_view ext(entry.c_str() + (entry.size() - 4), 4);
-                    if (ext == L".exe" || ext == L".com") {
-                        entry.resize(entry.size() - 4);
-                    }
-                }
-                if (!entry.empty()) {
-                    next.mediaExpandBlocklist.push_back(std::move(entry));
-                }
-            }
-            if (comma == std::wstring::npos) {
-                break;
-            }
-            start = comma + 1;
-        }
-    }
+    next.mediaExpandBlocklist =
+        ParseAppNameList(GetStringSettingCopy(L"Modules.MediaExpandBlocklist"));
 
     // ── Game overlay options (#25) ───────────────────────────────────────────
     next.gameOverlayShowFps = Wh_GetIntSetting(L"Modules.GameOverlayShowFps") != 0;
@@ -3373,6 +3400,13 @@ void LoadSettings() {
     next.pillOpacity = Clamp((localOpacity >= 0 ? localOpacity : settingOpacity) / 100.0f,
                              0.35f, 1.0f);
     next.gameOverlay = Wh_GetIntSetting(L"Modules.GameOverlay") != 0;
+    next.gameOverlayAuto = Wh_GetIntSetting(L"Modules.GameOverlayAuto") != 0;
+    next.gameOverlayAutoKnownGames = Wh_GetIntSetting(L"Modules.GameOverlayAutoKnownGames") != 0;
+    next.gameOverlayGameList =
+        ParseAppNameList(GetStringSettingCopy(L"Modules.GameOverlayGameList"));
+    if (!next.gameOverlayAuto) {
+        g_gameDetected.store(false, std::memory_order_relaxed);
+    }
     next.showMetricText = Wh_GetIntSetting(L"Modules.ShowMetricText") != 0;
     next.weather = Wh_GetIntSetting(L"Modules.Weather") != 0;
     next.weatherCity = GetStringSettingWithFallback(L"Modules.WeatherCity", L"Weather.WeatherCity", L"CalendarWeather.WeatherCity");
@@ -4940,6 +4974,108 @@ bool ProcessImageNameForWindow(HWND hwnd, std::wstring* imageName) {
     return ProcessImageNameForPid(pid, imageName);
 }
 
+// ── Auto game overlay ────────────────────────────────────────────────────────
+// Full image paths (lowercased) of every game the Xbox Game Bar has recognized
+// on this PC, read from HKCU\System\GameConfigStore\Children\*. Only children
+// with a MatchedExeFullPath are real games; the rest are Game Bar templates
+// with no executable and are skipped.
+std::vector<std::wstring> LoadKnownGamePaths() {
+    std::vector<std::wstring> paths;
+    HKEY root = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"System\\GameConfigStore\\Children", 0, KEY_READ,
+                      &root) != ERROR_SUCCESS) {
+        return paths;
+    }
+
+    wchar_t child[256];
+    for (DWORD i = 0;; ++i) {
+        DWORD childLen = ARRAYSIZE(child);
+        const LONG r = RegEnumKeyExW(root, i, child, &childLen, nullptr, nullptr, nullptr, nullptr);
+        if (r == ERROR_NO_MORE_ITEMS) {
+            break;
+        }
+        if (r != ERROR_SUCCESS) {
+            continue;
+        }
+        wchar_t path[MAX_PATH * 2] = {};
+        DWORD size = sizeof(path);
+        if (RegGetValueW(root, child, L"MatchedExeFullPath", RRF_RT_REG_SZ, nullptr, path,
+                         &size) == ERROR_SUCCESS &&
+            path[0]) {
+            paths.push_back(ToLowerCopy(path));
+        }
+    }
+    RegCloseKey(root);
+    return paths;
+}
+
+// True when the foreground window belongs to a game: listed by name in
+// Modules.GameOverlayGameList, or (with GameOverlayAutoKnownGames) one the Game
+// Bar knows. Render thread only -- it keeps a small static cache -- and called
+// from the existing 0.5s fullscreen poll, so the cost is one OpenProcess per
+// foreground-app change plus a refresh of the Game Bar list once a minute.
+bool IsForegroundGame(HWND islandHwnd) {
+    HWND fg = GetForegroundWindow();
+    if (fg && fg == islandHwnd) {
+        // Clicking the island makes it the foreground window; that is not
+        // leaving the game, so keep whatever was decided last time.
+        return g_gameDetected.load(std::memory_order_relaxed);
+    }
+    if (!fg || fg == GetDesktopWindow() || fg == GetShellWindow()) {
+        return false;
+    }
+    DWORD pid = 0;
+    GetWindowThreadProcessId(fg, &pid);
+    if (!pid) {
+        return false;
+    }
+
+    static DWORD cachedPid = 0;
+    static std::wstring cachedImageLower;
+    if (pid != cachedPid) {
+        std::wstring image;
+        if (!ProcessImageNameForPid(pid, &image)) {
+            // Access denied or a dying process: do not cache the failure, so a
+            // game whose path becomes readable is still picked up next poll.
+            cachedPid = 0;
+            cachedImageLower.clear();
+            return false;
+        }
+        cachedImageLower = ToLowerCopy(image);
+        cachedPid = pid;
+    }
+
+    bool useKnownGames = false;
+    {
+        // Walk the list under the lock: LoadSettings() may be reassigning it.
+        const std::wstring stem = StripExtension(BaseNameFromPath(cachedImageLower));
+        std::lock_guard lock(g_settingsMutex);
+        for (const std::wstring& entry : g_settings.gameOverlayGameList) {
+            if (entry == stem) {
+                return true;
+            }
+        }
+        useKnownGames = g_settings.gameOverlayAutoKnownGames;
+    }
+    if (!useKnownGames) {
+        return false;
+    }
+
+    static std::vector<std::wstring> knownGames;
+    static double knownGamesLoadedAt = -1.0;
+    const double now = NowSeconds();
+    if (knownGamesLoadedAt < 0.0 || now - knownGamesLoadedAt > 60.0) {
+        knownGames = LoadKnownGamePaths();
+        knownGamesLoadedAt = now;
+    }
+    for (const std::wstring& path : knownGames) {
+        if (path == cachedImageLower) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::wstring FriendlyMediaSourceName(std::wstring_view source) {
     const std::wstring lower = ToLowerCopy(std::wstring(source));
     if (lower.find(L"youtube") != std::wstring::npos) return L"YouTube";
@@ -5030,6 +5166,20 @@ bool MediaExpandBlocked(const MediaSnapshot& media) {
         }
     }
     return false;
+}
+
+// The single answer to "is the island showing media right now?". The pill
+// (ChooseActivities), the dashboard's media hit tests and the lyrics tab count
+// all ask this, so the expanded idle view can never carry invisible media
+// controls or a phantom lyrics tab when media is hidden for any reason. Locks
+// g_settingsMutex via MediaExpandBlocked, which is a leaf lock (see
+// GetSettingsCopy), so it is safe to call while holding g_stateMutex.
+bool MediaModeActive(const SharedState& state, const Settings& settings, double now) {
+    (void)now;  // kept so time-based rules can join without touching callers
+    // A game picked up by GameOverlayAuto outranks media, so the overlay shows
+    // even with music playing; transient alerts still appear over it.
+    return settings.media && state.media.available && !MediaExpandBlocked(state.media) &&
+           !g_gameDetected.load(std::memory_order_relaxed);
 }
 
 bool IsBrowserMediaSource(std::wstring_view source) {
@@ -5871,7 +6021,7 @@ DWORD WINAPI MediaThreadProc(void*) {
 
         if (trackJustChanged) {
             g_layoutDirty = true;
-            if (g_settings.mediaAutoExpand) {
+            if (g_settings.mediaAutoExpand && !g_gameDetected.load(std::memory_order_relaxed)) {
                 TriggerNudge();
             }
         }
@@ -13104,7 +13254,7 @@ class Renderer {
         settingsOpacity_ = settings.pillOpacity;
 
         const bool gameMetricsPresent = primary.kind == IslandKind::Idle &&
-            (settings.gameOverlay || g_gameOverlayPinned.load());
+            GameOverlayActive(settings);
         // True while the island is collapsing to nothing (auto-hide / fullscreen).
         islandHiding_ = primary.width < 1.0f && primary.height < 1.0f && !secondary;
 
@@ -16434,7 +16584,7 @@ class Renderer {
 
     void DrawIdleDashboard(const SharedState& state, D2D1_RECT_F rect, const Settings& settings,
                            double now) {
-        if (settings.gameOverlay || g_gameOverlayPinned.load()) {
+        if (GameOverlayActive(settings)) {
             DrawGameOverlay(state, rect, 1.0f);
             return;
         }
@@ -22406,7 +22556,7 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
     // already gated on MediaExpandBlocked, but with MediaAutoExpand off by
     // default that gate never fired — so "firefox.exe" in the list looked like
     // a no-op while the pill still switched to music mode.
-    if (settings.media && state.media.available && !MediaExpandBlocked(state.media)) {
+    if (MediaModeActive(state, settings, now)) {
         activities.push_back(IslandKind::Media);
     }
 
@@ -23780,7 +23930,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 bool mediaActive = false;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available;
+                    mediaActive = MediaModeActive(g_state, g_settings, NowSeconds());
                 }
 
                 const int currentTab = NormalizedTabIndex(g_settings);
@@ -23843,7 +23993,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 bool mediaActive = false;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available;
+                    mediaActive = MediaModeActive(g_state, g_settings, NowSeconds());
                 }
 
                 const int currentTab = NormalizedTabIndex(g_settings);
@@ -23924,7 +24074,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             bool mediaActive = false;
             {
                 std::lock_guard lock(g_stateMutex);
-                mediaActive = g_settings.media && g_state.media.available;
+                mediaActive = MediaModeActive(g_state, g_settings, NowSeconds());
             }
             const int currentTab = NormalizedTabIndex(g_settings);
 
@@ -24091,7 +24241,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 std::vector<IslandKind> kinds;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available;
+                    mediaActive = MediaModeActive(g_state, g_settings, NowSeconds());
                     kinds = ChooseActivities(g_state, g_settings, NowSeconds());
                 }
 
@@ -24125,7 +24275,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 }
                 const bool gameMetricsPresent =
                     !kinds.empty() && kinds[0] == IslandKind::Idle &&
-                    (g_settings.gameOverlay || g_gameOverlayPinned.load());
+                    GameOverlayActive(g_settings);
 
                 bool expanded = g_pinnedExpanded.load() || g_clickExpanded.load();
                 if (!gameMetricsPresent && !g_settings.expandOnHover && !expanded) {
@@ -24661,8 +24811,10 @@ DWORD WINAPI RenderThreadProc(void*) {
                 setHighResTimer(false);
                 if (parkedForFullscreen) {
                     MsgWaitForMultipleObjects(1, &g_stopEvent, FALSE, 1500, QS_ALLINPUT);
-                    const bool stillFullscreen =
-                        g_settings.autoHideFullscreen && IsForegroundFullscreen(hwnd);
+                    const bool gameNow = g_settings.gameOverlayAuto && IsForegroundGame(hwnd);
+                    g_gameDetected.store(gameNow, std::memory_order_relaxed);
+                    const bool stillFullscreen = g_settings.autoHideFullscreen && !gameNow &&
+                                                 IsForegroundFullscreen(hwnd);
                     g_isFullscreen.store(stillFullscreen, std::memory_order_relaxed);
                     if (!stillFullscreen) {
                         g_fullscreenOverrideVisible = false;
@@ -24672,6 +24824,11 @@ DWORD WINAPI RenderThreadProc(void*) {
                     }
                 } else {
                     MsgWaitForMultipleObjects(1, &g_stopEvent, FALSE, INFINITE, QS_ALLINPUT);
+                    // The 0.5s game poll does not run while parked, so refresh it
+                    // on wake; otherwise the first frame after waking could still
+                    // show (or miss) the overlay for a game opened or closed meanwhile.
+                    g_gameDetected.store(g_settings.gameOverlayAuto && IsForegroundGame(hwnd),
+                                         std::memory_order_relaxed);
                 }
                 nextFrameTarget = std::chrono::steady_clock::now();
                 continue;
@@ -24789,9 +24946,19 @@ DWORD WINAPI RenderThreadProc(void*) {
         }
 
         const std::vector<IslandKind> kinds = ChooseActivities(snapshot, g_settings, now);
-        g_lyricsTabAvailable.store(
-            g_settings.lyrics && g_settings.media && snapshot.media.available,
-            std::memory_order_relaxed);
+        const bool mediaMode = MediaModeActive(snapshot, g_settings, now);
+        g_lyricsTabAvailable.store(g_settings.lyrics && mediaMode, std::memory_order_relaxed);
+        {
+            // Media appearing or disappearing (a game taking over, blocklist,
+            // session ending) changes what the first tab is and how many tabs
+            // exist, so a stale g_idleTab would land on an unrelated page.
+            static bool prevMediaMode = false;
+            if (mediaMode != prevMediaMode) {
+                prevMediaMode = mediaMode;
+                g_idleTab = 0;
+                g_layoutDirty = true;
+            }
+        }
         Activity primary = ActivityForKind(kinds[0], g_settings, snapshot);
         std::optional<Activity> secondary;
         if (kinds.size() >= 2) {
@@ -24907,7 +25074,7 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         bool isHoverExpanded = g_settings.expandOnHover ? hover : (hover && g_clickExpanded.load());
         const bool gameMetricsPresent = primary.kind == IslandKind::Idle &&
-            (g_settings.gameOverlay || g_gameOverlayPinned.load());
+            GameOverlayActive(g_settings);
         if (gameMetricsPresent) {
             isHoverExpanded = false;
         }
@@ -24934,7 +25101,15 @@ DWORD WINAPI RenderThreadProc(void*) {
         static bool isFullscreen = false;
         static double lastFullscreenCheck = -1.0;  // -1.0 guarantees the very first iteration checks
         if (now - lastFullscreenCheck > 0.5) {
-            const bool newFullscreen = g_settings.autoHideFullscreen && IsForegroundFullscreen(hwnd);
+            const bool gameNow = g_settings.gameOverlayAuto && IsForegroundGame(hwnd);
+            if (gameNow != g_gameDetected.load(std::memory_order_relaxed)) {
+                g_gameDetected.store(gameNow, std::memory_order_relaxed);
+                g_layoutDirty = true;
+            }
+            // A detected game is exempt from "Hide on full screen": the overlay
+            // is the point of being in a game. Videos etc. still hide.
+            const bool newFullscreen =
+                g_settings.autoHideFullscreen && !gameNow && IsForegroundFullscreen(hwnd);
             if (isFullscreen && !newFullscreen) {
                 // Fullscreen ended — re-arm so the next fullscreen session
                 // hides again even if the hotkey was used to reveal the
@@ -25011,7 +25186,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             }
         }
         if (!isFullscreen && primary.kind == IslandKind::Idle &&
-            (g_settings.gameOverlay || g_gameOverlayPinned.load())) {
+            GameOverlayActive(g_settings)) {
             // Width follows the metrics actually enabled (#25) so switching some
             // off shrinks the strip instead of leaving empty space, and compact
             // mode narrows it enough to sit neatly in the taskbar area. Both the
