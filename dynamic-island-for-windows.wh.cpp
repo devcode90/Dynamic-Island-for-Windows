@@ -377,6 +377,15 @@ We love community contributions! To ensure high-quality updates, please follow t
   - MediaAutoExpand: false
     $name: Auto-expand on track change
     $description: Automatically expand the island when a new song or video starts playing. If disabled, album art updates smoothly in the collapsed pill without unprompted expansion.
+  - MediaPausedTimeout: '0'
+    $name: Return to the normal pill when media is paused
+    $description: Once media has been paused (or a player is open but nothing has played) for this long, the island goes back to the normal clock pill instead of holding the media pill indefinitely. Pressing play brings the media pill straight back.
+    $options:
+      - '0': Never (default)
+      - '10': After 10 seconds
+      - '30': After 30 seconds
+      - '60': After 1 minute
+      - '300': After 5 minutes
   - MediaPillClock: false
     $name: Show clock in the collapsed media pill
     $description: While media is playing, the collapsed pill also shows the current time on the left, separated from the album cover by a thin divider. Hovering still opens the normal player. Uses the same 12h/24h and seconds options as the clock below. Off by default.
@@ -1225,6 +1234,7 @@ struct Settings {
     float animationSpeed = 1.0f;
     bool media = true;
     bool mediaAutoExpand = false;
+    int mediaPausedTimeoutSec = 0;   // Modules.MediaPausedTimeout; 0 = keep the media pill while paused
     bool clipboard = true;
     bool statusCountdownProgress = false;
     bool battery = true;
@@ -1397,6 +1407,10 @@ struct MediaSnapshot {
     uint64_t sourceIconGeneration = 0;
     double artChangedAt = 0.0;
     double titleChangedAt = 0.0;
+    // NowSeconds() at which this session was first seen not playing (paused, or
+    // opened without ever playing). 0 while playing. Carried across polls by the
+    // media thread so MediaPausedTimeout can measure how long it has sat idle.
+    double pausedSince = 0.0;
     int64_t positionTicks = 0;
     int64_t endTicks = 0;
     int64_t lastUpdatedTicks = 0;
@@ -3152,6 +3166,11 @@ void LoadSettings() {
 
     next.media = Wh_GetIntSetting(L"Modules.Media") != 0;
     next.mediaAutoExpand = Wh_GetIntSetting(L"Modules.MediaAutoExpand") != 0;
+    {
+        const std::wstring pausedTimeout = GetStringSettingCopy(L"Modules.MediaPausedTimeout");
+        next.mediaPausedTimeoutSec =
+            pausedTimeout.empty() ? 0 : std::max(0, _wtoi(pausedTimeout.c_str()));
+    }
     next.volume = Wh_GetIntSetting(L"Modules.Volume") != 0;
     if (!next.volume) {
         std::lock_guard lock(g_stateMutex);
@@ -5032,6 +5051,20 @@ bool MediaExpandBlocked(const MediaSnapshot& media) {
     return false;
 }
 
+// True once a session has sat paused (or open without playing) for longer than
+// MediaPausedTimeout. The island then treats media as absent -- the pill, the
+// dashboard's first tab and its hit tests all fall back to the idle clock -- so
+// a player left open in the background stops holding the media pill forever.
+// Playback resuming clears pausedSince and brings the media pill straight back.
+//
+// Takes the Settings by reference and no locks: every caller already holds
+// g_stateMutex and reads g_settings the same way it reads g_settings.media.
+bool MediaPausedTimedOut(const MediaSnapshot& media, const Settings& settings, double now) {
+    return settings.mediaPausedTimeoutSec > 0 && media.available && !media.playing &&
+           media.pausedSince > 0.0 &&
+           now - media.pausedSince >= static_cast<double>(settings.mediaPausedTimeoutSec);
+}
+
 bool IsBrowserMediaSource(std::wstring_view source) {
     const std::wstring lower = ToLowerCopy(std::wstring(source));
     return lower.find(L"chrome") != std::wstring::npos ||
@@ -5861,6 +5894,19 @@ DWORD WINAPI MediaThreadProc(void*) {
                 next.sourceAppUserModelId == g_state.media.sourceAppUserModelId) {
                 next.sourceIcon = g_state.media.sourceIcon;
                 next.sourceIconGeneration = g_state.media.sourceIconGeneration;
+            }
+
+            // Paused-media timeout: `next` is rebuilt from scratch every poll, so
+            // carry the start of the current pause forward while the same track
+            // from the same source stays not-playing. Any change of track or
+            // source restarts the clock, and playing clears it.
+            if (next.available && !next.playing) {
+                const bool samePause = g_state.media.available && !g_state.media.playing &&
+                                       g_state.media.pausedSince > 0.0 &&
+                                       next.sourceAppUserModelId == g_state.media.sourceAppUserModelId &&
+                                       next.title == g_state.media.title &&
+                                       next.artist == g_state.media.artist;
+                next.pausedSince = samePause ? g_state.media.pausedSince : NowSeconds();
             }
 
             g_state.media = std::move(next);
@@ -22406,7 +22452,8 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
     // already gated on MediaExpandBlocked, but with MediaAutoExpand off by
     // default that gate never fired — so "firefox.exe" in the list looked like
     // a no-op while the pill still switched to music mode.
-    if (settings.media && state.media.available && !MediaExpandBlocked(state.media)) {
+    if (settings.media && state.media.available && !MediaExpandBlocked(state.media) &&
+        !MediaPausedTimedOut(state.media, settings, now)) {
         activities.push_back(IslandKind::Media);
     }
 
@@ -23780,7 +23827,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 bool mediaActive = false;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available;
+                    mediaActive = g_settings.media && g_state.media.available &&
+                                  !MediaPausedTimedOut(g_state.media, g_settings, NowSeconds());
                 }
 
                 const int currentTab = NormalizedTabIndex(g_settings);
@@ -23843,7 +23891,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 bool mediaActive = false;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available;
+                    mediaActive = g_settings.media && g_state.media.available &&
+                                  !MediaPausedTimedOut(g_state.media, g_settings, NowSeconds());
                 }
 
                 const int currentTab = NormalizedTabIndex(g_settings);
@@ -23924,7 +23973,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             bool mediaActive = false;
             {
                 std::lock_guard lock(g_stateMutex);
-                mediaActive = g_settings.media && g_state.media.available;
+                mediaActive = g_settings.media && g_state.media.available &&
+                              !MediaPausedTimedOut(g_state.media, g_settings, NowSeconds());
             }
             const int currentTab = NormalizedTabIndex(g_settings);
 
@@ -24091,7 +24141,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 std::vector<IslandKind> kinds;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available;
+                    mediaActive = g_settings.media && g_state.media.available &&
+                                  !MediaPausedTimedOut(g_state.media, g_settings, NowSeconds());
                     kinds = ChooseActivities(g_state, g_settings, NowSeconds());
                 }
 
@@ -24790,7 +24841,8 @@ DWORD WINAPI RenderThreadProc(void*) {
 
         const std::vector<IslandKind> kinds = ChooseActivities(snapshot, g_settings, now);
         g_lyricsTabAvailable.store(
-            g_settings.lyrics && g_settings.media && snapshot.media.available,
+            g_settings.lyrics && g_settings.media && snapshot.media.available &&
+                !MediaPausedTimedOut(snapshot.media, g_settings, now),
             std::memory_order_relaxed);
         Activity primary = ActivityForKind(kinds[0], g_settings, snapshot);
         std::optional<Activity> secondary;
