@@ -5065,6 +5065,17 @@ bool MediaPausedTimedOut(const MediaSnapshot& media, const Settings& settings, d
            now - media.pausedSince >= static_cast<double>(settings.mediaPausedTimeoutSec);
 }
 
+// The single answer to "is the island showing media right now?". The pill
+// (ChooseActivities), the dashboard's media hit tests and the lyrics tab count
+// all ask this, so the expanded idle view can never carry invisible media
+// controls or a phantom lyrics tab when media is hidden for any reason. Locks
+// g_settingsMutex via MediaExpandBlocked, which is a leaf lock (see
+// GetSettingsCopy), so it is safe to call while holding g_stateMutex.
+bool MediaModeActive(const SharedState& state, const Settings& settings, double now) {
+    return settings.media && state.media.available && !MediaExpandBlocked(state.media) &&
+           !MediaPausedTimedOut(state.media, settings, now);
+}
+
 bool IsBrowserMediaSource(std::wstring_view source) {
     const std::wstring lower = ToLowerCopy(std::wstring(source));
     return lower.find(L"chrome") != std::wstring::npos ||
@@ -22452,8 +22463,7 @@ std::vector<IslandKind> ChooseActivities(const SharedState& state, const Setting
     // already gated on MediaExpandBlocked, but with MediaAutoExpand off by
     // default that gate never fired — so "firefox.exe" in the list looked like
     // a no-op while the pill still switched to music mode.
-    if (settings.media && state.media.available && !MediaExpandBlocked(state.media) &&
-        !MediaPausedTimedOut(state.media, settings, now)) {
+    if (MediaModeActive(state, settings, now)) {
         activities.push_back(IslandKind::Media);
     }
 
@@ -23827,8 +23837,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 bool mediaActive = false;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available &&
-                                  !MediaPausedTimedOut(g_state.media, g_settings, NowSeconds());
+                    mediaActive = MediaModeActive(g_state, g_settings, NowSeconds());
                 }
 
                 const int currentTab = NormalizedTabIndex(g_settings);
@@ -23891,8 +23900,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 bool mediaActive = false;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available &&
-                                  !MediaPausedTimedOut(g_state.media, g_settings, NowSeconds());
+                    mediaActive = MediaModeActive(g_state, g_settings, NowSeconds());
                 }
 
                 const int currentTab = NormalizedTabIndex(g_settings);
@@ -23973,8 +23981,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             bool mediaActive = false;
             {
                 std::lock_guard lock(g_stateMutex);
-                mediaActive = g_settings.media && g_state.media.available &&
-                              !MediaPausedTimedOut(g_state.media, g_settings, NowSeconds());
+                mediaActive = MediaModeActive(g_state, g_settings, NowSeconds());
             }
             const int currentTab = NormalizedTabIndex(g_settings);
 
@@ -24141,8 +24148,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 std::vector<IslandKind> kinds;
                 {
                     std::lock_guard lock(g_stateMutex);
-                    mediaActive = g_settings.media && g_state.media.available &&
-                                  !MediaPausedTimedOut(g_state.media, g_settings, NowSeconds());
+                    mediaActive = MediaModeActive(g_state, g_settings, NowSeconds());
                     kinds = ChooseActivities(g_state, g_settings, NowSeconds());
                 }
 
@@ -24840,10 +24846,19 @@ DWORD WINAPI RenderThreadProc(void*) {
         }
 
         const std::vector<IslandKind> kinds = ChooseActivities(snapshot, g_settings, now);
-        g_lyricsTabAvailable.store(
-            g_settings.lyrics && g_settings.media && snapshot.media.available &&
-                !MediaPausedTimedOut(snapshot.media, g_settings, now),
-            std::memory_order_relaxed);
+        const bool mediaMode = MediaModeActive(snapshot, g_settings, now);
+        g_lyricsTabAvailable.store(g_settings.lyrics && mediaMode, std::memory_order_relaxed);
+        {
+            // Media appearing or disappearing (paused timeout, blocklist, session
+            // ending) changes what the first tab is and how many tabs exist, so a
+            // stale g_idleTab would land on an unrelated page. Start from the top.
+            static bool prevMediaMode = false;
+            if (mediaMode != prevMediaMode) {
+                prevMediaMode = mediaMode;
+                g_idleTab = 0;
+                g_layoutDirty = true;
+            }
+        }
         Activity primary = ActivityForKind(kinds[0], g_settings, snapshot);
         std::optional<Activity> secondary;
         if (kinds.size() >= 2) {
@@ -24962,6 +24977,17 @@ DWORD WINAPI RenderThreadProc(void*) {
             (g_settings.gameOverlay || g_gameOverlayPinned.load());
         if (gameMetricsPresent) {
             isHoverExpanded = false;
+        }
+
+        // Hovering, scrubbing or pinning the paused player is activity: restart
+        // the paused-media timeout so the player cannot turn into the clock
+        // under the cursor mid-interaction.
+        if (g_settings.mediaPausedTimeoutSec > 0 && primary.kind == IslandKind::Media &&
+            (isHoverExpanded || pinned)) {
+            std::lock_guard lock(g_stateMutex);
+            if (g_state.media.pausedSince > 0.0) {
+                g_state.media.pausedSince = now;
+            }
         }
 
         if (currentlyHidden && !g_settings.unhideOnHover) {
