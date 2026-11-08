@@ -24612,14 +24612,21 @@ struct SessionProperties {
         props.Wnode.ClientContext = 1;  // QPC timestamps
         props.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
         props.LoggerNameOffset = offsetof(SessionProperties, name);
-        props.BufferSize = 16;  // KB
-        props.MinimumBuffers = 4;
-        props.MaximumBuffers = 32;
+        // Present events are system-wide (every app and DWM), a few thousand a
+        // second at most; 64 KB x up to 64 buffers leaves ample headroom so a
+        // busy machine does not drop frames before the 1s flush.
+        props.BufferSize = 64;  // KB
+        props.MinimumBuffers = 8;
+        props.MaximumBuffers = 64;
         props.FlushTimer = 1;   // seconds
     }
 };
 
-void StopLocked() {
+// waitForConsumer: Shutdown waits for the consumer thread so nothing runs
+// after the mod unloads; the render thread only gives it a moment, because
+// the thread touches nothing but these statics and exits once the session
+// is gone anyway.
+void StopLocked(bool waitForConsumer) {
     if (g_session) {
         SessionProperties sp;
         ControlTraceW(g_session, nullptr, &sp.props, EVENT_TRACE_CONTROL_STOP);
@@ -24631,7 +24638,7 @@ void StopLocked() {
     }
     if (g_consumerThread) {
         // ProcessTrace returns promptly once the session is gone.
-        WaitForSingleObject(g_consumerThread, 1000);
+        WaitForSingleObject(g_consumerThread, waitForConsumer ? 1000 : 50);
         CloseHandle(g_consumerThread);
         g_consumerThread = nullptr;
     }
@@ -24657,21 +24664,46 @@ ULONG StartLocked() {
         return status;
     }
 
-    EnableTraceEx2(g_session, &kDxgiProvider, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
-                   TRACE_LEVEL_INFORMATION, kApiPresentKeyword, 0, 0, nullptr);
-    EnableTraceEx2(g_session, &kD3d9Provider, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
-                   TRACE_LEVEL_INFORMATION, kApiPresentKeyword, 0, 0, nullptr);
-    EnableTraceEx2(g_session, &kDxgKrnlProvider, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
-                   TRACE_LEVEL_INFORMATION, kDxgKrnlPresentKeyword, 0, 0, nullptr);
+    struct ProviderToEnable {
+        const GUID* guid;
+        ULONGLONG keywords;
+        const wchar_t* name;
+    };
+    const ProviderToEnable providers[] = {
+        {&kDxgiProvider, kApiPresentKeyword, L"DXGI"},
+        {&kD3d9Provider, kApiPresentKeyword, L"D3D9"},
+        {&kDxgKrnlProvider, kDxgKrnlPresentKeyword, L"DxgKrnl"},
+    };
+    int enabled = 0;
+    ULONG lastEnableError = ERROR_SUCCESS;
+    for (const ProviderToEnable& p : providers) {
+        const ULONG enableStatus =
+            EnableTraceEx2(g_session, p.guid, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
+                           TRACE_LEVEL_INFORMATION, p.keywords, 0, 0, nullptr);
+        if (enableStatus == ERROR_SUCCESS) {
+            ++enabled;
+        } else {
+            lastEnableError = enableStatus;
+            Wh_Log(L"Game FPS: enabling the %s provider failed (%lu).", p.name, enableStatus);
+        }
+    }
+    if (enabled == 0) {
+        StopLocked(/*waitForConsumer=*/false);
+        return lastEnableError;
+    }
 
     EVENT_TRACE_LOGFILEW logFile = {};
     logFile.LoggerName = const_cast<LPWSTR>(kSessionName);
-    logFile.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
+    // RAW_TIMESTAMP keeps EventHeader.TimeStamp as the session's clock (QPC,
+    // from Wnode.ClientContext = 1). Without it ETW converts timestamps to
+    // FILETIME and every QPC-based duration below would be wrong.
+    logFile.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD |
+                               PROCESS_TRACE_MODE_RAW_TIMESTAMP;
     logFile.EventRecordCallback = OnEventRecord;
     g_consumer = OpenTraceW(&logFile);
     if (g_consumer == INVALID_PROCESSTRACE_HANDLE) {
         status = GetLastError();
-        StopLocked();
+        StopLocked(/*waitForConsumer=*/false);
         return status ? status : ERROR_GEN_FAILURE;
     }
 
@@ -24679,7 +24711,7 @@ ULONG StartLocked() {
     g_consumerThread = CreateThread(nullptr, 0, ConsumerThreadProc, nullptr, 0, nullptr);
     if (!g_consumerThread) {
         status = GetLastError();
-        StopLocked();
+        StopLocked(/*waitForConsumer=*/false);
         return status ? status : ERROR_GEN_FAILURE;
     }
     g_running = true;
@@ -24730,6 +24762,7 @@ int ComputeFps() {
 // session on demand, stops it once unused for a while, follows the foreground
 // process, and returns the FPS to show (-1 = "–"), refreshed once a second.
 int Tick(bool wanted, double now, HWND islandHwnd) {
+    bool running = false;
     if (wanted) {
         g_lastWantedAt = now;
     }
@@ -24749,12 +24782,13 @@ int Tick(bool wanted, double now, HWND islandHwnd) {
                 Wh_Log(L"Game FPS: ETW present tracing started.");
             }
         } else if (!wanted && g_running && now - g_lastWantedAt > kStopAfterUnusedSec) {
-            StopLocked();
+            StopLocked(/*waitForConsumer=*/false);
             g_fps = -1;
         }
+        running = g_running;  // read under the lock (6): Shutdown may race us
     }
 
-    if (!g_running) {
+    if (!running) {
         g_fps = -1;
         return g_fps;
     }
@@ -24782,12 +24816,21 @@ int Tick(bool wanted, double now, HWND islandHwnd) {
 // torn down with their owner, so it must be stopped explicitly.
 void Shutdown() {
     std::lock_guard control(g_controlMutex);
-    StopLocked();
+    StopLocked(/*waitForConsumer=*/true);
+}
+
+// 3) A crash or hard kill skips Shutdown and leaves the session (and its
+// system-wide providers) running with no consumer. Stop any such leftover
+// when the island starts, not only when the FPS chip next appears.
+void StopLeftoverSession() {
+    SessionProperties sp;
+    ControlTraceW(0, kSessionName, &sp.props, EVENT_TRACE_CONTROL_STOP);
 }
 
 }  // namespace FrameStats
 
 DWORD WINAPI RenderThreadProc(void*) {
+    FrameStats::StopLeftoverSession();
     HRESULT hrCo = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     WNDCLASSEXW wc = {};
