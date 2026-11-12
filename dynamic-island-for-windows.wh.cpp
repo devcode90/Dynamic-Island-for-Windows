@@ -404,6 +404,18 @@ We love community contributions! To ensure high-quality updates, please follow t
   - TimerModule: true
     $name: Focus Timer module
     $description: Enables a Pomodoro-style focus/break timer, startable from the island's right-click menu.
+  - PomodoroCycles: 4
+    $name: Pomodoro - focus sessions per run
+    $description: 1 to 12. "Start Pomodoro" in the right-click menu chains this many focus sessions, with a short break after each one and a long break after the last. The pill shows which session you are on.
+  - PomodoroWorkMinutes: 25
+    $name: Pomodoro - focus length (minutes)
+    $description: 1 to 180.
+  - PomodoroBreakMinutes: 5
+    $name: Pomodoro - short break (minutes)
+    $description: 1 to 60. The break between focus sessions.
+  - PomodoroLongBreakMinutes: 15
+    $name: Pomodoro - long break (minutes)
+    $description: 0 to 90. Taken after the final focus session. 0 ends the run without a long break.
   - Clipboard: true
     $name: Clipboard module
     $description: Shows a quick preview of the text or images you just copied.
@@ -1247,6 +1259,10 @@ struct Settings {
     // the work leading up to it.
     bool capsLock = true;
     bool timerEnabled = true;
+    int pomodoroCycles = 4;          // Modules.PomodoroCycles
+    int pomodoroWorkMinutes = 25;    // Modules.PomodoroWorkMinutes
+    int pomodoroBreakMinutes = 5;    // Modules.PomodoroBreakMinutes
+    int pomodoroLongBreakMinutes = 15;  // Modules.PomodoroLongBreakMinutes, 0 = none
     bool hideShowHotkeyEnabled = true;
     UINT hideShowModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
     UINT hideShowVk = 'D';
@@ -1476,6 +1492,16 @@ struct TimerSnapshot {
     double remainingAtPause = 0.0;
     bool justFinished = false;
     double finishedExpiresAt = 0.0;
+
+    // Pomodoro run: focus -> break -> focus ... -> focus -> long break. Zero
+    // cycleCount means a plain single timer started from the menu.
+    bool autoCycle = false;
+    int cycleIndex = 0;           // 1-based focus session currently (or last) running
+    int cycleCount = 0;
+    int workMinutes = 25;
+    int breakMinutes = 5;
+    int longBreakMinutes = 15;
+    bool finalBreak = false;      // the long break after the last session is running
 };
 
 enum class DeviceEventType {
@@ -3170,6 +3196,17 @@ void LoadSettings() {
     next.progress = Wh_GetIntSetting(L"Modules.Progress") != 0;
     next.capsLock = Wh_GetIntSetting(L"Modules.CapsLock") != 0;
     next.timerEnabled = Wh_GetIntSetting(L"Modules.TimerModule") != 0;
+    {
+        // A blank or zero field means "use the default" rather than a 0-minute timer.
+        auto intOr = [](const wchar_t* key, int fallback, int lo, int hi) {
+            const int v = Wh_GetIntSetting(key);
+            return v <= 0 ? fallback : ClampInt(v, lo, hi);
+        };
+        next.pomodoroCycles = intOr(L"Modules.PomodoroCycles", 4, 1, 12);
+        next.pomodoroWorkMinutes = intOr(L"Modules.PomodoroWorkMinutes", 25, 1, 180);
+        next.pomodoroBreakMinutes = intOr(L"Modules.PomodoroBreakMinutes", 5, 1, 60);
+        next.pomodoroLongBreakMinutes = ClampInt(Wh_GetIntSetting(L"Modules.PomodoroLongBreakMinutes"), 0, 90);
+    }
 
     next.hideShowHotkeyEnabled = Wh_GetIntSetting(L"Shortcuts.HideShowHotkeyEnabled") != 0;
 
@@ -12013,6 +12050,7 @@ void HandleStatusClickAtPoint(HWND hwnd, LPARAM lParam) {
 void StartFocusTimer(int minutes, bool isBreak) {
     {
         std::lock_guard lock(g_stateMutex);
+        g_state.timer = TimerSnapshot{};  // a plain timer forgets any Pomodoro run
         g_state.timer.active = true;
         g_state.timer.running = true;
         g_state.timer.isBreak = isBreak;
@@ -12022,6 +12060,61 @@ void StartFocusTimer(int minutes, bool isBreak) {
         g_state.timer.justFinished = false;
     }
     TriggerNudge();
+}
+
+// Starts a Pomodoro run from the Mod Settings values: N focus sessions with a
+// short break after each and a long break after the last.
+void StartPomodoro() {
+    const Settings s = GetSettingsCopy();
+    {
+        std::lock_guard lock(g_stateMutex);
+        TimerSnapshot t;
+        t.active = true;
+        t.running = true;
+        t.isBreak = false;
+        t.autoCycle = true;
+        t.cycleIndex = 1;
+        t.cycleCount = std::max(1, s.pomodoroCycles);
+        t.workMinutes = std::max(1, s.pomodoroWorkMinutes);
+        t.breakMinutes = std::max(1, s.pomodoroBreakMinutes);
+        t.longBreakMinutes = std::max(0, s.pomodoroLongBreakMinutes);
+        t.totalSeconds = t.workMinutes * 60;
+        t.endsAt = NowSeconds() + t.totalSeconds;
+        g_state.timer = t;
+    }
+    TriggerNudge();
+}
+
+// Advances a Pomodoro run to its next segment when the current one ends.
+// Returns false when the run is over. Caller holds g_stateMutex.
+bool NextPomodoroSegment(TimerSnapshot& t, double now) {
+    int minutes = 0;
+    bool isBreak = false;
+    if (!t.isBreak) {
+        // A focus session just ended.
+        if (t.cycleIndex >= t.cycleCount) {
+            if (t.longBreakMinutes <= 0) return false;
+            minutes = t.longBreakMinutes;
+            isBreak = true;
+            t.finalBreak = true;
+        } else {
+            minutes = t.breakMinutes;
+            isBreak = true;
+        }
+    } else {
+        if (t.finalBreak || t.cycleIndex >= t.cycleCount) return false;
+        ++t.cycleIndex;
+        minutes = t.workMinutes;
+        isBreak = false;
+    }
+    t.isBreak = isBreak;
+    t.totalSeconds = minutes * 60;
+    t.endsAt = now + minutes * 60;
+    t.remainingAtPause = 0.0;
+    t.running = true;
+    t.active = true;
+    t.justFinished = false;
+    return true;
 }
 
 void ToggleTimerPause() {
@@ -12449,6 +12542,14 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
                 L"Identify song");
 
     HMENU timerMenu = CreatePopupMenu();
+    {
+        const Settings s = GetSettingsCopy();
+        wchar_t pomodoro[96] = {};
+        swprintf_s(pomodoro, L"Start Pomodoro (%d × %d/%d min)", s.pomodoroCycles,
+                   s.pomodoroWorkMinutes, s.pomodoroBreakMinutes);
+        AppendMenuW(timerMenu, MF_STRING, 35, pomodoro);
+        AppendMenuW(timerMenu, MF_SEPARATOR, 0, nullptr);
+    }
     AppendMenuW(timerMenu, MF_STRING, 30, L"Start 25 min Focus");
     AppendMenuW(timerMenu, MF_STRING, 31, L"Start 50 min Focus");
     AppendMenuW(timerMenu, MF_STRING, 32, L"Start 5 min Break");
@@ -12763,6 +12864,9 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             break;
         case 34:
             StopFocusTimer();
+            break;
+        case 35:
+            StartPomodoro();
             break;
         case 40: {
             // Only reachable while visible (a hidden window can't be
@@ -20842,6 +20946,18 @@ class Renderer {
         std::wstring label = state.timer.justFinished
             ? (state.timer.isBreak ? L"Break Complete" : L"Focus Complete")
             : (state.timer.isBreak ? L"Break Timer" : L"Focus Timer");
+        if (state.timer.autoCycle && state.timer.cycleCount > 0) {
+            if (state.timer.justFinished) {
+                label = L"Pomodoro Complete";
+            } else if (state.timer.finalBreak) {
+                label = L"Long Break";
+            } else {
+                // "Focus 2/4": which session of the run this is.
+                label = (state.timer.isBreak ? L"Break " : L"Focus ") +
+                        std::to_wstring(state.timer.cycleIndex) + L"/" +
+                        std::to_wstring(state.timer.cycleCount);
+            }
+        }
         D2D1_RECT_F labelRect = D2D1::RectF(tx, cy - 16.0f, rect.right - 14.0f, cy - 1.0f);
         target_->DrawTextW(label.c_str(), static_cast<UINT32>(label.size()),
                            smallTextFormat_.Get(), labelRect, mutedBrush_.Get(),
@@ -24738,10 +24854,14 @@ DWORD WINAPI RenderThreadProc(void*) {
             std::lock_guard lock(g_stateMutex);
             snapshot = g_state;
             if (g_state.timer.active && g_state.timer.running && now >= g_state.timer.endsAt) {
-                g_state.timer.active = false;
-                g_state.timer.running = false;
-                g_state.timer.justFinished = true;
-                g_state.timer.finishedExpiresAt = now + 6.0;
+                // A Pomodoro run rolls straight into its next segment; a plain
+                // timer (or the end of the run) shows the completion card.
+                if (!(g_state.timer.autoCycle && NextPomodoroSegment(g_state.timer, now))) {
+                    g_state.timer.active = false;
+                    g_state.timer.running = false;
+                    g_state.timer.justFinished = true;
+                    g_state.timer.finishedExpiresAt = now + 6.0;
+                }
                 timerJustCompleted = true;
             }
             if (g_state.timer.justFinished && now >= g_state.timer.finishedExpiresAt) {
