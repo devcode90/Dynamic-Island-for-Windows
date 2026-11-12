@@ -9530,9 +9530,24 @@ void UpdatePrivacyIndicators() {
     g_state.system.cameraApp = camApp;
 }
 
+// Right after a copy, other clipboard listeners (Windows' own clipboard history
+// among them) often have the clipboard open for a moment, and a single
+// OpenClipboard attempt then fails. Without a retry roughly every other quick
+// copy was lost, from both the copy pill and the history. Worst case this
+// blocks for ~80 ms when something holds the clipboard for good.
+bool OpenClipboardWithRetry(HWND hwnd) {
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        if (OpenClipboard(hwnd)) {
+            return true;
+        }
+        Sleep(10);
+    }
+    return false;
+}
+
 std::wstring ReadClipboardText(HWND hwnd) {
     std::wstring text;
-    if (!OpenClipboard(hwnd)) {
+    if (!OpenClipboardWithRetry(hwnd)) {
         return text;
     }
 
@@ -9555,7 +9570,7 @@ std::wstring ReadClipboardText(HWND hwnd) {
 // app actually placed on the clipboard (CF_DIB/CF_DIBV5) — Windows
 // synthesizes CF_BITMAP from those automatically.
 bool ReadClipboardImagePixels(HWND hwnd, BitmapPixels* outPixels, UINT maxDim) {
-    if (!outPixels || !OpenClipboard(hwnd)) {
+    if (!outPixels || !OpenClipboardWithRetry(hwnd)) {
         return false;
     }
 
@@ -9826,9 +9841,11 @@ bool ClipboardContentIsPrivate() {
         return true;
     }
     if (kHistory && IsClipboardFormatAvailable(kHistory)) {
-        // DWORD 0 means "do not keep this in history".
-        bool exclude = false;
-        if (OpenClipboard(nullptr)) {
+        // DWORD 0 means "do not keep this in history". If the flag can't be
+        // read, treat the copy as private rather than risk recording it.
+        bool exclude = true;
+        if (OpenClipboardWithRetry(nullptr)) {
+            exclude = false;
             if (HANDLE h = GetClipboardData(kHistory)) {
                 if (GlobalSize(h) >= sizeof(DWORD)) {
                     if (const auto* v = static_cast<const DWORD*>(GlobalLock(h))) {
