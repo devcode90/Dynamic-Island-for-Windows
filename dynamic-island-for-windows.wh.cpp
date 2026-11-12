@@ -12547,7 +12547,10 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
     std::wstring songTitle, songArtist, songUrl;
     {
         std::lock_guard lock(g_stateMutex);
-        if (g_state.songId.active && g_state.songId.status == SongIdStatus::Found) {
+        // `active` stays set after the card times out (nothing clears it), so the
+        // expiry has to be checked too, or the submenu lingers for an old result.
+        if (g_state.songId.active && g_state.songId.status == SongIdStatus::Found &&
+            NowSeconds() < g_state.songId.expiresAt) {
             songTitle = g_state.songId.title;
             songArtist = g_state.songId.artist;
             songUrl = g_state.songId.url;
