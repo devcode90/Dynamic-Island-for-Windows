@@ -13115,22 +13115,41 @@ class Renderer {
 
         if (width >= 2.0f && height >= 2.0f) {
             if (secondary) {
-                const float gap = 12.0f * settings.sizeScale;
-                const float maxH = std::max(primary.height, secondary->height);
+                // Fit the pair into the *animated* box (width x height), the way the
+                // single pill below is drawn at the animated size.
+                //
+                // The pills used to be drawn at their final target sizes while the
+                // springs were still moving. `bounds` (and so the dirty rect of every
+                // later frame) is computed from the animated width, so whenever a
+                // full repaint landed mid-animation the right-hand pill was painted
+                // past the region that later frames clear. With nothing animating
+                // afterwards (paused media next to a Bluetooth card, say) that ghost
+                // copy of the pill's right end stayed on screen (#164). At rest the
+                // factors are exactly 1, so the settled layout is unchanged.
+                const float gapTarget = 12.0f * settings.sizeScale;
+                const float targetW = primary.width + gapTarget + secondary->width;
+                const float targetH = std::max(primary.height, secondary->height);
+                const float kx = targetW > 1.0f ? width / targetW : 1.0f;
+                const float ky = targetH > 1.0f ? height / targetH : 1.0f;
+
+                const float pW = primary.width * kx;
+                const float sW = secondary->width * kx;
+                const float gap = gapTarget * kx;
+                const float pH = primary.height * ky;
+                const float sH = secondary->height * ky;
+                const float maxH = targetH * ky;
                 // Notch / border-merged islands hang from the top edge, so the
                 // shorter pill stays flush with it instead of being centred
                 // inside the taller one's height (which pushed it down).
                 const bool hangFromTop = settings.notchStyle || settings.borderMergedMode;
-                const float pTop = hangFromTop ? top : top + (maxH - primary.height) * 0.5f;
-                const float sTop = hangFromTop ? top : top + (maxH - secondary->height) * 0.5f;
+                const float pTop = hangFromTop ? top : top + (maxH - pH) * 0.5f;
+                const float sTop = hangFromTop ? top : top + (maxH - sH) * 0.5f;
 
                 DrawPill(state, settings, primary,
-                         D2D1::RectF(left, pTop, left + primary.width, pTop + primary.height),
+                         D2D1::RectF(left, pTop, left + pW, pTop + pH),
                          scale, now);
                 DrawPill(state, settings, *secondary,
-                         D2D1::RectF(left + primary.width + gap, sTop,
-                                      left + primary.width + gap + secondary->width,
-                                      sTop + secondary->height),
+                         D2D1::RectF(left + pW + gap, sTop, left + pW + gap + sW, sTop + sH),
                          scale, now);
             } else {
                 DrawPill(state, settings, primary,
