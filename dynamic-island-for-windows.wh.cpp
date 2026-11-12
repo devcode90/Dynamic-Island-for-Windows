@@ -8809,12 +8809,17 @@ DWORD WINAPI RadioThreadProc(void*) {
 
         try {
             if (!accessRequested) {
-                Radio::RequestAccessAsync().get();
+                const auto access = Radio::RequestAccessAsync().get();
+                if (access != winrt::Windows::Devices::Radios::RadioAccessStatus::Allowed) {
+                    Wh_Log(L"Quick toggles: radio access status %d.", static_cast<int>(access));
+                }
                 accessRequested = true;
             }
             int wifi = -1;
             int bt = -1;
+            unsigned listed = 0;
             for (auto const& radio : Radio::GetRadiosAsync().get()) {
+                ++listed;
                 const RadioKind kind = radio.Kind();
                 const bool isWifi = kind == RadioKind::WiFi;
                 const bool isBt = kind == RadioKind::Bluetooth;
@@ -8834,11 +8839,19 @@ DWORD WINAPI RadioThreadProc(void*) {
                 int& slot = isWifi ? wifi : bt;
                 slot = std::max(slot, on ? 1 : 0);
             }
-            const bool changed = g_wifiRadioState.exchange(wifi) != wifi ||
-                                 g_bluetoothRadioState.exchange(bt) != bt;
-            if (changed || request >= 0) {
+            // Both exchanges must run every pass; joined with || the Bluetooth
+            // one was skipped whenever Wi-Fi changed.
+            const bool wifiChanged = g_wifiRadioState.exchange(wifi) != wifi;
+            const bool btChanged = g_bluetoothRadioState.exchange(bt) != bt;
+            if (wifiChanged || btChanged) {
+                Wh_Log(L"Quick toggles: %u radios listed, Wi-Fi %d, Bluetooth %d (-1 = none, 0 = off, 1 = on).",
+                       listed, wifi, bt);
+            }
+            if (wifiChanged || btChanged || request >= 0) {
                 g_layoutDirty = true;
             }
+        } catch (winrt::hresult_error const& e) {
+            Wh_Log(L"Quick toggles: reading the radios failed (0x%08X).", static_cast<unsigned>(e.code()));
         } catch (...) {
             Wh_Log(L"Quick toggles: reading the radios failed.");
         }
