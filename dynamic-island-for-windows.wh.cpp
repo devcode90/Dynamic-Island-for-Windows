@@ -625,6 +625,7 @@ We love community contributions! To ensure high-quality updates, please follow t
 #include <shellapi.h>
 #include <ole2.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <sddl.h>
 #include <setupapi.h>
 #include <devpropdef.h>
@@ -4819,6 +4820,71 @@ PixelsRef IconToPixelsRef(HICON icon, UINT size) {
     return IconToPixels(icon, size, &px) ? PixelsRef(std::move(px)) : PixelsRef();
 }
 
+// Icon of an app by its AppUserModelID, through the shell's Apps folder. This is
+// what covers Store / UWP players (Spotify from the Store, Media Player, Groove,
+// Apple Music): their windows belong to ApplicationFrameHost, so the window
+// enumeration used elsewhere never finds an executable to lift an icon from and
+// the dock fell back to a letter badge. Desktop AUMIDs resolve the same way.
+// Must be called on a thread with a COM apartment.
+PixelsRef AppIconFromAumid(const std::wstring& aumid, UINT size) {
+    if (aumid.empty() || size == 0) {
+        return PixelsRef();
+    }
+    const std::wstring path = L"shell:AppsFolder\\" + aumid;
+    ComPtr<IShellItemImageFactory> factory;
+    if (FAILED(SHCreateItemFromParsingName(path.c_str(), nullptr, IID_PPV_ARGS(&factory))) ||
+        !factory) {
+        return PixelsRef();
+    }
+
+    HBITMAP bitmap = nullptr;
+    const SIZE requested = {static_cast<LONG>(size), static_cast<LONG>(size)};
+    if (FAILED(factory->GetImage(requested, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK, &bitmap)) ||
+        !bitmap) {
+        return PixelsRef();
+    }
+
+    PixelsRef result;
+    BITMAP bm = {};
+    if (GetObjectW(bitmap, sizeof(bm), &bm) && bm.bmWidth > 0 && bm.bmHeight > 0 &&
+        bm.bmWidth <= 512 && bm.bmHeight <= 512) {
+        BitmapPixels px;
+        px.width = static_cast<UINT>(bm.bmWidth);
+        px.height = static_cast<UINT>(bm.bmHeight);
+        px.bgra.resize(static_cast<size_t>(px.width) * px.height * 4);
+
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bi.bmiHeader.biWidth = bm.bmWidth;
+        bi.bmiHeader.biHeight = -bm.bmHeight;  // top-down
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+
+        HDC dc = GetDC(nullptr);
+        const int lines = dc ? GetDIBits(dc, bitmap, 0, static_cast<UINT>(bm.bmHeight),
+                                         px.bgra.data(), &bi, DIB_RGB_COLORS)
+                             : 0;
+        if (dc) ReleaseDC(nullptr, dc);
+
+        if (lines == bm.bmHeight) {
+            // The shell hands back premultiplied BGRA, which is what Direct2D
+            // wants. An icon with no alpha at all is treated as opaque.
+            bool anyAlpha = false;
+            for (size_t i = 3; i < px.bgra.size(); i += 4) {
+                if (px.bgra[i] != 0) { anyAlpha = true; break; }
+            }
+            if (!anyAlpha) {
+                for (size_t i = 3; i < px.bgra.size(); i += 4) px.bgra[i] = 255;
+            }
+            px.generation = ++g_artGenerationCounter;
+            result = PixelsRef(std::move(px));
+        }
+    }
+    DeleteObject(bitmap);
+    return result;
+}
+
 bool ProcessImageNameForPid(DWORD pid, std::wstring* imageName) {
     if (!pid || !imageName) {
         return false;
@@ -5173,6 +5239,11 @@ PixelsRef FindMediaSourceIcon(const std::wstring& sourceAppUserModelId) {
     EnumWindows(FindMediaSourceWindowProc, reinterpret_cast<LPARAM>(&data));
     if (found) {
         pixels = GetWindowIconPixels(found, 32);
+    }
+    if (!pixels) {
+        // No window owned by a matching executable (Store apps run under
+        // ApplicationFrameHost): ask the shell for the app's own icon instead.
+        pixels = AppIconFromAumid(sourceAppUserModelId, 64);
     }
     return pixels;
 }
