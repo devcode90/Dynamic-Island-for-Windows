@@ -407,6 +407,9 @@ We love community contributions! To ensure high-quality updates, please follow t
   - Clipboard: true
     $name: Clipboard module
     $description: Shows a quick preview of the text or images you just copied.
+  - QuickToggles: false
+    $name: Quick toggles tab
+    $description: Adds a Controls tab to the scroll loop with Wi-Fi, Bluetooth and mute switches, plus shortcuts to the Do Not Disturb and Night light settings (Windows has no public way for apps to flip those two directly).
   - ClipboardHistory: false
     $name: Clipboard history tab
     $description: Adds a Clipboard tab to the scroll loop listing the last 25 pieces of text you copied. Click one to copy it again. Kept in memory only, never written to disk, and cleared when the mod restarts. Copies that password managers mark as private are never recorded.
@@ -681,6 +684,13 @@ We love community contributions! To ensure high-quality updates, please follow t
 #include <winrt/Windows.UI.Notifications.Management.h>
 #else
 #define DYNAMIC_ISLAND_HAS_USER_NOTIFICATION_LISTENER 0
+#endif
+
+#if __has_include(<winrt/Windows.Devices.Radios.h>)
+#define DYNAMIC_ISLAND_HAS_RADIOS 1
+#include <winrt/Windows.Devices.Radios.h>
+#else
+#define DYNAMIC_ISLAND_HAS_RADIOS 0
 #endif
 
 #if __has_include(<winrt/Windows.Devices.Enumeration.h>) && \
@@ -1230,6 +1240,7 @@ struct Settings {
     bool mediaAutoExpand = false;
     bool clipboard = true;
     bool clipboardHistory = false;   // Modules.ClipboardHistory: tab with recent text copies
+    bool quickToggles = false;       // Modules.QuickToggles: Controls tab
     bool statusCountdownProgress = false;
     bool battery = true;
     bool progress = true;
@@ -2038,6 +2049,7 @@ int ActiveTabCount(const Settings& settings) {
     if (settings.hardwareMonitorModule) ++count;
     if (settings.fileTrayModule) ++count;
     if (settings.clipboardHistory) ++count;
+    if (settings.quickToggles) ++count;
     if (settings.lyrics && g_lyricsTabAvailable.load(std::memory_order_relaxed)) ++count;
     return count;
 }
@@ -2083,6 +2095,16 @@ int ClipboardHistoryTabIndex(const Settings& settings) {
     }
     return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0) +
            (settings.fileTrayModule ? 1 : 0) + MediaTabIndex(settings);
+}
+
+// Controls tab: right after Clipboard history.
+int QuickTogglesTabIndex(const Settings& settings) {
+    if (!settings.quickToggles) {
+        return -1;
+    }
+    return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0) +
+           (settings.fileTrayModule ? 1 : 0) + (settings.clipboardHistory ? 1 : 0) +
+           MediaTabIndex(settings);
 }
 
 // Moves the dashboard one tab (+1 = next, -1 = previous). Clamped at both ends:
@@ -2612,6 +2634,48 @@ int ClipHistoryRowAt(const MediaContentPoint& pt, int count) {
 // Index into SharedState::clipboardHistory (oldest first) for a visible row.
 int ClipHistoryItemForRow(int row, int count) {
     return count - 1 - (row + ClipHistoryScrollOffset(count));
+}
+
+// ── Quick toggles (Controls tab) ─────────────────────────────────────────────
+// Five round buttons in one row. Wi-Fi and Bluetooth are real radio switches,
+// mute toggles the default output, and the last two open Settings pages because
+// Windows offers apps no public way to flip Do Not Disturb or Night light.
+namespace QuickToggleLayout {
+    constexpr int kCount = 5;
+    constexpr float kRowY = 86.0f;        // button centres, content space
+    constexpr float kRadius = 22.0f;
+    constexpr float kSpacing = 66.0f;
+    constexpr float kHitPad = 6.0f;
+    constexpr float kLabelTop = kRowY + kRadius + 8.0f;
+    constexpr float kLabelH = 16.0f;
+}
+
+enum QuickToggleId { kToggleWifi = 0, kToggleBluetooth, kToggleMute, kToggleDnd, kToggleNightLight };
+
+std::atomic<int> g_wifiRadioState{-1};       // -1 = no radio / unknown, 0 = off, 1 = on
+std::atomic<int> g_bluetoothRadioState{-1};
+std::atomic<int> g_radioToggleRequest{-1};   // QuickToggleId to flip, -1 = none
+std::atomic<double> g_controlsViewTime{-100.0};  // last frame the Controls tab was painted
+std::atomic<int> g_hoveredQuickToggle{-1};
+HANDLE g_radioEvent = nullptr;                // wakes RadioThreadProc
+HANDLE g_radioThread = nullptr;
+
+// Button under a content-space point, or -1.
+int QuickToggleHitTest(const MediaContentPoint& pt) {
+    if (!pt.valid || pt.height <= MediaLayout::kExpandedMinHeight) {
+        return -1;
+    }
+    const float cx = pt.width * 0.5f;
+    const float reach = QuickToggleLayout::kRadius + QuickToggleLayout::kHitPad;
+    for (int i = 0; i < QuickToggleLayout::kCount; ++i) {
+        const float bx = cx + (i - (QuickToggleLayout::kCount - 1) * 0.5f) * QuickToggleLayout::kSpacing;
+        const float dx = pt.x - bx;
+        const float dy = pt.y - QuickToggleLayout::kRowY;
+        if (dx * dx + dy * dy <= reach * reach) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 // True when the point is over the expanded layout's album art.
@@ -3234,6 +3298,7 @@ void LoadSettings() {
     }
     next.clipboard = Wh_GetIntSetting(L"Modules.Clipboard") != 0;
     next.clipboardHistory = Wh_GetIntSetting(L"Modules.ClipboardHistory") != 0;
+    next.quickToggles = Wh_GetIntSetting(L"Modules.QuickToggles") != 0;
     if (!next.clipboardHistory) {
         // Switching the module off forgets what it held.
         std::lock_guard lock(g_stateMutex);
@@ -8714,6 +8779,96 @@ DWORD WINAPI LyricsThreadProc(void*) {
     }
     return 0;
 }
+// Reads and flips the Wi-Fi / Bluetooth radios for the Controls tab. Radio calls
+// are async WinRT and can take a moment, so they never run on the render thread.
+// Idle unless the tab was painted in the last few seconds or a toggle is pending.
+DWORD WINAPI RadioThreadProc(void*) {
+#if DYNAMIC_ISLAND_HAS_RADIOS
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    using winrt::Windows::Devices::Radios::Radio;
+    using winrt::Windows::Devices::Radios::RadioKind;
+    using winrt::Windows::Devices::Radios::RadioState;
+
+    bool accessRequested = false;
+    HANDLE waits[2] = {g_stopEvent, g_radioEvent};
+    while (WaitForMultipleObjects(g_radioEvent ? 2 : 1, waits, FALSE, 2000) != WAIT_OBJECT_0) {
+        const int request = g_radioToggleRequest.exchange(-1);
+        bool enabled = false;
+        {
+            std::lock_guard lock(g_settingsMutex);
+            enabled = g_settings.quickToggles;
+        }
+        const bool visible = (NowSeconds() - g_controlsViewTime.load(std::memory_order_relaxed)) < 3.0;
+        if (!enabled || (!visible && request < 0)) {
+            continue;
+        }
+
+        try {
+            if (!accessRequested) {
+                Radio::RequestAccessAsync().get();
+                accessRequested = true;
+            }
+            int wifi = -1;
+            int bt = -1;
+            for (auto const& radio : Radio::GetRadiosAsync().get()) {
+                const RadioKind kind = radio.Kind();
+                const bool isWifi = kind == RadioKind::WiFi;
+                const bool isBt = kind == RadioKind::Bluetooth;
+                if (!isWifi && !isBt) continue;
+
+                bool on = radio.State() == RadioState::On;
+                if ((isWifi && request == kToggleWifi) || (isBt && request == kToggleBluetooth)) {
+                    const auto result = radio.SetStateAsync(on ? RadioState::Off : RadioState::On).get();
+                    if (result == winrt::Windows::Devices::Radios::RadioAccessStatus::Allowed) {
+                        on = radio.State() == RadioState::On;
+                    } else {
+                        Wh_Log(L"Quick toggles: Windows refused the radio change (status %d).",
+                               static_cast<int>(result));
+                    }
+                }
+                // Several adapters of one kind: any that is on counts as on.
+                int& slot = isWifi ? wifi : bt;
+                slot = std::max(slot, on ? 1 : 0);
+            }
+            const bool changed = g_wifiRadioState.exchange(wifi) != wifi ||
+                                 g_bluetoothRadioState.exchange(bt) != bt;
+            if (changed || request >= 0) {
+                g_layoutDirty = true;
+            }
+        } catch (...) {
+            Wh_Log(L"Quick toggles: reading the radios failed.");
+        }
+    }
+    winrt::uninit_apartment();
+#endif
+    return 0;
+}
+
+void ToggleEndpointMute();  // defined with the other window actions
+
+// Runs one Controls button. Render thread (window procedure).
+void RunQuickToggle(int id) {
+    switch (id) {
+        case kToggleWifi:
+        case kToggleBluetooth:
+            g_radioToggleRequest.store(id);
+            if (g_radioEvent) SetEvent(g_radioEvent);
+            break;
+        case kToggleMute:
+            ToggleEndpointMute();
+            break;
+        case kToggleDnd:
+            ShellExecuteW(nullptr, L"open", L"ms-settings:notifications", nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        case kToggleNightLight:
+            ShellExecuteW(nullptr, L"open", L"ms-settings:nightlight", nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        default:
+            break;
+    }
+    g_layoutDirty = true;
+}
+
 DWORD WINAPI AudioThreadProc(void*) {
     HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
@@ -15831,6 +15986,107 @@ class Renderer {
         mutedBrush_->SetOpacity(0.75f);
     }
 
+    // Controls tab (Modules.QuickToggles). Toggles that are on take the accent
+    // fill; the two Settings shortcuts carry a small arrow instead of a state.
+    void DrawQuickTogglesDashboard(const SharedState& state, D2D1_RECT_F rect, double now) {
+        // Opening the tab after a while away reads the radios right away instead
+        // of waiting out the worker's 2 s tick. Only on that transition, never per
+        // frame: a PC with no radios would otherwise re-query them every frame.
+        const double lastView = g_controlsViewTime.exchange(now, std::memory_order_relaxed);
+        if (g_radioEvent && now - lastView > 3.0) {
+            SetEvent(g_radioEvent);
+        }
+
+        if (boldTextFormat_) {
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            textBrush_->SetOpacity(0.96f);
+            const wchar_t* title = L"Controls";
+            target_->DrawTextW(title, static_cast<UINT32>(wcslen(title)), boldTextFormat_.Get(),
+                               D2D1::RectF(rect.left + FileTrayLayout::kPadX, rect.top + 18.0f,
+                                           rect.right - FileTrayLayout::kPadX, rect.top + 38.0f),
+                               textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        }
+
+        const int wifi = g_wifiRadioState.load(std::memory_order_relaxed);
+        const int bt = g_bluetoothRadioState.load(std::memory_order_relaxed);
+        const bool muted = state.system.volumeMuted;
+        const int hovered = g_hoveredQuickToggle.load(std::memory_order_relaxed);
+
+        struct Button {
+            const wchar_t* glyph;
+            const wchar_t* label;
+            int state;  // -1 unavailable, 0 off, 1 on, 2 = shortcut (no state)
+        };
+        const Button buttons[QuickToggleLayout::kCount] = {
+            {L"", L"Wi-Fi", wifi},
+            {L"", L"Bluetooth", bt},
+            {muted ? L"" : L"", muted ? L"Muted" : L"Sound", muted ? 1 : 0},
+            {L"", L"Focus", 2},
+            {L"", L"Night light", 2},
+        };
+
+        const float cx = (rect.left + rect.right) * 0.5f;
+        const float cy = rect.top + QuickToggleLayout::kRowY;
+        const float r = QuickToggleLayout::kRadius;
+        for (int i = 0; i < QuickToggleLayout::kCount; ++i) {
+            const Button& b = buttons[i];
+            const float bx = cx + (i - (QuickToggleLayout::kCount - 1) * 0.5f) * QuickToggleLayout::kSpacing;
+            const D2D1_POINT_2F c = D2D1::Point2F(bx, cy);
+            const bool on = b.state == 1;
+            const bool unavailable = b.state == -1;
+
+            D2D1_COLOR_F fill = on ? WithAlpha(material_.accent, 0.92f * settingsOpacity_)
+                                   : WithAlpha(material_.raisedStrong, material_.raisedStrong.a *
+                                                   (hovered == i ? 1.8f : 1.0f));
+            if (ID2D1SolidColorBrush* brush = AcquireBrush(fill)) {
+                target_->FillEllipse(D2D1::Ellipse(c, r, r), brush);
+            }
+
+            if (iconFormat_) {
+                iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                // On an accent fill the glyph needs to contrast with the accent, not the island.
+                const D2D1_COLOR_F ink = on ? (RelativeLuminance(material_.accent) > 0.45
+                                                   ? D2D1::ColorF(0, 0, 0, 0.90f)
+                                                   : D2D1::ColorF(1, 1, 1, 0.98f))
+                                            : WithAlpha(material_.textPrimary, unavailable ? 0.35f : 0.92f);
+                if (ID2D1SolidColorBrush* inkBrush = AcquireBrush(ink)) {
+                    target_->DrawTextW(b.glyph, 1, iconFormat_.Get(),
+                                       D2D1::RectF(bx - r, cy - r, bx + r, cy + r), inkBrush,
+                                       D2D1_DRAW_TEXT_OPTIONS_NONE);
+                }
+                iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+
+            if (b.state == 2) {
+                // Shortcut marker: a small arrow at the button's top-right.
+                if (ID2D1SolidColorBrush* mark = AcquireBrush(WithAlpha(material_.textSecondary, 0.85f))) {
+                    const D2D1_POINT_2F tip = D2D1::Point2F(bx + r * 0.78f, cy - r * 0.78f);
+                    target_->DrawLine(D2D1::Point2F(tip.x - 5.0f, tip.y + 5.0f), tip, mark, 1.3f, RoundStroke());
+                    target_->DrawLine(D2D1::Point2F(tip.x - 4.0f, tip.y), tip, mark, 1.3f, RoundStroke());
+                    target_->DrawLine(D2D1::Point2F(tip.x, tip.y + 4.0f), tip, mark, 1.3f, RoundStroke());
+                }
+            }
+
+            if (smallTextFormat_) {
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                mutedBrush_->SetOpacity(unavailable ? 0.40f : 0.80f);
+                const float labelTop = rect.top + QuickToggleLayout::kLabelTop;
+                target_->DrawTextW(b.label, static_cast<UINT32>(wcslen(b.label)), smallTextFormat_.Get(),
+                                   D2D1::RectF(bx - QuickToggleLayout::kSpacing * 0.5f, labelTop,
+                                               bx + QuickToggleLayout::kSpacing * 0.5f,
+                                               labelTop + QuickToggleLayout::kLabelH),
+                                   mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            }
+        }
+
+        textBrush_->SetOpacity(0.96f);
+        mutedBrush_->SetOpacity(0.75f);
+    }
+
     // Load colour is *semantic*, not decorative: the accent while a component is
     // comfortable, amber under pressure, red when saturated. The previous design
     // assigned a fixed rainbow colour per metric, which carried no information
@@ -16884,6 +17140,7 @@ class Renderer {
             if (settings.hardwareMonitorModule) activeTabs.push_back(2);
             if (settings.fileTrayModule) activeTabs.push_back(4);
             if (settings.clipboardHistory) activeTabs.push_back(6);
+            if (settings.quickToggles) activeTabs.push_back(7);
 
             int maxTabs = static_cast<int>(activeTabs.size());
             int tabIdx = NormalizedTabIndex(settings);
@@ -16905,6 +17162,7 @@ class Renderer {
                 else if (activeTabId == 2) DrawHardwareMonitorDashboard(state, fullRect, settings, scale);
                 else if (activeTabId == 4) DrawFileTrayDashboard(state, fullRect, settings, scale);
                 else if (activeTabId == 6) DrawClipboardHistoryDashboard(state, fullRect, scale);
+                else if (activeTabId == 7) DrawQuickTogglesDashboard(state, fullRect, now);
             });
 
             DrawTabPagination(fullRect, maxTabs);
@@ -17458,6 +17716,7 @@ class Renderer {
             if (settings.hardwareMonitorModule) activeTabs.push_back(3);
             if (settings.fileTrayModule) activeTabs.push_back(4);
             if (settings.clipboardHistory) activeTabs.push_back(6);
+            if (settings.quickToggles) activeTabs.push_back(7);
             if (settings.lyrics && !lyricsFirst) activeTabs.push_back(5);  // Lyrics (last)
 
             // Same settings object as the list above, so the index can't be
@@ -17709,6 +17968,8 @@ class Renderer {
                 DrawFileTrayDashboard(state, rect, settings, 1.0f);
             } else if (activeTabId == 6) {
                 DrawClipboardHistoryDashboard(state, rect, 1.0f);
+            } else if (activeTabId == 7) {
+                DrawQuickTogglesDashboard(state, rect, now);
             } else if (activeTabId == 5) {
                 // Laid out at the final expanded size and pinned to the top, so growing
                 // the island only reveals the lyrics instead of sliding them around.
@@ -24090,6 +24351,11 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     }
                 }
 
+                if (g_settings.quickToggles && currentTab == QuickTogglesTabIndex(g_settings) &&
+                    g_hoveredQuickToggle.load(std::memory_order_relaxed) >= 0) {
+                    SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                    return TRUE;
+                }
                 if (g_settings.clipboardHistory && currentTab == ClipboardHistoryTabIndex(g_settings) &&
                     (g_hoveredClipRow.load(std::memory_order_relaxed) >= 0 ||
                      g_hoveredClipClear.load(std::memory_order_relaxed))) {
@@ -24274,6 +24540,15 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     hoveredAction = hoveredRow;
                 }
             }
+            // Controls tab hover.
+            {
+                int toggle = -1;
+                if (g_settings.quickToggles && currentTab == QuickTogglesTabIndex(g_settings)) {
+                    toggle = QuickToggleHitTest(MediaContentFromClient(xPos, yPos));
+                }
+                if (g_hoveredQuickToggle.exchange(toggle) != toggle) g_layoutDirty = true;
+            }
+
             // Clipboard history hover: row highlight and the bin.
             {
                 int clipRow = -1;
@@ -24333,6 +24608,9 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 g_layoutDirty = true;
             }
             if (g_hoveredClipRow.exchange(-1) != -1 || g_hoveredClipClear.exchange(false)) {
+                g_layoutDirty = true;
+            }
+            if (g_hoveredQuickToggle.exchange(-1) != -1) {
                 g_layoutDirty = true;
             }
             if (g_hoveredFileTrayAction.exchange(-1) != -1) {
@@ -24462,6 +24740,15 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 const int currentTab = NormalizedTabIndex(g_settings);
 
                 const MediaContentPoint cp = MediaContentFromClient(xPos, yPos);
+
+                // Controls tab: run the button under the cursor.
+                if (g_settings.quickToggles && currentTab == QuickTogglesTabIndex(g_settings)) {
+                    const int toggle = QuickToggleHitTest(cp);
+                    if (toggle >= 0) {
+                        RunQuickToggle(toggle);
+                    }
+                    return 0;
+                }
 
                 // Clipboard history: a row copies that text again, the bin forgets them all.
                 if (g_settings.clipboardHistory && currentTab == ClipboardHistoryTabIndex(g_settings)) {
@@ -25965,6 +26252,7 @@ bool StartThreads() {
     g_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     g_settingsChangedEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     g_mediaRefreshEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    g_radioEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!g_stopEvent || !g_settingsChangedEvent) {
         return false;
     }
@@ -25985,6 +26273,7 @@ bool StartThreads() {
     g_notificationThread = CreateThread(nullptr, 0, NotificationThreadProc, nullptr, 0, nullptr);
 #endif
     g_bluetoothThread = CreateThread(nullptr, 0, BluetoothThreadProc, nullptr, 0, nullptr);
+    g_radioThread = CreateThread(nullptr, 0, RadioThreadProc, nullptr, 0, nullptr);
     SubscribeDndNotification();
 
     return true;
@@ -26002,7 +26291,7 @@ void StopThreads() {
         SetEvent(g_stopEvent);
     }
 
-    HANDLE handles[] = {g_renderThread, g_mediaThread, g_audioThread, g_weatherThread, g_lyricsThread, g_notificationThread, g_keyboardThread, g_mouseThread, g_bluetoothThread};
+    HANDLE handles[] = {g_renderThread, g_mediaThread, g_audioThread, g_weatherThread, g_lyricsThread, g_notificationThread, g_keyboardThread, g_mouseThread, g_bluetoothThread, g_radioThread};
     for (HANDLE handle : handles) {
         if (handle) {
             WaitForSingleObject(handle, 3000);
@@ -26021,6 +26310,7 @@ void StopThreads() {
     g_mouseThread = nullptr;
     g_mouseThreadId = 0;
     g_bluetoothThread = nullptr;
+    g_radioThread = nullptr;
 
     if (g_stopEvent) {
         CloseHandle(g_stopEvent);
@@ -26033,6 +26323,10 @@ void StopThreads() {
     if (g_mediaRefreshEvent) {
         CloseHandle(g_mediaRefreshEvent);
         g_mediaRefreshEvent = nullptr;
+    }
+    if (g_radioEvent) {
+        CloseHandle(g_radioEvent);
+        g_radioEvent = nullptr;
     }
 
     g_running = false;
