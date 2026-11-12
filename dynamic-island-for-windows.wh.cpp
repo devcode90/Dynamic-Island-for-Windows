@@ -686,6 +686,8 @@ We love community contributions! To ensure high-quality updates, please follow t
 #define DYNAMIC_ISLAND_HAS_USER_NOTIFICATION_LISTENER 0
 #endif
 
+#include <wlanapi.h>  // types only; wlanapi.dll is loaded at runtime
+
 #if __has_include(<winrt/Windows.Devices.Radios.h>)
 #define DYNAMIC_ISLAND_HAS_RADIOS 1
 #include <winrt/Windows.Devices.Radios.h>
@@ -2654,6 +2656,7 @@ enum QuickToggleId { kToggleWifi = 0, kToggleBluetooth, kToggleMute, kToggleDnd,
 
 std::atomic<int> g_wifiRadioState{-1};       // -1 = no radio / unknown, 0 = off, 1 = on
 std::atomic<int> g_bluetoothRadioState{-1};
+std::atomic<bool> g_wifiViaWlan{false};  // Wi-Fi state came from the WLAN API (read-only)
 std::atomic<int> g_radioToggleRequest{-1};   // QuickToggleId to flip, -1 = none
 std::atomic<double> g_controlsViewTime{-100.0};  // last frame the Controls tab was painted
 std::atomic<int> g_hoveredQuickToggle{-1};
@@ -8783,6 +8786,67 @@ DWORD WINAPI LyricsThreadProc(void*) {
     }
     return 0;
 }
+
+// In the Windhawk tool process, Windows.Devices.Radios can list Bluetooth but
+// leave Wi-Fi out entirely (its Wi-Fi radio manager is never loaded there),
+// although a plain desktop process on the same PC gets both. Reads the Wi-Fi
+// radio state from the WLAN API instead: -1 no Wi-Fi adapter, 0 off, 1 on.
+// wlanapi.dll is loaded at runtime because it is missing where the WLAN
+// service isn't installed (some Windows Server setups).
+int ReadWifiRadioStateFromWlan() {
+    using OpenFn = DWORD(WINAPI*)(DWORD, PVOID, PDWORD, PHANDLE);
+    using CloseFn = DWORD(WINAPI*)(HANDLE, PVOID);
+    using EnumFn = DWORD(WINAPI*)(HANDLE, PVOID, PWLAN_INTERFACE_INFO_LIST*);
+    using QueryFn = DWORD(WINAPI*)(HANDLE, const GUID*, WLAN_INTF_OPCODE, PVOID, PDWORD, PVOID*,
+                                   PWLAN_OPCODE_VALUE_TYPE);
+    using FreeFn = VOID(WINAPI*)(PVOID);
+    static HMODULE lib = LoadLibraryExW(L"wlanapi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!lib) {
+        return -1;
+    }
+    static auto open = reinterpret_cast<OpenFn>(GetProcAddress(lib, "WlanOpenHandle"));
+    static auto close = reinterpret_cast<CloseFn>(GetProcAddress(lib, "WlanCloseHandle"));
+    static auto enumIf = reinterpret_cast<EnumFn>(GetProcAddress(lib, "WlanEnumInterfaces"));
+    static auto query = reinterpret_cast<QueryFn>(GetProcAddress(lib, "WlanQueryInterface"));
+    static auto freeMem = reinterpret_cast<FreeFn>(GetProcAddress(lib, "WlanFreeMemory"));
+    if (!open || !close || !enumIf || !query || !freeMem) {
+        return -1;
+    }
+
+    DWORD version = 0;
+    HANDLE client = nullptr;
+    if (open(2, nullptr, &version, &client) != ERROR_SUCCESS) {
+        return -1;
+    }
+    int state = -1;
+    PWLAN_INTERFACE_INFO_LIST list = nullptr;
+    if (enumIf(client, nullptr, &list) == ERROR_SUCCESS && list) {
+        for (DWORD i = 0; i < list->dwNumberOfItems; ++i) {
+            DWORD size = 0;
+            PWLAN_RADIO_STATE radio = nullptr;
+            if (query(client, &list->InterfaceInfo[i].InterfaceGuid, wlan_intf_opcode_radio_state,
+                      nullptr, &size, reinterpret_cast<PVOID*>(&radio), nullptr) != ERROR_SUCCESS ||
+                !radio) {
+                continue;
+            }
+            // On only when both the software switch and the hardware switch are on.
+            bool on = false;
+            for (DWORD p = 0; p < radio->dwNumberOfPhys && p < WLAN_MAX_PHY_INDEX; ++p) {
+                const auto& phy = radio->PhyRadioState[p];
+                if (phy.dot11SoftwareRadioState == dot11_radio_state_on &&
+                    phy.dot11HardwareRadioState == dot11_radio_state_on) {
+                    on = true;
+                }
+            }
+            state = std::max(state, on ? 1 : 0);
+            freeMem(radio);
+        }
+        freeMem(list);
+    }
+    close(client, nullptr);
+    return state;
+}
+
 // Reads and flips the Wi-Fi / Bluetooth radios for the Controls tab. Radio calls
 // are async WinRT and can take a moment, so they never run on the render thread.
 // Idle unless the tab was painted in the last few seconds or a toggle is pending.
@@ -8839,13 +8903,18 @@ DWORD WINAPI RadioThreadProc(void*) {
                 int& slot = isWifi ? wifi : bt;
                 slot = std::max(slot, on ? 1 : 0);
             }
+            // No Wi-Fi radio from WinRT: read it from the WLAN API. It can only
+            // be shown then, not switched, so the button opens Wi-Fi settings.
+            const bool viaWlan = wifi < 0 && (wifi = ReadWifiRadioStateFromWlan()) >= 0;
+            g_wifiViaWlan.store(viaWlan, std::memory_order_relaxed);
+
             // Both exchanges must run every pass; joined with || the Bluetooth
             // one was skipped whenever Wi-Fi changed.
             const bool wifiChanged = g_wifiRadioState.exchange(wifi) != wifi;
             const bool btChanged = g_bluetoothRadioState.exchange(bt) != bt;
             if (wifiChanged || btChanged) {
-                Wh_Log(L"Quick toggles: %u radios listed, Wi-Fi %d, Bluetooth %d (-1 = none, 0 = off, 1 = on).",
-                       listed, wifi, bt);
+                Wh_Log(L"Quick toggles: %u radios listed, Wi-Fi %d%s, Bluetooth %d (-1 = none, 0 = off, 1 = on).",
+                       listed, wifi, viaWlan ? L" (from WLAN API)" : L"", bt);
             }
             if (wifiChanged || btChanged || request >= 0) {
                 g_layoutDirty = true;
@@ -8867,6 +8936,13 @@ void ToggleEndpointMute();  // defined with the other window actions
 void RunQuickToggle(int id) {
     switch (id) {
         case kToggleWifi:
+            if (g_wifiViaWlan.load(std::memory_order_relaxed)) {
+                // Read through the WLAN API, which can't switch the radio for a
+                // normal user, so hand over to Settings instead.
+                ShellExecuteW(nullptr, L"open", L"ms-settings:network-wifi", nullptr, nullptr, SW_SHOWNORMAL);
+                break;
+            }
+            [[fallthrough]];
         case kToggleBluetooth:
             g_radioToggleRequest.store(id);
             if (g_radioEvent) SetEvent(g_radioEvent);
