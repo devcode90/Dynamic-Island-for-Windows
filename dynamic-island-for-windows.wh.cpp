@@ -377,6 +377,9 @@ We love community contributions! To ensure high-quality updates, please follow t
   - MediaAutoExpand: false
     $name: Auto-expand on track change
     $description: Automatically expand the island when a new song or video starts playing. If disabled, album art updates smoothly in the collapsed pill without unprompted expansion.
+  - MediaKeyPeek: true
+    $name: Peek on media keys
+    $description: Briefly opens the media player on the island when you press a media key on the keyboard (play/pause, next, previous, stop), so you can see what is playing without hovering. Works with auto-expand off.
   - MediaPillClock: false
     $name: Show clock in the collapsed media pill
     $description: While media is playing, the collapsed pill also shows the current time on the left, separated from the album cover by a thin divider. Hovering still opens the normal player. Uses the same 12h/24h and seconds options as the clock below. Off by default.
@@ -706,6 +709,9 @@ constexpr UINT WM_APP_MOUSE_WAKE = WM_APP + 0x446;
 // thread, so hotkey and backdrop changes are posted across and applied there.
 constexpr UINT WM_APP_APPLY_HOTKEY = WM_APP + 0x447;
 constexpr UINT WM_APP_APPLY_BACKDROP = WM_APP + 0x448;
+// Posted by the low-level keyboard hook when a media key is pressed, so the
+// render thread can surface the player for a moment (Modules.MediaKeyPeek).
+constexpr UINT WM_APP_MEDIAKEY = WM_APP + 0x449;
 constexpr int ID_HIDE_SHOW_HOTKEY = 1;
 constexpr int ID_LOOKUP_HOTKEY = 2;
 constexpr int ID_SONGID_HOTKEY = 3;
@@ -1225,6 +1231,7 @@ struct Settings {
     float animationSpeed = 1.0f;
     bool media = true;
     bool mediaAutoExpand = false;
+    bool mediaKeyPeek = true;        // Modules.MediaKeyPeek: media keys surface the player briefly
     bool clipboard = true;
     bool statusCountdownProgress = false;
     bool battery = true;
@@ -1858,6 +1865,7 @@ int g_lastBrightness = -1;
 BYTE g_brightnessPowerSource = 255;  // ACLineStatus of the previous sample
 std::atomic<double> g_lastNudgeTime = 0.0;
 std::atomic<double> g_lastLyricsViewTime = 0.0;
+std::atomic<double> g_mediaKeyPeekUntil = 0.0;  // NowSeconds() until which a media-key press keeps the player open
 
 std::mutex g_bluetoothBatteryCacheMutex;
 std::unordered_map<std::wstring, int> g_bluetoothBatteryCache;  // Bluetooth device Id -> last known battery percent (-1 = never learned)
@@ -3152,6 +3160,7 @@ void LoadSettings() {
 
     next.media = Wh_GetIntSetting(L"Modules.Media") != 0;
     next.mediaAutoExpand = Wh_GetIntSetting(L"Modules.MediaAutoExpand") != 0;
+    next.mediaKeyPeek = Wh_GetIntSetting(L"Modules.MediaKeyPeek") != 0;
     next.volume = Wh_GetIntSetting(L"Modules.Volume") != 0;
     if (!next.volume) {
         std::lock_guard lock(g_stateMutex);
@@ -3667,7 +3676,10 @@ void LoadSettings() {
     {
         std::lock_guard lock(g_settingsMutex);
         cityChanged = next.weatherCity != g_settings.weatherCity;
-        capsLockChanged = next.capsLock != g_settings.capsLock;
+        // Anything that decides whether the WH_KEYBOARD_LL hook is wanted.
+        capsLockChanged = next.capsLock != g_settings.capsLock ||
+                          next.mediaKeyPeek != g_settings.mediaKeyPeek ||
+                          next.media != g_settings.media;
         hotkeySettingChanged =
             next.hideShowHotkeyEnabled != g_settings.hideShowHotkeyEnabled ||
             next.hideShowModifiers != g_settings.hideShowModifiers ||
@@ -22447,16 +22459,28 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 }
             }
         }
+        // Media keys (Modules.MediaKeyPeek). Key-down rather than key-up so the
+        // player is already opening while the press is still being handled by
+        // the media app. Only posted; the setting is checked on the window thread.
+        if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
+            auto* kbd = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+            if (kbd->vkCode == VK_MEDIA_PLAY_PAUSE || kbd->vkCode == VK_MEDIA_NEXT_TRACK ||
+                kbd->vkCode == VK_MEDIA_PREV_TRACK || kbd->vkCode == VK_MEDIA_STOP) {
+                if (HWND hwnd = g_hwnd) {
+                    PostMessageW(hwnd, WM_APP_MEDIAKEY, kbd->vkCode, 0);
+                }
+            }
+        }
     }
     return CallNextHookEx(g_keyboardHook, nCode, wParam, lParam);
 }
 
 // A system-wide WH_KEYBOARD_LL puts this process on the path of every keystroke
 // on the desktop, so it is only installed while it has something to report. The
-// hook exists solely to notice Caps Lock and Num Lock for the indicator pill;
-// with that module off it was still running for nothing.
+// hook notices Caps Lock / Num Lock for the indicator pill and the media keys
+// for the player peek; with both modules off it is not installed at all.
 static bool CapsLockHookWanted() {
-    return g_settings.capsLock;
+    return g_settings.capsLock || (g_settings.mediaKeyPeek && g_settings.media);
 }
 
 // Wakes the keyboard thread so it re-evaluates whether the hook is needed.
@@ -23636,6 +23660,16 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             // No-op payload — its only job is to wake MsgWaitForMultipleObjects
             // and get drained by the PeekMessage pump.
             return 0;
+
+        case WM_APP_MEDIAKEY: {
+            if (!g_settings.mediaKeyPeek || !g_settings.media || g_manuallyHidden.load()) return 0;
+            // The media thread may take a poll to notice the new state, so the
+            // window is generous enough to cover that and still read as a "peek".
+            g_mediaKeyPeekUntil.store(NowSeconds() + 3.0);
+            g_layoutDirty = true;
+            TriggerNudge();
+            return 0;
+        }
 
         case WM_APP_CAPSLOCK: {
             if (!g_settings.capsLock) return 0;
@@ -24880,6 +24914,12 @@ DWORD WINAPI RenderThreadProc(void*) {
                                        !snapshot.media.title.empty() &&
                                        (now - snapshot.media.titleChangedAt < 5.0);
 
+        // A media key was just pressed (Modules.MediaKeyPeek): hold the player
+        // open for a moment, playing or paused, the same way a track change does.
+        const bool mediaKeyPeek = g_settings.mediaKeyPeek &&
+                                  primary.kind == IslandKind::Media &&
+                                  now < g_mediaKeyPeekUntil.load(std::memory_order_relaxed);
+
         bool isTransientAlert = (primary.kind == IslandKind::Clipboard ||
                                  primary.kind == IslandKind::Notification ||
                                  primary.kind == IslandKind::Volume ||
@@ -24891,7 +24931,7 @@ DWORD WINAPI RenderThreadProc(void*) {
                                  primary.kind == IslandKind::DoNotDisturb ||
                                  primary.kind == IslandKind::Lookup ||
                                  primary.kind == IslandKind::SongId ||
-                                 recentTrackChange);
+                                 recentTrackChange || mediaKeyPeek);
 
         const bool unhideGraceActive = (now < g_hotkeyUnhideUntil.load());
         const bool hoverUnhides = g_settings.unhideOnHover && hover;
@@ -25028,7 +25068,7 @@ DWORD WINAPI RenderThreadProc(void*) {
             primary.height = GameOverlayLayout::For(compact).height * g_settings.sizeScale;
         }
         if (primary.kind == IslandKind::Media) {
-            if (!isFullscreen && (isHoverExpanded || pinned || recentTrackChange)) {
+            if (!isFullscreen && (isHoverExpanded || pinned || recentTrackChange || mediaKeyPeek)) {
                 primary.width = MediaLayout::kExpandedWidth * g_settings.sizeScale;
                 primary.height = MediaLayout::kExpandedHeight * g_settings.sizeScale;
                 // (Immersive lyrics: the island keeps its normal 380px width.)
@@ -25274,7 +25314,8 @@ DWORD WINAPI RenderThreadProc(void*) {
         const bool mediaShown = primary.kind == IslandKind::Media ||
                                 (secondary && secondary->kind == IslandKind::Media);
         const bool mediaAnimating =
-            mediaShown && !stripActive && (snapshot.media.playing || isHoverExpanded || pinned);
+            mediaShown && !stripActive &&
+            (snapshot.media.playing || isHoverExpanded || pinned || mediaKeyPeek);
 
         // Transient alert pills. All expire within a few seconds, so treating them as
         // continuous cannot run away.
