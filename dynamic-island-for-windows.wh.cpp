@@ -581,7 +581,7 @@ We love community contributions! To ensure high-quality updates, please follow t
       - ctrl_alt_shift: Ctrl + Alt + Shift
   - HideShowKey: "D"
     $name: Hotkey letter/number key
-    $description: A single A-Z or 0-9 key combined with the modifiers above. Falls back to "D" if left blank or invalid.
+    $description: 'A single A-Z or 0-9 key, Space, or F1-F12, combined with the modifiers above. Falls back to "D" if left blank or invalid.'
   - LookupModifiers: ctrl_alt
     $name: Quick Lookup hotkey modifiers
     $description: Modifier keys combined with the Quick Lookup key below.
@@ -2844,7 +2844,12 @@ D2D1_COLOR_F EnsureContrastAgainstBackground(D2D1_COLOR_F candidate, D2D1_COLOR_
     return candidate;
 }
 
+inline HMONITOR GetAnchorMonitor();  // defined below, with the monitor helpers
+
 // Returns true if the currently active foreground window is in full screen mode
+// on the monitor the island lives on. A fullscreen video or game on a *second*
+// monitor used to hide the island on the first one too, because only the
+// foreground window's own monitor was checked, never which monitor that was.
 bool IsForegroundFullscreen(HWND targetHwnd) {
     HWND fg = GetForegroundWindow();
     if (!fg || fg == targetHwnd || fg == GetDesktopWindow() || fg == GetShellWindow()) {
@@ -2870,6 +2875,9 @@ bool IsForegroundFullscreen(HWND targetHwnd) {
     clientRect.bottom += pt.y;
 
     HMONITOR hMon = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+    if (HMONITOR anchor = GetAnchorMonitor(); anchor && hMon != anchor) {
+        return false;  // fullscreen somewhere else; the island's screen is unaffected
+    }
     MONITORINFO mi = { sizeof(MONITORINFO) };
     if (GetMonitorInfoW(hMon, &mi)) {
         if (clientRect.left <= mi.rcMonitor.left &&
@@ -3187,15 +3195,11 @@ void LoadSettings() {
     }
     next.hideShowModifiers |= MOD_NOREPEAT;
 
-    // Single A-Z/0-9 key only; anything else (blank, multi-char, symbol) falls back to 'D'.
-    const std::wstring hotkeyKeyStr = GetStringSettingCopy(L"Shortcuts.HideShowKey");
-    next.hideShowVk = 'D';
-    if (hotkeyKeyStr.size() == 1) {
-        const wchar_t ch = towupper(hotkeyKeyStr[0]);
-        if ((ch >= L'A' && ch <= L'Z') || (ch >= L'0' && ch <= L'9')) {
-            next.hideShowVk = static_cast<UINT>(ch);
-        }
-    }
+    // Same grammar as the other two hotkeys (A-Z, 0-9, "Space", F1-F12);
+    // anything else (blank, multi-char, symbol) falls back to 'D'. This used
+    // to accept a single letter or digit only, so the hide/show key was the
+    // one hotkey that could not be put on Space or a function key.
+    next.hideShowVk = ParseHotkeyKeyName(GetStringSettingCopy(L"Shortcuts.HideShowKey"), 'D');
 
     // ── Quick Lookup ─────────────────────────────────────────────────────────
     next.quickLookup = Wh_GetIntSetting(L"Modules.QuickLookup") != 0;
@@ -4551,6 +4555,10 @@ bool DecodeImageBytesToPixels(const std::vector<uint8_t>& bytes, BitmapPixels* o
     }
 
     void* locked = GlobalLock(mem);
+    if (!locked) {
+        GlobalFree(mem);
+        return false;
+    }
     memcpy(locked, bytes.data(), bytes.size());
     GlobalUnlock(mem);
 
@@ -6949,6 +6957,10 @@ std::string HttpGet(const wchar_t* host, const wchar_t* path, bool https = true)
         Wh_Log(L"Weather HttpGet: WinHttpOpen failed with error %lu", GetLastError());
         return response;
     }
+    // resolve, connect, send, receive (ms). WinHTTP's defaults allow a dead or
+    // captive network to park the weather thread for a couple of minutes per
+    // attempt; the lyrics path already bounds its requests the same way.
+    WinHttpSetTimeouts(hSession, 8000, 8000, 10000, 15000);
 
     HINTERNET hConnect = WinHttpConnect(hSession, host, https ? INTERNET_DEFAULT_HTTPS_PORT : INTERNET_DEFAULT_HTTP_PORT, 0);
     if (hConnect) {
@@ -7363,14 +7375,31 @@ std::wstring JsonStringUnescape(const std::string& raw) {
                     if (i + 5 < raw.size()) {
                         std::string hexNarrow = raw.substr(i + 2, 4);
                         std::wstring hexWide = AsciiToWide(hexNarrow);
-                        wchar_t code = static_cast<wchar_t>(wcstoul(hexWide.c_str(), nullptr, 16));
+                        wchar_t units[2] = {
+                            static_cast<wchar_t>(wcstoul(hexWide.c_str(), nullptr, 16)), 0};
+                        int unitCount = 1;
+                        i += 5;
+                        // JSON encodes anything outside the BMP (emoji, many CJK
+                        // extension characters) as a \uD8xx\uDCxx surrogate pair.
+                        // Converting each half on its own fails for both, so the
+                        // character silently vanished from lyrics, song titles
+                        // and lookup results. Pair the halves before converting.
+                        if (IS_HIGH_SURROGATE(units[0]) && i + 6 < raw.size() &&
+                            raw[i + 1] == '\\' && raw[i + 2] == 'u') {
+                            const std::wstring lowHex = AsciiToWide(raw.substr(i + 3, 4));
+                            const wchar_t low = static_cast<wchar_t>(wcstoul(lowHex.c_str(), nullptr, 16));
+                            if (IS_LOW_SURROGATE(low)) {
+                                units[1] = low;
+                                unitCount = 2;
+                                i += 6;
+                            }
+                        }
                         char utf8buf[4] = {};
-                        int outLen = WideCharToMultiByte(CP_UTF8, 0, &code, 1, utf8buf,
+                        int outLen = WideCharToMultiByte(CP_UTF8, 0, units, unitCount, utf8buf,
                                                          sizeof(utf8buf), nullptr, nullptr);
                         if (outLen > 0) {
                             out.append(utf8buf, outLen);
                         }
-                        i += 5;
                     }
                     break;
                 }
@@ -7478,17 +7507,36 @@ std::vector<LyricsLine> ParseSyncedLyrics(const std::wstring& text) {
         if (line.size() >= 3 && line[0] == L'[') {
             const size_t closeBracket = line.find(L']');
             if (closeBracket != std::wstring::npos) {
-                int minutes = 0, seconds = 0, hundredths = 0;
+                int minutes = 0, seconds = 0, fraction = 0;
                 const std::wstring ts = line.substr(1, closeBracket - 1);
-                if (swscanf_s(ts.c_str(), L"%d:%d.%d", &minutes, &seconds, &hundredths) >= 2) {
+                if (swscanf_s(ts.c_str(), L"%d:%d.%d", &minutes, &seconds, &fraction) >= 2) {
                     std::wstring lyricText = line.substr(closeBracket + 1);
                     while (!lyricText.empty() && lyricText.front() == L' ') {
                         lyricText.erase(lyricText.begin());
                     }
+                    // The fraction is whatever follows the dot: "12.34" is
+                    // hundredths, "12.345" is milliseconds. Treating both as
+                    // hundredths put a three-digit stamp 10x too late, so a
+                    // line at 12.345 s surfaced at 15.45 s.
+                    int64_t fractionMs = 0;
+                    const size_t dot = ts.find(L'.');
+                    if (dot != std::wstring::npos) {
+                        size_t digits = 0;
+                        while (dot + 1 + digits < ts.size() && iswdigit(ts[dot + 1 + digits])) {
+                            ++digits;
+                        }
+                        if (digits >= 3) {
+                            fractionMs = fraction;
+                            for (size_t d = 3; d < digits; ++d) fractionMs /= 10;
+                        } else if (digits == 2) {
+                            fractionMs = static_cast<int64_t>(fraction) * 10;
+                        } else if (digits == 1) {
+                            fractionMs = static_cast<int64_t>(fraction) * 100;
+                        }
+                    }
                     LyricsLine ll;
                     ll.timeMs = static_cast<int64_t>(minutes) * 60000 +
-                               static_cast<int64_t>(seconds) * 1000 +
-                               static_cast<int64_t>(hundredths) * 10;
+                               static_cast<int64_t>(seconds) * 1000 + fractionMs;
                     ll.text = std::move(lyricText);
                     lines.push_back(std::move(ll));
                 }
@@ -8798,7 +8846,13 @@ void UpdateBatterySnapshot() {
             triggerAlert = true;
         }
 
-        if (!newCharging && newPercent < g_state.battery.percent && (newPercent == 20 || newPercent == 10)) {
+        // Alert when the level *crosses* 20% or 10% on the way down. Requiring
+        // the sampled value to land exactly on 20 or 10 missed the alert
+        // whenever a 15 s poll straddled the threshold (21 -> 19 is common on
+        // packs that report in 2% steps, and after resume from sleep).
+        const int prevPercent = g_state.battery.percent;
+        if (!newCharging && newPercent < prevPercent &&
+            ((prevPercent > 20 && newPercent <= 20) || (prevPercent > 10 && newPercent <= 10))) {
             triggerAlert = true;
         }
 
@@ -9146,10 +9200,20 @@ void UpdateSystemSnapshot(bool includeGpuStats, bool includeNetStats) {
         next.memoryUsedGB = next.memoryTotalGB - static_cast<float>(memory.ullAvailPhys) / (1024.0f * 1024.0f * 1024.0f);
     }
 
+    // The system drive, not a hardcoded C:\. Windows is not always installed
+    // there, and on such a machine the disk card showed 0% (or the wrong
+    // volume) for the whole session.
+    static const std::wstring kSystemRoot = [] {
+        wchar_t windir[MAX_PATH] = {};
+        if (GetWindowsDirectoryW(windir, ARRAYSIZE(windir)) >= 2 && windir[1] == L':') {
+            return std::wstring{windir[0], L':', L'\\'};
+        }
+        return std::wstring(L"C:\\");
+    }();
     ULARGE_INTEGER freeBytesAvailable = {};
     ULARGE_INTEGER totalBytes = {};
     ULARGE_INTEGER totalFreeBytes = {};
-    if (GetDiskFreeSpaceExW(L"C:\\", &freeBytesAvailable, &totalBytes, &totalFreeBytes) &&
+    if (GetDiskFreeSpaceExW(kSystemRoot.c_str(), &freeBytesAvailable, &totalBytes, &totalFreeBytes) &&
         totalBytes.QuadPart > 0) {
         next.diskFreePercent = ClampInt(
             static_cast<int>(totalFreeBytes.QuadPart * 100 / totalBytes.QuadPart), 0, 100);
@@ -12456,7 +12520,10 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         AppendMenuW(timerMenu, MF_STRING, 33, timerRunning ? L"Pause Timer" : L"Resume Timer");
         AppendMenuW(timerMenu, MF_STRING, 34, L"Stop Timer");
     }
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(timerMenu), L"Focus Timer");
+    // With the Focus Timer module switched off the pill is never selected for
+    // display, so starting one from here would count down invisibly.
+    AppendMenuW(menu, MF_POPUP | (g_settings.timerEnabled ? 0 : (MF_GRAYED | MF_DISABLED)),
+                reinterpret_cast<UINT_PTR>(timerMenu), L"Focus Timer");
 
     std::vector<MediaSourceMenuItem> mediaSourceItems;
     {
@@ -24995,6 +25062,13 @@ DWORD WINAPI RenderThreadProc(void*) {
             nextSystemPoll = now + 1.0;
         }
 
+        // The measuring helpers read Settings::fontFamily (a std::wstring), so
+        // they get a private copy like Render() does. Handing them g_settings by
+        // reference raced LoadSettings() on Windhawk's settings thread, which
+        // replaces the whole struct: a settings save landing mid-measure could
+        // free the string while EnsureTextFormats was still comparing it.
+        const Settings measureSettings = GetSettingsCopy();
+
         if (primary.kind == IslandKind::Idle) {
             if (!isFullscreen && (pinned || isHoverExpanded)) {
                 primary.width = MediaLayout::kExpandedWidth * g_settings.sizeScale;
@@ -25006,8 +25080,8 @@ DWORD WINAPI RenderThreadProc(void*) {
                 // "10:41:32 PM" at larger Text size.
                 // The > 0 guard preserves ActivityForKind's fully-hidden case.
                 primary.width =
-                    renderer.MeasureIdleStrip(snapshot, g_settings, now).totalWidth *
-                    g_settings.sizeScale;
+                    renderer.MeasureIdleStrip(snapshot, measureSettings, now).totalWidth *
+                    measureSettings.sizeScale;
             }
         }
         if (!isFullscreen && primary.kind == IslandKind::Idle &&
@@ -25034,8 +25108,8 @@ DWORD WINAPI RenderThreadProc(void*) {
                 // (Immersive lyrics: the island keeps its normal 380px width.)
             } else {
                 // Optional clock section on the left of the collapsed pill.
-                const float clockSection = g_settings.mediaPillClock
-                    ? renderer.MeasureMediaPill(snapshot, g_settings).sectionWidth
+                const float clockSection = measureSettings.mediaPillClock
+                    ? renderer.MeasureMediaPill(snapshot, measureSettings).sectionWidth
                     : 0.0f;
                 if (CollapsedLyricsActive(snapshot, g_settings)) {
                     // Collapsed but carrying lyrics: wider pill, same height.
