@@ -2657,6 +2657,10 @@ std::atomic<int> g_bluetoothRadioState{-1};
 std::atomic<int> g_radioToggleRequest{-1};   // QuickToggleId to flip, -1 = none
 std::atomic<double> g_controlsViewTime{-100.0};  // last frame the Controls tab was painted
 std::atomic<int> g_hoveredQuickToggle{-1};
+// Until this NowSeconds(), a mute change doesn't raise the volume pill: the
+// Controls tab's own button already shows it, and the pill would replace the
+// open tab under the cursor.
+std::atomic<double> g_quietMuteUntil{0.0};
 HANDLE g_radioEvent = nullptr;                // wakes RadioThreadProc
 HANDLE g_radioThread = nullptr;
 
@@ -8855,6 +8859,7 @@ void RunQuickToggle(int id) {
             if (g_radioEvent) SetEvent(g_radioEvent);
             break;
         case kToggleMute:
+            g_quietMuteUntil.store(NowSeconds() + 1.0, std::memory_order_relaxed);
             ToggleEndpointMute();
             break;
         case kToggleDnd:
@@ -9164,7 +9169,9 @@ void ApplyVolumeReading(float level, bool muted, bool canSurface) {
         g_state.system.volumeMuted = muted;
         g_state.muted = muted;
 
-        if (canSurface && changed && flyoutEnabled) {
+        // A mute flipped from the Controls tab updates its button instead.
+        const bool quiet = NowSeconds() < g_quietMuteUntil.load(std::memory_order_relaxed);
+        if (canSurface && changed && flyoutEnabled && !quiet) {
             surfaced = !g_state.volume.active;
             g_state.volume.active = true;
             g_state.volume.percent = percent;
