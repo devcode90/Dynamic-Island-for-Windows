@@ -416,6 +416,12 @@ We love community contributions! To ensure high-quality updates, please follow t
   - NotificationRespectDnD: true
     $name: Notifications respect Do Not Disturb
     $description: Suppresses Dynamic Island notification alerts when Windows Do Not Disturb is active.
+  - NotificationClickAction: open
+    $name: Click on a notification
+    $description: What a left click on a notification pill does. Middle-click always dismisses it and also clears it from Action Center.
+    $options:
+      - open: Open the app that sent it
+      - dismiss: Just dismiss it
   - HardwareMonitorModule: true
     $name: Include Hardware Monitor in scroll loop
     $description: Add CPU, GPU, RAM, FPS and Network stats card to mouse-wheel scroll loop.
@@ -1204,6 +1210,12 @@ enum class ContourBorderMode {
     Borderless,
 };
 
+// What a left click on a notification pill does (Modules.NotificationClickAction).
+enum class NotificationClick {
+    OpenApp,
+    Dismiss,
+};
+
 struct Settings {
     Position position = Position::TopCenter;
     int targetMonitor = 0;
@@ -1312,6 +1324,7 @@ struct Settings {
     bool hardwareMonitorModule = true;
     bool doNotDisturbIndicator = true;
     bool notificationRespectDnD = true;
+    NotificationClick notificationClick = NotificationClick::OpenApp;
 
     // ── Premium material / redesign ──────────────────────────────────────────
     bool materialDepth = true;      // downward depth shading + accent bloom
@@ -1442,6 +1455,11 @@ struct NotificationSnapshot {
     std::wstring body;
     PixelsRef icon;
     double expiresAt = 0.0;
+    // Where the notification came from, so a click can act on it. Only the
+    // UserNotificationListener path knows these; the shell-window fallback
+    // sees a toast hosted by the shell, not the app that sent it.
+    std::wstring appUserModelId;     // sender's AUMID (opens it via shell:AppsFolder)
+    uint32_t listenerId = 0;         // UserNotification id, for removing it from Action Center
 };
 
 struct VolumeSnapshot {
@@ -3246,6 +3264,10 @@ void LoadSettings() {
     next.bluetoothShowBattery = Wh_GetIntSetting(L"Modules.BluetoothShowBattery") != 0;
     next.doNotDisturbIndicator = Wh_GetIntSetting(L"Modules.DoNotDisturbIndicator") != 0;
     next.notificationRespectDnD = Wh_GetIntSetting(L"Modules.NotificationRespectDnD") != 0;
+    next.notificationClick =
+        EqualsNoCase(GetStringSettingCopy(L"Modules.NotificationClickAction"), L"dismiss")
+            ? NotificationClick::Dismiss
+            : NotificationClick::OpenApp;
 
     // ── Premium material / redesign ──────────────────────────────────────────
     {
@@ -6090,7 +6112,12 @@ DWORD WINAPI NotificationThreadProc(void*) {
                             NotificationSnapshot snapshot;
                             snapshot.active = true;
                             snapshot.expiresAt = NowSeconds() + 4.0;
+                            snapshot.listenerId = id;
                             auto appInfo = userNotification.AppInfo();
+                            try {
+                                snapshot.appUserModelId = appInfo.AppUserModelId().c_str();
+                            } catch (...) {
+                            }
                             auto displayInfo = appInfo.DisplayInfo();
                             snapshot.app = displayInfo.DisplayName().c_str();
 
@@ -12329,6 +12356,44 @@ void OpenRelevantApp() {
     }
 
     ShellExecuteW(nullptr, L"open", L"ms-settings:", nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+// Opens (or brings forward) an app by its AppUserModelID. Used for clicks on a
+// notification, which only carries the sender's AUMID.
+void OpenAppByAumid(const std::wstring& aumid) {
+    if (aumid.empty()) {
+        return;
+    }
+    const std::wstring shellPath = L"shell:AppsFolder\\" + aumid;
+    SHELLEXECUTEINFOW sei = {sizeof(sei)};
+    sei.fMask = SEE_MASK_FLAG_NO_UI;
+    sei.lpFile = shellPath.c_str();
+    sei.nShow = SW_SHOWNORMAL;
+    if (!ShellExecuteExW(&sei)) {
+        Wh_Log(L"Could not open the notification's app (error %lu).", GetLastError());
+    }
+}
+
+// Removes one notification from Action Center. Runs on its own thread because
+// UserNotificationListener needs a WinRT apartment and the call can block.
+void RemoveNotificationFromActionCenter(uint32_t id) {
+#if DYNAMIC_ISLAND_HAS_USER_NOTIFICATION_LISTENER
+    if (id == 0) {
+        return;
+    }
+    std::thread([id]() {
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        try {
+            using winrt::Windows::UI::Notifications::Management::UserNotificationListener;
+            UserNotificationListener::Current().RemoveNotification(id);
+        } catch (...) {
+            Wh_Log(L"Could not remove the notification from Action Center.");
+        }
+        winrt::uninit_apartment();
+    }).detach();
+#else
+    (void)id;
+#endif
 }
 
 void DismissTransientState() {
@@ -24108,15 +24173,23 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                                                xPos > (g_pillClientRect.left + (g_pillClientRect.right - g_pillClientRect.left) * 0.5f));
                 if (!kinds.empty() && !onSecondarySplit &&
                     (kinds[0] == IslandKind::Notification || kinds[0] == IslandKind::Clipboard)) {
+                    std::wstring openAumid;
                     {
                         std::lock_guard lock(g_stateMutex);
                         if (kinds[0] == IslandKind::Notification) {
+                            // Modules.NotificationClickAction: open the sender, or just dismiss.
+                            if (g_settings.notificationClick == NotificationClick::OpenApp) {
+                                openAumid = g_state.notification.appUserModelId;
+                            }
                             g_state.notification.active = false;
                             g_state.notification.expiresAt = 0.0;
                         } else if (kinds[0] == IslandKind::Clipboard) {
                             g_state.clipboard.active = false;
                             g_state.clipboard.expiresAt = 0.0;
                         }
+                    }
+                    if (!openAumid.empty()) {
+                        OpenAppByAumid(openAumid);
                     }
                     g_clickExpanded = false;
                     g_layoutDirty = true;
@@ -24283,9 +24356,30 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
             return 0;
 
-        case WM_MBUTTONUP:
+        case WM_MBUTTONUP: {
+            // Middle-click on a notification clears it from the island *and* from
+            // Action Center. Anywhere else it keeps toggling mute, as before.
+            uint32_t notificationId = 0;
+            bool onNotification = false;
+            {
+                std::lock_guard lock(g_stateMutex);
+                const std::vector<IslandKind> kinds = ChooseActivities(g_state, g_settings, NowSeconds());
+                if (!kinds.empty() && kinds[0] == IslandKind::Notification) {
+                    onNotification = true;
+                    notificationId = g_state.notification.listenerId;
+                    g_state.notification.active = false;
+                    g_state.notification.expiresAt = 0.0;
+                }
+            }
+            if (onNotification) {
+                RemoveNotificationFromActionCenter(notificationId);
+                g_layoutDirty = true;
+                TriggerNudge();
+                return 0;
+            }
             ToggleEndpointMute();
             return 0;
+        }
 
         case WM_LBUTTONDBLCLK: {
             const bool nextVal = !g_pinnedExpanded.load();
