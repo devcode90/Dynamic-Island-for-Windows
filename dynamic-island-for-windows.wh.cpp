@@ -407,6 +407,9 @@ We love community contributions! To ensure high-quality updates, please follow t
   - Clipboard: true
     $name: Clipboard module
     $description: Shows a quick preview of the text or images you just copied.
+  - ClipboardHistory: false
+    $name: Clipboard history tab
+    $description: Adds a Clipboard tab to the scroll loop listing the last 25 pieces of text you copied. Click one to copy it again. Kept in memory only, never written to disk, and cleared when the mod restarts. Copies that password managers mark as private are never recorded.
   - StatusCountdownProgress: false
     $name: Status countdown progress bar
     $description: Shows a subtle countdown progress bar at the bottom of temporary status alert cards (such as Clipboard, Notifications, and Device alerts). Disabled by default.
@@ -1226,6 +1229,7 @@ struct Settings {
     bool media = true;
     bool mediaAutoExpand = false;
     bool clipboard = true;
+    bool clipboardHistory = false;   // Modules.ClipboardHistory: tab with recent text copies
     bool statusCountdownProgress = false;
     bool battery = true;
     bool progress = true;
@@ -1722,6 +1726,9 @@ struct SharedState {
     std::array<float, kSpectrumBands> bands{};  // smoothed 0..1 magnitude per band (low -> high)
     bool muted = false;
     std::vector<FileTrayItem> fileTrayItems;
+    // Clipboard history (Modules.ClipboardHistory), oldest first. Memory only:
+    // never written to disk and gone when the mod restarts.
+    std::vector<std::wstring> clipboardHistory;
 };
 
 struct SpringValue {
@@ -2030,6 +2037,7 @@ int ActiveTabCount(const Settings& settings) {
     if (settings.weather) ++count;
     if (settings.hardwareMonitorModule) ++count;
     if (settings.fileTrayModule) ++count;
+    if (settings.clipboardHistory) ++count;
     if (settings.lyrics && g_lyricsTabAvailable.load(std::memory_order_relaxed)) ++count;
     return count;
 }
@@ -2066,6 +2074,15 @@ int FileTrayTabIndex(const Settings& settings) {
     }
     return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0) +
            MediaTabIndex(settings);
+}
+
+// Clipboard history sits right after the File Tray, before an unpinned Lyrics tab.
+int ClipboardHistoryTabIndex(const Settings& settings) {
+    if (!settings.clipboardHistory) {
+        return -1;
+    }
+    return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0) +
+           (settings.fileTrayModule ? 1 : 0) + MediaTabIndex(settings);
 }
 
 // Moves the dashboard one tab (+1 = next, -1 = previous). Clamped at both ends:
@@ -2543,6 +2560,58 @@ bool FileTrayRemoveHitTest(const MediaContentPoint& pt, int row) {
                           static_cast<float>(row) * (FileTrayLayout::kRowHeight + FileTrayLayout::kRowGap) +
                           FileTrayLayout::kRowHeight * 0.5f;
     return std::fabs(pt.x - centerX) <= half && std::fabs(pt.y - centerY) <= half;
+}
+
+// ── Clipboard history tab ────────────────────────────────────────────────────
+// Same row geometry as the File Tray (FileTrayLayout), so the two lists look and
+// hit-test alike. Rows are newest first; the offset counts rows scrolled past.
+std::atomic<int> g_clipHistoryScroll{0};
+std::atomic<int> g_hoveredClipRow{-1};
+std::atomic<bool> g_hoveredClipClear{false};
+
+int ClipHistoryMaxScroll(int count) {
+    return std::max(0, count - FileTrayRestCapacity());
+}
+
+int ClipHistoryScrollOffset(int count) {
+    return ClampInt(g_clipHistoryScroll.load(std::memory_order_relaxed), 0, ClipHistoryMaxScroll(count));
+}
+
+bool ClipHistoryScrollBy(int count, int deltaRows) {
+    const int current = ClipHistoryScrollOffset(count);
+    const int next = ClampInt(current + deltaRows, 0, ClipHistoryMaxScroll(count));
+    g_clipHistoryScroll.store(next, std::memory_order_relaxed);
+    return next != current;
+}
+
+// Visible row under a content-space point, or -1.
+int ClipHistoryRowAt(const MediaContentPoint& pt, int count) {
+    if (!pt.valid || count <= 0 || pt.height <= MediaLayout::kExpandedMinHeight) {
+        return -1;
+    }
+    if (pt.x < FileTrayLayout::kPadX || pt.x > pt.width - FileTrayLayout::kPadX) {
+        return -1;
+    }
+    const float listBottom = pt.height - FileTrayLayout::kListBottomInset;
+    if (pt.y < FileTrayLayout::kListTop || pt.y > listBottom) {
+        return -1;
+    }
+    const float stride = FileTrayLayout::kRowHeight + FileTrayLayout::kRowGap;
+    const int index = static_cast<int>((pt.y - FileTrayLayout::kListTop) / stride);
+    if (pt.y > FileTrayLayout::kListTop + index * stride + FileTrayLayout::kRowHeight) {
+        return -1;  // in the gap between rows
+    }
+    const int capacity = FileTrayLayout::VisibleRowCapacity(pt.height);
+    const int remaining = count - ClipHistoryScrollOffset(count);
+    if (index < 0 || index >= capacity || index >= remaining) {
+        return -1;
+    }
+    return index;
+}
+
+// Index into SharedState::clipboardHistory (oldest first) for a visible row.
+int ClipHistoryItemForRow(int row, int count) {
+    return count - 1 - (row + ClipHistoryScrollOffset(count));
 }
 
 // True when the point is over the expanded layout's album art.
@@ -3164,6 +3233,12 @@ void LoadSettings() {
         g_brightnessInitialized = false;
     }
     next.clipboard = Wh_GetIntSetting(L"Modules.Clipboard") != 0;
+    next.clipboardHistory = Wh_GetIntSetting(L"Modules.ClipboardHistory") != 0;
+    if (!next.clipboardHistory) {
+        // Switching the module off forgets what it held.
+        std::lock_guard lock(g_stateMutex);
+        g_state.clipboardHistory.clear();
+    }
     next.statusCountdownProgress = Wh_GetIntSetting(L"Modules.StatusCountdownProgress") != 0;
 
     next.battery = Wh_GetIntSetting(L"Modules.Battery") != 0;
@@ -9455,9 +9530,24 @@ void UpdatePrivacyIndicators() {
     g_state.system.cameraApp = camApp;
 }
 
+// Right after a copy, other clipboard listeners (Windows' own clipboard history
+// among them) often have the clipboard open for a moment, and a single
+// OpenClipboard attempt then fails. Without a retry roughly every other quick
+// copy was lost, from both the copy pill and the history. Worst case this
+// blocks for ~80 ms when something holds the clipboard for good.
+bool OpenClipboardWithRetry(HWND hwnd) {
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        if (OpenClipboard(hwnd)) {
+            return true;
+        }
+        Sleep(10);
+    }
+    return false;
+}
+
 std::wstring ReadClipboardText(HWND hwnd) {
     std::wstring text;
-    if (!OpenClipboard(hwnd)) {
+    if (!OpenClipboardWithRetry(hwnd)) {
         return text;
     }
 
@@ -9480,7 +9570,7 @@ std::wstring ReadClipboardText(HWND hwnd) {
 // app actually placed on the clipboard (CF_DIB/CF_DIBV5) — Windows
 // synthesizes CF_BITMAP from those automatically.
 bool ReadClipboardImagePixels(HWND hwnd, BitmapPixels* outPixels, UINT maxDim) {
-    if (!outPixels || !OpenClipboard(hwnd)) {
+    if (!outPixels || !OpenClipboardWithRetry(hwnd)) {
         return false;
     }
 
@@ -9738,7 +9828,74 @@ void CaptureShellNotification(HWND hwnd) {
     }).detach();
 }
 
+constexpr size_t kClipboardHistoryCapacity = 25;
+constexpr size_t kClipboardHistoryMaxChars = 20000;
+
+// Password managers and other privacy-aware apps tag sensitive copies with
+// these registered formats, which is also what keeps them out of Windows' own
+// Win+V history. Such copies are never recorded.
+bool ClipboardContentIsPrivate() {
+    static const UINT kExclude = RegisterClipboardFormatW(L"ExcludeClipboardContentFromMonitorProcessing");
+    static const UINT kHistory = RegisterClipboardFormatW(L"CanIncludeInClipboardHistory");
+    if (kExclude && IsClipboardFormatAvailable(kExclude)) {
+        return true;
+    }
+    if (kHistory && IsClipboardFormatAvailable(kHistory)) {
+        // DWORD 0 means "do not keep this in history". If the flag can't be
+        // read, treat the copy as private rather than risk recording it.
+        bool exclude = true;
+        if (OpenClipboardWithRetry(nullptr)) {
+            exclude = false;
+            if (HANDLE h = GetClipboardData(kHistory)) {
+                if (GlobalSize(h) >= sizeof(DWORD)) {
+                    if (const auto* v = static_cast<const DWORD*>(GlobalLock(h))) {
+                        exclude = (*v == 0);
+                        GlobalUnlock(h);
+                    }
+                }
+            }
+            CloseClipboard();
+        }
+        return exclude;
+    }
+    return false;
+}
+
+// Adds a copy to the history, promoting an identical earlier entry instead of
+// duplicating it. Caller holds no locks.
+void PushClipboardHistory(std::wstring text) {
+    while (!text.empty() && iswspace(text.back())) text.pop_back();
+    if (text.empty()) {
+        return;
+    }
+    if (text.size() > kClipboardHistoryMaxChars) {
+        text.resize(kClipboardHistoryMaxChars);
+    }
+    std::lock_guard lock(g_stateMutex);
+    auto& list = g_state.clipboardHistory;
+    list.erase(std::remove(list.begin(), list.end(), text), list.end());
+    list.push_back(std::move(text));
+    while (list.size() > kClipboardHistoryCapacity) {
+        list.erase(list.begin());
+    }
+}
+
 void CaptureClipboard(HWND hwnd) {
+    bool historyOn = false;
+    {
+        std::lock_guard lock(g_settingsMutex);
+        historyOn = g_settings.clipboardHistory;
+    }
+    if (historyOn && !ClipboardContentIsPrivate()) {
+        PushClipboardHistory(ReadClipboardText(hwnd));
+    }
+    {
+        std::lock_guard lock(g_settingsMutex);
+        if (!g_settings.clipboard) {
+            return;  // history only; no preview pill
+        }
+    }
+
     ClipboardSnapshot clip;
     clip.expiresAt = NowSeconds() + 2.5;
     HWND owner = GetClipboardOwner();
@@ -12479,6 +12636,15 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
                     clearLabel.c_str());
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(trayMenu), Loc(L"File Tray"));
     }
+    if (g_settings.clipboardHistory) {
+        size_t clipCount = 0;
+        {
+            std::lock_guard lock(g_stateMutex);
+            clipCount = g_state.clipboardHistory.size();
+        }
+        AppendMenuW(menu, MF_STRING | (clipCount == 0 ? (MF_GRAYED | MF_DISABLED) : 0), 45,
+                    L"Clear clipboard history");
+    }
     AppendMenuW(menu, MF_STRING, 2, L"Pin expanded");
     AppendMenuW(menu, MF_STRING, 3, g_gameOverlayPinned.load() ? L"Hide game overlay" : L"Show game overlay");
     {
@@ -12798,6 +12964,16 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         case 44:
             StartSongRecognition(hwnd);
             break;
+        case 45: {
+            {
+                std::lock_guard lock(g_stateMutex);
+                g_state.clipboardHistory.clear();
+            }
+            g_clipHistoryScroll = 0;
+            g_hoveredClipRow = -1;
+            g_layoutDirty = true;
+            break;
+        }
         case 42:
             PasteIntoFileTray(hwnd);
             break;
@@ -15543,6 +15719,135 @@ class Renderer {
         mutedBrush_->SetOpacity(0.75f);
     }
 
+    // Clipboard history (Modules.ClipboardHistory): the last text copies, newest
+    // first, in the same row style as the File Tray. Click a row to copy it again.
+    void DrawClipboardHistoryDashboard(const SharedState& state, D2D1_RECT_F rect, float scale) {
+        const float padX = FileTrayLayout::kPadX * scale;
+        const std::vector<std::wstring>& items = state.clipboardHistory;
+        const int total = static_cast<int>(items.size());
+
+        const D2D1_RECT_F headerRect = D2D1::RectF(rect.left + padX, rect.top + 18.0f * scale,
+                                                   rect.right - padX, rect.top + 38.0f * scale);
+        textBrush_->SetOpacity(0.96f);
+        if (boldTextFormat_) {
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            const wchar_t* title = L"Clipboard";
+            target_->DrawTextW(title, static_cast<UINT32>(wcslen(title)), boldTextFormat_.Get(),
+                               headerRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        }
+
+        const float clearSize = FileTrayLayout::kClearBtnSize * scale;
+        const float clearTop = rect.top + FileTrayLayout::kClearBtnTop * scale;
+        const D2D1_RECT_F clearBox = D2D1::RectF(rect.right - padX - clearSize, clearTop,
+                                                 rect.right - padX, clearTop + clearSize);
+        DrawTrayBinButton(clearBox, total > 0, g_hoveredClipClear.load(std::memory_order_relaxed));
+
+        if (total > 0 && smallTextFormat_) {
+            wchar_t countBuf[48] = {};
+            swprintf_s(countBuf, L"%d %s", total, Loc(total == 1 ? L"item" : L"items"));
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+            mutedBrush_->SetOpacity(0.75f);
+            target_->DrawTextW(countBuf, static_cast<UINT32>(wcslen(countBuf)), smallTextFormat_.Get(),
+                               D2D1::RectF(headerRect.left, headerRect.top,
+                                           clearBox.left - 8.0f * scale, headerRect.bottom),
+                               mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        }
+
+        const float listTop = rect.top + FileTrayLayout::kListTop * scale;
+        const float listBottom = rect.bottom - FileTrayLayout::kListBottomInset * scale;
+
+        if (total == 0) {
+            if (textFormat_) {
+                textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                const wchar_t* hint = L"Copied text will appear here";
+                mutedBrush_->SetOpacity(0.70f);
+                target_->DrawTextW(hint, static_cast<UINT32>(wcslen(hint)), textFormat_.Get(),
+                                   D2D1::RectF(rect.left + padX, listTop, rect.right - padX, listBottom),
+                                   mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+            mutedBrush_->SetOpacity(0.75f);
+            return;
+        }
+
+        const float rowH = FileTrayLayout::kRowHeight * scale;
+        const float rowGap = FileTrayLayout::kRowGap * scale;
+        const int capacity = FileTrayLayout::VisibleRowCapacity((rect.bottom - rect.top) / scale);
+        const int offset = ClipHistoryScrollOffset(total);
+        const int hoveredRow = g_hoveredClipRow.load(std::memory_order_relaxed);
+
+        for (int drawn = 0; drawn < capacity; ++drawn) {
+            const int index = total - 1 - (offset + drawn);
+            if (index < 0) break;
+            const float rowTop = listTop + drawn * (rowH + rowGap);
+            const D2D1_RECT_F row = D2D1::RectF(rect.left + padX, rowTop, rect.right - padX, rowTop + rowH);
+            DrawCard(row, 9.0f * scale, hoveredRow == drawn);
+
+            // One line: whitespace collapsed so a multi-line copy still reads.
+            std::wstring line;
+            line.reserve(std::min<size_t>(items[index].size(), 160));
+            bool space = false;
+            for (wchar_t ch : items[index]) {
+                if (iswspace(ch)) {
+                    space = !line.empty();
+                    continue;
+                }
+                if (space) { line.push_back(L' '); space = false; }
+                line.push_back(ch);
+                if (line.size() >= 160) break;
+            }
+
+            if (iconFormat_) {
+                accentBrush_->SetOpacity(0.80f);
+                const D2D1_RECT_F iconRect = D2D1::RectF(row.left + 8.0f * scale, row.top,
+                                                         row.left + 26.0f * scale, row.bottom);
+                iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                target_->DrawTextW(L"", 1, iconFormat_.Get(), iconRect, accentBrush_.Get(),
+                                   D2D1_DRAW_TEXT_OPTIONS_NONE);
+                iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                accentBrush_->SetOpacity(1.0f);
+            }
+
+            if (smallTextFormat_) {
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                textBrush_->SetOpacity(0.94f);
+                target_->DrawTextW(line.c_str(), static_cast<UINT32>(line.size()), smallTextFormat_.Get(),
+                                   D2D1::RectF(row.left + 32.0f * scale, row.top,
+                                               row.right - 10.0f * scale, row.bottom),
+                                   textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+        }
+
+        // Thin scrollbar while some rows are out of view (the wheel scrolls the list).
+        if (total > FileTrayRestCapacity()) {
+            const float trackH = static_cast<float>(capacity) * rowH + static_cast<float>(capacity - 1) * rowGap;
+            const float barX = rect.right - padX + FileTrayLayout::kScrollbarGap * scale;
+            const float barW = FileTrayLayout::kScrollbarWidth * scale;
+            const D2D1_RECT_F track = D2D1::RectF(barX, listTop, barX + barW, listTop + trackH);
+            if (ID2D1SolidColorBrush* trackBrush = AcquireBrush(material_.raisedStrong)) {
+                target_->FillRoundedRectangle(D2D1::RoundedRect(track, barW * 0.5f, barW * 0.5f), trackBrush);
+            }
+            const float thumbH = std::max(14.0f * scale, trackH * capacity / static_cast<float>(total));
+            const int maxScroll = ClipHistoryMaxScroll(total);
+            const float t = maxScroll > 0 ? static_cast<float>(offset) / maxScroll : 0.0f;
+            const float thumbTop = track.top + (trackH - thumbH) * t;
+            if (ID2D1SolidColorBrush* thumb = AcquireBrush(WithAlpha(material_.accent, 0.80f * settingsOpacity_))) {
+                target_->FillRoundedRectangle(
+                    D2D1::RoundedRect(D2D1::RectF(track.left, thumbTop, track.right, thumbTop + thumbH),
+                                      barW * 0.5f, barW * 0.5f),
+                    thumb);
+            }
+        }
+
+        textBrush_->SetOpacity(0.96f);
+        mutedBrush_->SetOpacity(0.75f);
+    }
+
     // Load colour is *semantic*, not decorative: the accent while a component is
     // comfortable, amber under pressure, red when saturated. The previous design
     // assigned a fixed rainbow colour per metric, which carried no information
@@ -16595,6 +16900,7 @@ class Renderer {
             if (settings.weather) activeTabs.push_back(1);
             if (settings.hardwareMonitorModule) activeTabs.push_back(2);
             if (settings.fileTrayModule) activeTabs.push_back(4);
+            if (settings.clipboardHistory) activeTabs.push_back(6);
 
             int maxTabs = static_cast<int>(activeTabs.size());
             int tabIdx = NormalizedTabIndex(settings);
@@ -16615,6 +16921,7 @@ class Renderer {
                 else if (activeTabId == 1) DrawWeatherDashboard(state, fullRect, settings, now, scale, hasWeather, wIcon, wText);
                 else if (activeTabId == 2) DrawHardwareMonitorDashboard(state, fullRect, settings, scale);
                 else if (activeTabId == 4) DrawFileTrayDashboard(state, fullRect, settings, scale);
+                else if (activeTabId == 6) DrawClipboardHistoryDashboard(state, fullRect, scale);
             });
 
             DrawTabPagination(fullRect, maxTabs);
@@ -17167,6 +17474,7 @@ class Renderer {
             if (settings.weather) activeTabs.push_back(2);
             if (settings.hardwareMonitorModule) activeTabs.push_back(3);
             if (settings.fileTrayModule) activeTabs.push_back(4);
+            if (settings.clipboardHistory) activeTabs.push_back(6);
             if (settings.lyrics && !lyricsFirst) activeTabs.push_back(5);  // Lyrics (last)
 
             // Same settings object as the list above, so the index can't be
@@ -17416,6 +17724,8 @@ class Renderer {
                 DrawHardwareMonitorDashboard(state, rect, settings, 1.0f);
             } else if (activeTabId == 4) {
                 DrawFileTrayDashboard(state, rect, settings, 1.0f);
+            } else if (activeTabId == 6) {
+                DrawClipboardHistoryDashboard(state, rect, 1.0f);
             } else if (activeTabId == 5) {
                 // Laid out at the final expanded size and pinned to the top, so growing
                 // the island only reveals the lyrics instead of sliding them around.
@@ -23703,8 +24013,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         case WM_CLIPBOARDUPDATE:
-            if (g_settings.clipboard) {
-                CaptureClipboard(hwnd);
+            if (g_settings.clipboard || g_settings.clipboardHistory) {
+                CaptureClipboard(hwnd);  // checks each of the two itself
             }
             return 0;
 
@@ -23795,6 +24105,13 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         SetCursor(LoadCursorW(nullptr, IDC_HAND));
                         return TRUE;
                     }
+                }
+
+                if (g_settings.clipboardHistory && currentTab == ClipboardHistoryTabIndex(g_settings) &&
+                    (g_hoveredClipRow.load(std::memory_order_relaxed) >= 0 ||
+                     g_hoveredClipClear.load(std::memory_order_relaxed))) {
+                    SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                    return TRUE;
                 }
 
                 // A File Tray row under the cursor is clickable (opens the file).
@@ -23974,6 +24291,24 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     hoveredAction = hoveredRow;
                 }
             }
+            // Clipboard history hover: row highlight and the bin.
+            {
+                int clipRow = -1;
+                bool clipClear = false;
+                if (g_settings.clipboardHistory && currentTab == ClipboardHistoryTabIndex(g_settings)) {
+                    int clipCount = 0;
+                    {
+                        std::lock_guard lock(g_stateMutex);
+                        clipCount = static_cast<int>(g_state.clipboardHistory.size());
+                    }
+                    const MediaContentPoint clipPt = MediaContentFromClient(xPos, yPos);
+                    clipClear = clipCount > 0 && FileTrayClearHitTest(clipPt);
+                    clipRow = clipClear ? -1 : ClipHistoryRowAt(clipPt, clipCount);
+                }
+                if (g_hoveredClipRow.exchange(clipRow) != clipRow) g_layoutDirty = true;
+                if (g_hoveredClipClear.exchange(clipClear) != clipClear) g_layoutDirty = true;
+            }
+
             bool trayHoverChanged = false;
             if (g_hoveredFileTrayRow.exchange(hoveredRow) != hoveredRow) {
                 trayHoverChanged = true;
@@ -24012,6 +24347,9 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
             s_trayPressActive = false;
             if (g_hoveredFileTrayRow.exchange(-1) != -1) {
+                g_layoutDirty = true;
+            }
+            if (g_hoveredClipRow.exchange(-1) != -1 || g_hoveredClipClear.exchange(false)) {
                 g_layoutDirty = true;
             }
             if (g_hoveredFileTrayAction.exchange(-1) != -1) {
@@ -24141,6 +24479,40 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 const int currentTab = NormalizedTabIndex(g_settings);
 
                 const MediaContentPoint cp = MediaContentFromClient(xPos, yPos);
+
+                // Clipboard history: a row copies that text again, the bin forgets them all.
+                if (g_settings.clipboardHistory && currentTab == ClipboardHistoryTabIndex(g_settings)) {
+                    std::wstring toCopy;
+                    bool cleared = false;
+                    {
+                        std::lock_guard lock(g_stateMutex);
+                        auto& list = g_state.clipboardHistory;
+                        const int count = static_cast<int>(list.size());
+                        if (count > 0 && FileTrayClearHitTest(cp)) {
+                            list.clear();
+                            cleared = true;
+                        } else {
+                            const int row = ClipHistoryRowAt(cp, count);
+                            if (row >= 0) {
+                                const int index = ClipHistoryItemForRow(row, count);
+                                if (index >= 0 && index < count) toCopy = list[static_cast<size_t>(index)];
+                            }
+                        }
+                    }
+                    if (cleared) {
+                        g_clipHistoryScroll = 0;
+                        g_hoveredClipRow = -1;
+                        g_hoveredClipClear = false;
+                    }
+                    if (!toCopy.empty()) {
+                        // The resulting WM_CLIPBOARDUPDATE moves it to the top and
+                        // shows the usual "Copied" pill as confirmation.
+                        g_clipHistoryScroll = 0;
+                        CopyTextToClipboard(hwnd, toCopy);
+                    }
+                    g_layoutDirty = true;
+                    return 0;  // a click on the list never falls through to "open the media app"
+                }
 
                 // File Tray: the bin clears the shelf, the cut button removes one file,
                 // and a plain click on a row opens it with its default app. (Dragging a
@@ -24355,6 +24727,39 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         return 0;
                     }
                     s_trayWheelAccum = 0;  // fresh gesture at the edge: fall through to tab switching
+                }
+            }
+
+            // Clipboard history: the wheel scrolls the list while the cursor is over
+            // it and there is somewhere to go; at either end it switches tabs as usual.
+            if (g_settings.clipboardHistory &&
+                NormalizedTabIndex(g_settings) == ClipboardHistoryTabIndex(g_settings)) {
+                POINT wheelPt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ScreenToClient(hwnd, &wheelPt);
+                const MediaContentPoint wheelCp = MediaContentFromClient(wheelPt.x, wheelPt.y);
+                int clipCount = 0;
+                {
+                    std::lock_guard lock(g_stateMutex);
+                    clipCount = static_cast<int>(g_state.clipboardHistory.size());
+                }
+                if (clipCount > FileTrayRestCapacity() && FileTrayListHitTest(wheelCp)) {
+                    static int s_clipWheelAccum = 0;
+                    if ((s_clipWheelAccum > 0) != (delta > 0)) s_clipWheelAccum = 0;
+                    s_clipWheelAccum += delta;
+                    const int steps = abs(s_clipWheelAccum) / WHEEL_DELTA;
+                    const int dir = delta > 0 ? -1 : 1;  // wheel up = toward the newest
+                    const int offset = ClipHistoryScrollOffset(clipCount);
+                    const bool canScroll = dir < 0 ? offset > 0 : offset < ClipHistoryMaxScroll(clipCount);
+                    if (canScroll) {
+                        if (steps > 0) {
+                            s_clipWheelAccum -= (s_clipWheelAccum > 0 ? 1 : -1) * steps * WHEEL_DELTA;
+                            ClipHistoryScrollBy(clipCount, dir * steps);
+                            g_hoveredClipRow = ClipHistoryRowAt(wheelCp, clipCount);
+                            g_layoutDirty = true;
+                        }
+                        return 0;
+                    }
+                    s_clipWheelAccum = 0;
                 }
             }
 
