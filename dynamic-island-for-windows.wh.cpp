@@ -565,6 +565,15 @@ We love community contributions! To ensure high-quality updates, please follow t
       - '5': 5 seconds
       - '8': 8 seconds (default)
       - '12': 12 seconds (most reliable)
+  - SongIdClickAction: shazam
+    $name: Song recognition - click on the result
+    $description: What a click on the identified song does. Every option is also available from the right-click menu while the result is showing.
+    $options:
+      - shazam: Open the song on Shazam
+      - spotify: Search for it on Spotify
+      - ytmusic: Search for it on YouTube Music
+      - youtube: Search for it on YouTube
+      - copy: Copy "Artist - Title" to the clipboard
   $name: Modules & Features
 - Shortcuts:
   - HideShowHotkeyEnabled: true
@@ -1204,6 +1213,15 @@ enum class ContourBorderMode {
     Borderless,
 };
 
+// What a click on an identified song does (Modules.SongIdClickAction).
+enum class SongIdAction {
+    OpenShazam,
+    SearchSpotify,
+    SearchYouTubeMusic,
+    SearchYouTube,
+    CopyText,
+};
+
 struct Settings {
     Position position = Position::TopCenter;
     int targetMonitor = 0;
@@ -1262,6 +1280,7 @@ struct Settings {
     int songIdSeconds = 8;
     UINT songIdModifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
     UINT songIdVk = 'R';
+    SongIdAction songIdClickAction = SongIdAction::OpenShazam;
     bool bluetoothIndicator = true;
     bool bluetoothShowBattery = true;
     D2D1_COLOR_F privacyDotsMicHex = D2D1::ColorF(1.0f, 0.584f, 0.0f, 1.0f); // #FF9500
@@ -3241,6 +3260,20 @@ void LoadSettings() {
     }
     next.songIdModifiers = ParseHotkeyModifiers(GetStringSettingCopy(L"Shortcuts.SongIdModifiers"));
     next.songIdVk = ParseHotkeyKeyName(GetStringSettingCopy(L"Shortcuts.SongIdKey"), 'R');
+    {
+        const std::wstring action = GetStringSettingCopy(L"Modules.SongIdClickAction");
+        if (EqualsNoCase(action, L"spotify")) {
+            next.songIdClickAction = SongIdAction::SearchSpotify;
+        } else if (EqualsNoCase(action, L"ytmusic")) {
+            next.songIdClickAction = SongIdAction::SearchYouTubeMusic;
+        } else if (EqualsNoCase(action, L"youtube")) {
+            next.songIdClickAction = SongIdAction::SearchYouTube;
+        } else if (EqualsNoCase(action, L"copy")) {
+            next.songIdClickAction = SongIdAction::CopyText;
+        } else {
+            next.songIdClickAction = SongIdAction::OpenShazam;
+        }
+    }
 
     next.bluetoothIndicator = Wh_GetIntSetting(L"Modules.BluetoothIndicator") != 0;
     next.bluetoothShowBattery = Wh_GetIntSetting(L"Modules.BluetoothShowBattery") != 0;
@@ -11939,22 +11972,77 @@ void StartSongRecognition(HWND hwnd) {
     std::thread(ShazamId::Worker, id, s.songIdUseMic, s.songIdSeconds).detach();
 }
 
-// Click on the card: open the track page when found, otherwise just dismiss
-// (and stop listening if it is still running).
-void HandleSongIdClick() {
+void CopyTextToClipboard(HWND hwnd, const std::wstring& text);  // defined with the File Tray
+
+// Short label for the hint line on the result card and the menu entries.
+const wchar_t* SongIdActionLabel(SongIdAction action) {
+    switch (action) {
+        case SongIdAction::SearchSpotify: return L"Search on Spotify";
+        case SongIdAction::SearchYouTubeMusic: return L"Search on YouTube Music";
+        case SongIdAction::SearchYouTube: return L"Search on YouTube";
+        case SongIdAction::CopyText: return L"Copy \"Artist - Title\"";
+        case SongIdAction::OpenShazam:
+        default: return L"Open on Shazam";
+    }
+}
+
+// Runs one action on the identified song. `shazamUrl` is the share link that
+// came back with the match; the search actions build their own URLs from the
+// title and artist. Returns false when there was nothing to act on.
+bool PerformSongIdAction(HWND hwnd, SongIdAction action, const std::wstring& title,
+                         const std::wstring& artist, const std::wstring& shazamUrl) {
+    if (title.empty() && shazamUrl.empty()) {
+        return false;
+    }
+    const std::wstring query = artist.empty() ? title : artist + L" " + title;
+    const std::wstring encoded = AsciiToWide(UrlEncodeComponent(query));
+
     std::wstring url;
+    switch (action) {
+        case SongIdAction::SearchSpotify:
+            url = L"https://open.spotify.com/search/" + encoded;
+            break;
+        case SongIdAction::SearchYouTubeMusic:
+            url = L"https://music.youtube.com/search?q=" + encoded;
+            break;
+        case SongIdAction::SearchYouTube:
+            url = L"https://www.youtube.com/results?search_query=" + encoded;
+            break;
+        case SongIdAction::CopyText:
+            CopyTextToClipboard(hwnd, artist.empty() ? title : artist + L" - " + title);
+            return true;
+        case SongIdAction::OpenShazam:
+        default:
+            url = shazamUrl;
+            break;
+    }
+    if (url.rfind(L"https://", 0) != 0) {
+        return false;
+    }
+    ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    return true;
+}
+
+// Click on the card: run the configured action when a song was found, otherwise
+// just dismiss (and stop listening if it is still running).
+void HandleSongIdClick(HWND hwnd) {
+    std::wstring url, title, artist;
+    bool found = false;
     {
         std::lock_guard lock(g_stateMutex);
         if (g_state.songId.status == SongIdStatus::Found) {
+            found = true;
             url = g_state.songId.url;
+            title = g_state.songId.title;
+            artist = g_state.songId.artist;
         }
         g_state.songId.active = false;
     }
     if (g_songIdRunning.load()) {
         g_songIdCancel = true;
     }
-    if (url.rfind(L"https://", 0) == 0) {
-        ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    if (found) {
+        PerformSongIdAction(hwnd, GetSettingsCopy().songIdClickAction, title, artist, url);
     }
     g_layoutDirty = true;
 }
@@ -12354,6 +12442,12 @@ static constexpr UINT kShapeMenuIdBase = 50;
 // Lyrics sync submenu: +0 header (disabled), +1..+3 earlier 10/50/250, +4..+6 later 10/50/250, +7 reset.
 static constexpr UINT kLyricsSyncMenuIdBase = 60;
 
+// Identified song submenu: +0 Shazam, +1 Spotify, +2 YouTube Music, +3 YouTube, +4 copy.
+static constexpr UINT kSongIdMenuIdBase = 70;
+static constexpr SongIdAction kSongIdMenuActions[] = {
+    SongIdAction::OpenShazam, SongIdAction::SearchSpotify,
+    SongIdAction::SearchYouTubeMusic, SongIdAction::SearchYouTube, SongIdAction::CopyText};
+
 // Right-click nudge for the profile that is active right now (Bluetooth or speakers).
 // Stored separately from the Mod Settings value; effective offset = setting + nudge.
 // Deliberately does not call LoadSettings(), which also resets the pinned state.
@@ -12447,6 +12541,28 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
     AppendMenuW(menu, MF_STRING, 1, L"Dismiss");
     AppendMenuW(menu, MF_STRING | (g_settings.songRecognition ? 0 : (MF_GRAYED | MF_DISABLED)), 44,
                 L"Identify song");
+
+    // While an identified song is on the island, every action is one click away
+    // here regardless of which one the left click is set to.
+    std::wstring songTitle, songArtist, songUrl;
+    {
+        std::lock_guard lock(g_stateMutex);
+        if (g_state.songId.active && g_state.songId.status == SongIdStatus::Found) {
+            songTitle = g_state.songId.title;
+            songArtist = g_state.songId.artist;
+            songUrl = g_state.songId.url;
+        }
+    }
+    if (!songTitle.empty()) {
+        HMENU songMenu = CreatePopupMenu();
+        for (size_t i = 0; i < ARRAYSIZE(kSongIdMenuActions); ++i) {
+            const bool disabled = kSongIdMenuActions[i] == SongIdAction::OpenShazam && songUrl.empty();
+            AppendMenuW(songMenu, MF_STRING | (disabled ? (MF_GRAYED | MF_DISABLED) : 0),
+                        kSongIdMenuIdBase + static_cast<UINT>(i),
+                        SongIdActionLabel(kSongIdMenuActions[i]));
+        }
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(songMenu), L"Identified song");
+    }
 
     HMENU timerMenu = CreatePopupMenu();
     AppendMenuW(timerMenu, MF_STRING, 30, L"Start 25 min Focus");
@@ -12763,6 +12879,15 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
             break;
         case 34:
             StopFocusTimer();
+            break;
+
+        case kSongIdMenuIdBase:
+        case kSongIdMenuIdBase + 1:
+        case kSongIdMenuIdBase + 2:
+        case kSongIdMenuIdBase + 3:
+        case kSongIdMenuIdBase + 4:
+            PerformSongIdAction(hwnd, kSongIdMenuActions[cmd - kSongIdMenuIdBase], songTitle,
+                                songArtist, songUrl);
             break;
         case 40: {
             // Only reachable while visible (a hidden window can't be
@@ -21823,9 +21948,21 @@ class Renderer {
         const float tr = rect.right - 14.0f;
 
         if (found) {
-            const wchar_t* hint = sid.url.empty() ? L"Shazam" : L"Shazam  \u00b7  Tap to open";
+            // Hint names the configured click action (Modules.SongIdClickAction).
+            std::wstring hint = L"Shazam";
+            const bool canAct = settings.songIdClickAction != SongIdAction::OpenShazam || !sid.url.empty();
+            if (canAct) {
+                switch (settings.songIdClickAction) {
+                    case SongIdAction::SearchSpotify: hint += L"  \u00b7  Tap to search Spotify"; break;
+                    case SongIdAction::SearchYouTubeMusic: hint += L"  \u00b7  Tap to search YouTube Music"; break;
+                    case SongIdAction::SearchYouTube: hint += L"  \u00b7  Tap to search YouTube"; break;
+                    case SongIdAction::CopyText: hint += L"  \u00b7  Tap to copy"; break;
+                    case SongIdAction::OpenShazam:
+                    default: hint += L"  \u00b7  Tap to open"; break;
+                }
+            }
             mutedBrush_->SetOpacity(0.50f);
-            target_->DrawTextW(hint, static_cast<UINT32>(wcslen(hint)), smallTextFormat_.Get(),
+            target_->DrawTextW(hint.c_str(), static_cast<UINT32>(hint.size()), smallTextFormat_.Get(),
                                D2D1::RectF(tx, cy - 27.0f, tr, cy - 12.0f), mutedBrush_.Get(),
                                D2D1_DRAW_TEXT_OPTIONS_CLIP);
             textBrush_->SetOpacity(0.96f);
@@ -24097,7 +24234,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
                 // Song recognition card: open the track when found, otherwise dismiss / cancel.
                 if (!kinds.empty() && kinds[0] == IslandKind::SongId) {
-                    HandleSongIdClick();
+                    HandleSongIdClick(hwnd);
                     TriggerNudge();
                     return 0;
                 }
