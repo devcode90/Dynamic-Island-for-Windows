@@ -2663,6 +2663,9 @@ std::atomic<int> g_hoveredQuickToggle{-1};
 // Controls tab's own button already shows it, and the pill would replace the
 // open tab under the cursor.
 std::atomic<double> g_quietMuteUntil{0.0};
+// Same for Do Not Disturb flipped from the Controls tab. Longer than the mute
+// window: the change comes back through the shell's WNF notification.
+std::atomic<double> g_quietDndUntil{0.0};
 HANDLE g_radioEvent = nullptr;                // wakes RadioThreadProc
 HANDLE g_radioThread = nullptr;
 
@@ -6087,7 +6090,11 @@ NTSTATUS NTAPI WnfDndCallback(
     }
 
     const bool prev = g_isDnDActive.exchange(active);
-    if (prev != active && g_settings.doNotDisturbIndicator) {
+    if (prev != active) {
+        g_layoutDirty = true;  // the Controls tab's Focus button shows this state
+    }
+    const bool fromControls = NowSeconds() < g_quietDndUntil.load(std::memory_order_relaxed);
+    if (prev != active && g_settings.doNotDisturbIndicator && !fromControls) {
         {
             std::lock_guard lock(g_stateMutex);
             g_state.doNotDisturb.active = true;
@@ -6121,6 +6128,55 @@ void SubscribeDndNotification() {
 
     pfnSubscribe(&g_wnfDndSubscription, kWnfQuietHoursActiveProfileChanged, 0,
                  WnfDndCallback, nullptr, nullptr, 0, 0);
+}
+
+// EXPERIMENTAL. Windows has no public API to switch Do Not Disturb (Windows 11) /
+// Focus assist (Windows 10); ToastNotificationManagerForUser only reads it. This
+// uses the shell's undocumented QuietHoursSettings COM server, reverse engineered
+// by Rafael Rivera (https://gist.github.com/riverar/085d98ffb1343e92225a10817109b2e3)
+// and also used by yasb and Seelen UI. Being undocumented, it can change in any
+// Windows build, so every failure falls back to opening the Settings page.
+struct IQuietHoursSettings : IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE get_UserSelectedProfile(LPWSTR* profileId) = 0;
+    virtual HRESULT STDMETHODCALLTYPE put_UserSelectedProfile(LPCWSTR profileId) = 0;
+};
+constexpr IID kIidQuietHoursSettings = {
+    0x6bff4732, 0x81ec, 0x4ffb, {0xae, 0x67, 0xb6, 0xc1, 0xbc, 0x29, 0x63, 0x1f}};
+constexpr CLSID kClsidQuietHoursSettings = {
+    0xf53321fa, 0x34f8, 0x4b7f, {0xb9, 0xa3, 0x36, 0x18, 0x77, 0xcb, 0x94, 0xcf}};
+constexpr wchar_t kQuietProfileOff[] = L"Microsoft.QuietHoursProfile.Unrestricted";
+constexpr wchar_t kQuietProfileDnd[] = L"Microsoft.QuietHoursProfile.PriorityOnly";
+
+// Flips Do Not Disturb. The COM server is out of process, so this runs on its
+// own short-lived thread rather than the render thread. The button's state
+// follows the WNF quiet-hours notification above, like the DND pill does.
+void ToggleDoNotDisturbAsync() {
+    std::thread([]() {
+        bool done = false;
+        const HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        IQuietHoursSettings* settings = nullptr;
+        HRESULT hr = CoCreateInstance(kClsidQuietHoursSettings, nullptr, CLSCTX_LOCAL_SERVER,
+                                      kIidQuietHoursSettings, reinterpret_cast<void**>(&settings));
+        if (SUCCEEDED(hr) && settings) {
+            LPWSTR current = nullptr;
+            hr = settings->get_UserSelectedProfile(&current);
+            if (SUCCEEDED(hr)) {
+                const bool isOff = !current || wcscmp(current, kQuietProfileOff) == 0;
+                hr = settings->put_UserSelectedProfile(isOff ? kQuietProfileDnd : kQuietProfileOff);
+                done = SUCCEEDED(hr);
+            }
+            CoTaskMemFree(current);
+            settings->Release();
+        }
+        if (!done) {
+            Wh_Log(L"Quick toggles: switching Do Not Disturb failed (0x%08X), opening Settings.",
+                   static_cast<unsigned>(hr));
+            ShellExecuteW(nullptr, L"open", L"ms-settings:notifications", nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        if (SUCCEEDED(hrCo)) {
+            CoUninitialize();
+        }
+    }).detach();
 }
 
 void UnsubscribeDndNotification() {
@@ -8984,7 +9040,8 @@ void RunQuickToggle(int id) {
             ToggleEndpointMute();
             break;
         case kToggleDnd:
-            ShellExecuteW(nullptr, L"open", L"ms-settings:notifications", nullptr, nullptr, SW_SHOWNORMAL);
+            g_quietDndUntil.store(NowSeconds() + 3.0, std::memory_order_relaxed);
+            ToggleDoNotDisturbAsync();
             break;
         case kToggleNightLight:
             ShellExecuteW(nullptr, L"open", L"ms-settings:nightlight", nullptr, nullptr, SW_SHOWNORMAL);
@@ -16132,7 +16189,7 @@ class Renderer {
     }
 
     // Controls tab (Modules.QuickToggles). Toggles that are on take the accent
-    // fill; the two Settings shortcuts carry a small arrow instead of a state.
+    // fill; the Night light Settings shortcut carries a small arrow instead of a state.
     void DrawQuickTogglesDashboard(const SharedState& state, D2D1_RECT_F rect, double now) {
         // Opening the tab after a while away reads the radios right away instead
         // of waiting out the worker's 2 s tick. Only on that transition, never per
@@ -16167,7 +16224,7 @@ class Renderer {
             {L"", L"Wi-Fi", wifi},
             {L"", L"Bluetooth", bt},
             {muted ? L"" : L"", muted ? L"Muted" : L"Sound", muted ? 1 : 0},
-            {L"", L"Focus", 2},
+            {L"", L"Focus", g_isDnDActive.load(std::memory_order_relaxed) ? 1 : 0},
             {L"", L"Night light", 2},
         };
 
