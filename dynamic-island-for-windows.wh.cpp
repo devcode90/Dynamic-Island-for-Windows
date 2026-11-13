@@ -407,6 +407,12 @@ We love community contributions! To ensure high-quality updates, please follow t
   - Clipboard: true
     $name: Clipboard module
     $description: Shows a quick preview of the text or images you just copied.
+  - QuickToggles: false
+    $name: Quick toggles tab
+    $description: Adds a Controls tab to the scroll loop with Wi-Fi, Bluetooth and mute switches, plus shortcuts to the Do Not Disturb and Night light settings (Windows has no public way for apps to flip those two directly).
+  - ClipboardHistory: false
+    $name: Clipboard history tab
+    $description: Adds a Clipboard tab to the scroll loop listing the last 25 pieces of text you copied. Click one to copy it again. Kept in memory only, never written to disk, and cleared when the mod restarts. Copies that password managers mark as private are never recorded.
   - StatusCountdownProgress: false
     $name: Status countdown progress bar
     $description: Shows a subtle countdown progress bar at the bottom of temporary status alert cards (such as Clipboard, Notifications, and Device alerts). Disabled by default.
@@ -678,6 +684,15 @@ We love community contributions! To ensure high-quality updates, please follow t
 #include <winrt/Windows.UI.Notifications.Management.h>
 #else
 #define DYNAMIC_ISLAND_HAS_USER_NOTIFICATION_LISTENER 0
+#endif
+
+#include <wlanapi.h>  // types only; wlanapi.dll is loaded at runtime
+
+#if __has_include(<winrt/Windows.Devices.Radios.h>)
+#define DYNAMIC_ISLAND_HAS_RADIOS 1
+#include <winrt/Windows.Devices.Radios.h>
+#else
+#define DYNAMIC_ISLAND_HAS_RADIOS 0
 #endif
 
 #if __has_include(<winrt/Windows.Devices.Enumeration.h>) && \
@@ -1226,6 +1241,8 @@ struct Settings {
     bool media = true;
     bool mediaAutoExpand = false;
     bool clipboard = true;
+    bool clipboardHistory = false;   // Modules.ClipboardHistory: tab with recent text copies
+    bool quickToggles = false;       // Modules.QuickToggles: Controls tab
     bool statusCountdownProgress = false;
     bool battery = true;
     bool progress = true;
@@ -1722,6 +1739,9 @@ struct SharedState {
     std::array<float, kSpectrumBands> bands{};  // smoothed 0..1 magnitude per band (low -> high)
     bool muted = false;
     std::vector<FileTrayItem> fileTrayItems;
+    // Clipboard history (Modules.ClipboardHistory), oldest first. Memory only:
+    // never written to disk and gone when the mod restarts.
+    std::vector<std::wstring> clipboardHistory;
 };
 
 struct SpringValue {
@@ -2030,6 +2050,8 @@ int ActiveTabCount(const Settings& settings) {
     if (settings.weather) ++count;
     if (settings.hardwareMonitorModule) ++count;
     if (settings.fileTrayModule) ++count;
+    if (settings.clipboardHistory) ++count;
+    if (settings.quickToggles) ++count;
     if (settings.lyrics && g_lyricsTabAvailable.load(std::memory_order_relaxed)) ++count;
     return count;
 }
@@ -2065,6 +2087,25 @@ int FileTrayTabIndex(const Settings& settings) {
         return -1;
     }
     return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0) +
+           MediaTabIndex(settings);
+}
+
+// Clipboard history sits right after the File Tray, before an unpinned Lyrics tab.
+int ClipboardHistoryTabIndex(const Settings& settings) {
+    if (!settings.clipboardHistory) {
+        return -1;
+    }
+    return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0) +
+           (settings.fileTrayModule ? 1 : 0) + MediaTabIndex(settings);
+}
+
+// Controls tab: right after Clipboard history.
+int QuickTogglesTabIndex(const Settings& settings) {
+    if (!settings.quickToggles) {
+        return -1;
+    }
+    return 2 + (settings.weather ? 1 : 0) + (settings.hardwareMonitorModule ? 1 : 0) +
+           (settings.fileTrayModule ? 1 : 0) + (settings.clipboardHistory ? 1 : 0) +
            MediaTabIndex(settings);
 }
 
@@ -2543,6 +2584,107 @@ bool FileTrayRemoveHitTest(const MediaContentPoint& pt, int row) {
                           static_cast<float>(row) * (FileTrayLayout::kRowHeight + FileTrayLayout::kRowGap) +
                           FileTrayLayout::kRowHeight * 0.5f;
     return std::fabs(pt.x - centerX) <= half && std::fabs(pt.y - centerY) <= half;
+}
+
+// ── Clipboard history tab ────────────────────────────────────────────────────
+// Same row geometry as the File Tray (FileTrayLayout), so the two lists look and
+// hit-test alike. Rows are newest first; the offset counts rows scrolled past.
+std::atomic<int> g_clipHistoryScroll{0};
+std::atomic<int> g_hoveredClipRow{-1};
+std::atomic<bool> g_hoveredClipClear{false};
+
+int ClipHistoryMaxScroll(int count) {
+    return std::max(0, count - FileTrayRestCapacity());
+}
+
+int ClipHistoryScrollOffset(int count) {
+    return ClampInt(g_clipHistoryScroll.load(std::memory_order_relaxed), 0, ClipHistoryMaxScroll(count));
+}
+
+bool ClipHistoryScrollBy(int count, int deltaRows) {
+    const int current = ClipHistoryScrollOffset(count);
+    const int next = ClampInt(current + deltaRows, 0, ClipHistoryMaxScroll(count));
+    g_clipHistoryScroll.store(next, std::memory_order_relaxed);
+    return next != current;
+}
+
+// Visible row under a content-space point, or -1.
+int ClipHistoryRowAt(const MediaContentPoint& pt, int count) {
+    if (!pt.valid || count <= 0 || pt.height <= MediaLayout::kExpandedMinHeight) {
+        return -1;
+    }
+    if (pt.x < FileTrayLayout::kPadX || pt.x > pt.width - FileTrayLayout::kPadX) {
+        return -1;
+    }
+    const float listBottom = pt.height - FileTrayLayout::kListBottomInset;
+    if (pt.y < FileTrayLayout::kListTop || pt.y > listBottom) {
+        return -1;
+    }
+    const float stride = FileTrayLayout::kRowHeight + FileTrayLayout::kRowGap;
+    const int index = static_cast<int>((pt.y - FileTrayLayout::kListTop) / stride);
+    if (pt.y > FileTrayLayout::kListTop + index * stride + FileTrayLayout::kRowHeight) {
+        return -1;  // in the gap between rows
+    }
+    const int capacity = FileTrayLayout::VisibleRowCapacity(pt.height);
+    const int remaining = count - ClipHistoryScrollOffset(count);
+    if (index < 0 || index >= capacity || index >= remaining) {
+        return -1;
+    }
+    return index;
+}
+
+// Index into SharedState::clipboardHistory (oldest first) for a visible row.
+int ClipHistoryItemForRow(int row, int count) {
+    return count - 1 - (row + ClipHistoryScrollOffset(count));
+}
+
+// ── Quick toggles (Controls tab) ─────────────────────────────────────────────
+// Five round buttons in one row. Wi-Fi and Bluetooth are real radio switches,
+// mute toggles the default output, and the last two open Settings pages because
+// Windows offers apps no public way to flip Do Not Disturb or Night light.
+namespace QuickToggleLayout {
+    constexpr int kCount = 5;
+    constexpr float kRowY = 86.0f;        // button centres, content space
+    constexpr float kRadius = 22.0f;
+    constexpr float kSpacing = 66.0f;
+    constexpr float kHitPad = 6.0f;
+    constexpr float kLabelTop = kRowY + kRadius + 8.0f;
+    constexpr float kLabelH = 16.0f;
+}
+
+enum QuickToggleId { kToggleWifi = 0, kToggleBluetooth, kToggleMute, kToggleDnd, kToggleNightLight };
+
+std::atomic<int> g_wifiRadioState{-1};       // -1 = no radio / unknown, 0 = off, 1 = on
+std::atomic<int> g_bluetoothRadioState{-1};
+std::atomic<int> g_radioToggleRequest{-1};   // QuickToggleId to flip, -1 = none
+std::atomic<double> g_controlsViewTime{-100.0};  // last frame the Controls tab was painted
+std::atomic<int> g_hoveredQuickToggle{-1};
+// Until this NowSeconds(), a mute change doesn't raise the volume pill: the
+// Controls tab's own button already shows it, and the pill would replace the
+// open tab under the cursor.
+std::atomic<double> g_quietMuteUntil{0.0};
+// Same for Do Not Disturb flipped from the Controls tab. Longer than the mute
+// window: the change comes back through the shell's WNF notification.
+std::atomic<double> g_quietDndUntil{0.0};
+HANDLE g_radioEvent = nullptr;                // wakes RadioThreadProc
+HANDLE g_radioThread = nullptr;
+
+// Button under a content-space point, or -1.
+int QuickToggleHitTest(const MediaContentPoint& pt) {
+    if (!pt.valid || pt.height <= MediaLayout::kExpandedMinHeight) {
+        return -1;
+    }
+    const float cx = pt.width * 0.5f;
+    const float reach = QuickToggleLayout::kRadius + QuickToggleLayout::kHitPad;
+    for (int i = 0; i < QuickToggleLayout::kCount; ++i) {
+        const float bx = cx + (i - (QuickToggleLayout::kCount - 1) * 0.5f) * QuickToggleLayout::kSpacing;
+        const float dx = pt.x - bx;
+        const float dy = pt.y - QuickToggleLayout::kRowY;
+        if (dx * dx + dy * dy <= reach * reach) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 // True when the point is over the expanded layout's album art.
@@ -3164,6 +3306,13 @@ void LoadSettings() {
         g_brightnessInitialized = false;
     }
     next.clipboard = Wh_GetIntSetting(L"Modules.Clipboard") != 0;
+    next.clipboardHistory = Wh_GetIntSetting(L"Modules.ClipboardHistory") != 0;
+    next.quickToggles = Wh_GetIntSetting(L"Modules.QuickToggles") != 0;
+    if (!next.clipboardHistory) {
+        // Switching the module off forgets what it held.
+        std::lock_guard lock(g_stateMutex);
+        g_state.clipboardHistory.clear();
+    }
     next.statusCountdownProgress = Wh_GetIntSetting(L"Modules.StatusCountdownProgress") != 0;
 
     next.battery = Wh_GetIntSetting(L"Modules.Battery") != 0;
@@ -5941,7 +6090,11 @@ NTSTATUS NTAPI WnfDndCallback(
     }
 
     const bool prev = g_isDnDActive.exchange(active);
-    if (prev != active && g_settings.doNotDisturbIndicator) {
+    if (prev != active) {
+        g_layoutDirty = true;  // the Controls tab's Focus button shows this state
+    }
+    const bool fromControls = NowSeconds() < g_quietDndUntil.load(std::memory_order_relaxed);
+    if (prev != active && g_settings.doNotDisturbIndicator && !fromControls) {
         {
             std::lock_guard lock(g_stateMutex);
             g_state.doNotDisturb.active = true;
@@ -5975,6 +6128,55 @@ void SubscribeDndNotification() {
 
     pfnSubscribe(&g_wnfDndSubscription, kWnfQuietHoursActiveProfileChanged, 0,
                  WnfDndCallback, nullptr, nullptr, 0, 0);
+}
+
+// EXPERIMENTAL. Windows has no public API to switch Do Not Disturb (Windows 11) /
+// Focus assist (Windows 10); ToastNotificationManagerForUser only reads it. This
+// uses the shell's undocumented QuietHoursSettings COM server, reverse engineered
+// by Rafael Rivera (https://gist.github.com/riverar/085d98ffb1343e92225a10817109b2e3)
+// and also used by yasb and Seelen UI. Being undocumented, it can change in any
+// Windows build, so every failure falls back to opening the Settings page.
+struct IQuietHoursSettings : IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE get_UserSelectedProfile(LPWSTR* profileId) = 0;
+    virtual HRESULT STDMETHODCALLTYPE put_UserSelectedProfile(LPCWSTR profileId) = 0;
+};
+constexpr IID kIidQuietHoursSettings = {
+    0x6bff4732, 0x81ec, 0x4ffb, {0xae, 0x67, 0xb6, 0xc1, 0xbc, 0x29, 0x63, 0x1f}};
+constexpr CLSID kClsidQuietHoursSettings = {
+    0xf53321fa, 0x34f8, 0x4b7f, {0xb9, 0xa3, 0x36, 0x18, 0x77, 0xcb, 0x94, 0xcf}};
+constexpr wchar_t kQuietProfileOff[] = L"Microsoft.QuietHoursProfile.Unrestricted";
+constexpr wchar_t kQuietProfileDnd[] = L"Microsoft.QuietHoursProfile.PriorityOnly";
+
+// Flips Do Not Disturb. The COM server is out of process, so this runs on its
+// own short-lived thread rather than the render thread. The button's state
+// follows the WNF quiet-hours notification above, like the DND pill does.
+void ToggleDoNotDisturbAsync() {
+    std::thread([]() {
+        bool done = false;
+        const HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        IQuietHoursSettings* settings = nullptr;
+        HRESULT hr = CoCreateInstance(kClsidQuietHoursSettings, nullptr, CLSCTX_LOCAL_SERVER,
+                                      kIidQuietHoursSettings, reinterpret_cast<void**>(&settings));
+        if (SUCCEEDED(hr) && settings) {
+            LPWSTR current = nullptr;
+            hr = settings->get_UserSelectedProfile(&current);
+            if (SUCCEEDED(hr)) {
+                const bool isOff = !current || wcscmp(current, kQuietProfileOff) == 0;
+                hr = settings->put_UserSelectedProfile(isOff ? kQuietProfileDnd : kQuietProfileOff);
+                done = SUCCEEDED(hr);
+            }
+            CoTaskMemFree(current);
+            settings->Release();
+        }
+        if (!done) {
+            Wh_Log(L"Quick toggles: switching Do Not Disturb failed (0x%08X), opening Settings.",
+                   static_cast<unsigned>(hr));
+            ShellExecuteW(nullptr, L"open", L"ms-settings:notifications", nullptr, nullptr, SW_SHOWNORMAL);
+        }
+        if (SUCCEEDED(hrCo)) {
+            CoUninitialize();
+        }
+    }).detach();
 }
 
 void UnsubscribeDndNotification() {
@@ -8639,6 +8841,217 @@ DWORD WINAPI LyricsThreadProc(void*) {
     }
     return 0;
 }
+
+// In the Windhawk tool process, Windows.Devices.Radios can list Bluetooth but
+// leave Wi-Fi out entirely (its Wi-Fi radio manager is never loaded there),
+// although a plain desktop process on the same PC gets both. The Wi-Fi radio is
+// read, and switched, through the WLAN API instead. Returns -1 for no Wi-Fi
+// adapter, 0 off, 1 on. setTo 0 or 1 first sets every adapter's software radio
+// switch (the one the Wi-Fi quick setting flips; a hardware switch that is off
+// still wins), then reports the state that results.
+// wlanapi.dll is loaded at runtime because it is missing where the WLAN
+// service isn't installed (some Windows Server setups).
+int WlanWifiRadio(int setTo = -1) {
+    using OpenFn = DWORD(WINAPI*)(DWORD, PVOID, PDWORD, PHANDLE);
+    using CloseFn = DWORD(WINAPI*)(HANDLE, PVOID);
+    using EnumFn = DWORD(WINAPI*)(HANDLE, PVOID, PWLAN_INTERFACE_INFO_LIST*);
+    using QueryFn = DWORD(WINAPI*)(HANDLE, const GUID*, WLAN_INTF_OPCODE, PVOID, PDWORD, PVOID*,
+                                   PWLAN_OPCODE_VALUE_TYPE);
+    using SetFn = DWORD(WINAPI*)(HANDLE, const GUID*, WLAN_INTF_OPCODE, DWORD, const PVOID, PVOID);
+    using FreeFn = VOID(WINAPI*)(PVOID);
+    static HMODULE lib = LoadLibraryExW(L"wlanapi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!lib) {
+        return -1;
+    }
+    static auto open = reinterpret_cast<OpenFn>(GetProcAddress(lib, "WlanOpenHandle"));
+    static auto close = reinterpret_cast<CloseFn>(GetProcAddress(lib, "WlanCloseHandle"));
+    static auto enumIf = reinterpret_cast<EnumFn>(GetProcAddress(lib, "WlanEnumInterfaces"));
+    static auto query = reinterpret_cast<QueryFn>(GetProcAddress(lib, "WlanQueryInterface"));
+    static auto setIf = reinterpret_cast<SetFn>(GetProcAddress(lib, "WlanSetInterface"));
+    static auto freeMem = reinterpret_cast<FreeFn>(GetProcAddress(lib, "WlanFreeMemory"));
+    if (!open || !close || !enumIf || !query || !setIf || !freeMem) {
+        return -1;
+    }
+
+    DWORD version = 0;
+    HANDLE client = nullptr;
+    if (open(2, nullptr, &version, &client) != ERROR_SUCCESS) {
+        return -1;
+    }
+    auto readRadio = [&](const GUID& id) -> PWLAN_RADIO_STATE {
+        DWORD size = 0;
+        PWLAN_RADIO_STATE radio = nullptr;
+        if (query(client, &id, wlan_intf_opcode_radio_state, nullptr, &size,
+                  reinterpret_cast<PVOID*>(&radio), nullptr) != ERROR_SUCCESS) {
+            return nullptr;
+        }
+        return radio;
+    };
+
+    int state = -1;
+    PWLAN_INTERFACE_INFO_LIST list = nullptr;
+    if (enumIf(client, nullptr, &list) == ERROR_SUCCESS && list) {
+        for (DWORD i = 0; i < list->dwNumberOfItems; ++i) {
+            const GUID& id = list->InterfaceInfo[i].InterfaceGuid;
+            PWLAN_RADIO_STATE radio = readRadio(id);
+            if (!radio) {
+                continue;
+            }
+            if (setTo >= 0) {
+                const DOT11_RADIO_STATE want = setTo ? dot11_radio_state_on : dot11_radio_state_off;
+                for (DWORD p = 0; p < radio->dwNumberOfPhys && p < WLAN_MAX_PHY_INDEX; ++p) {
+                    WLAN_PHY_RADIO_STATE phy = radio->PhyRadioState[p];
+                    if (phy.dot11SoftwareRadioState == want) {
+                        continue;
+                    }
+                    phy.dwPhyIndex = p;
+                    phy.dot11SoftwareRadioState = want;
+                    const DWORD err = setIf(client, &id, wlan_intf_opcode_radio_state, sizeof(phy), &phy, nullptr);
+                    if (err != ERROR_SUCCESS) {
+                        Wh_Log(L"Quick toggles: switching Wi-Fi failed (error %lu).", err);
+                    }
+                }
+                freeMem(radio);
+                radio = readRadio(id);
+                if (!radio) {
+                    continue;
+                }
+            }
+            // On only when both the software switch and the hardware switch are on.
+            bool on = false;
+            for (DWORD p = 0; p < radio->dwNumberOfPhys && p < WLAN_MAX_PHY_INDEX; ++p) {
+                const auto& phy = radio->PhyRadioState[p];
+                if (phy.dot11SoftwareRadioState == dot11_radio_state_on &&
+                    phy.dot11HardwareRadioState == dot11_radio_state_on) {
+                    on = true;
+                }
+            }
+            state = std::max(state, on ? 1 : 0);
+            freeMem(radio);
+        }
+        freeMem(list);
+    }
+    close(client, nullptr);
+    return state;
+}
+
+// Reads and flips the Wi-Fi / Bluetooth radios for the Controls tab. Radio calls
+// are async WinRT and can take a moment, so they never run on the render thread.
+// Idle unless the tab was painted in the last few seconds or a toggle is pending.
+DWORD WINAPI RadioThreadProc(void*) {
+#if DYNAMIC_ISLAND_HAS_RADIOS
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    using winrt::Windows::Devices::Radios::Radio;
+    using winrt::Windows::Devices::Radios::RadioKind;
+    using winrt::Windows::Devices::Radios::RadioState;
+
+    bool accessRequested = false;
+    HANDLE waits[2] = {g_stopEvent, g_radioEvent};
+    while (WaitForMultipleObjects(g_radioEvent ? 2 : 1, waits, FALSE, 2000) != WAIT_OBJECT_0) {
+        const int request = g_radioToggleRequest.exchange(-1);
+        bool enabled = false;
+        {
+            std::lock_guard lock(g_settingsMutex);
+            enabled = g_settings.quickToggles;
+        }
+        const bool visible = (NowSeconds() - g_controlsViewTime.load(std::memory_order_relaxed)) < 3.0;
+        if (!enabled || (!visible && request < 0)) {
+            continue;
+        }
+
+        try {
+            if (!accessRequested) {
+                const auto access = Radio::RequestAccessAsync().get();
+                if (access != winrt::Windows::Devices::Radios::RadioAccessStatus::Allowed) {
+                    Wh_Log(L"Quick toggles: radio access status %d.", static_cast<int>(access));
+                }
+                accessRequested = true;
+            }
+            int wifi = -1;
+            int bt = -1;
+            unsigned listed = 0;
+            for (auto const& radio : Radio::GetRadiosAsync().get()) {
+                ++listed;
+                const RadioKind kind = radio.Kind();
+                const bool isWifi = kind == RadioKind::WiFi;
+                const bool isBt = kind == RadioKind::Bluetooth;
+                if (!isWifi && !isBt) continue;
+
+                bool on = radio.State() == RadioState::On;
+                if ((isWifi && request == kToggleWifi) || (isBt && request == kToggleBluetooth)) {
+                    const auto result = radio.SetStateAsync(on ? RadioState::Off : RadioState::On).get();
+                    if (result == winrt::Windows::Devices::Radios::RadioAccessStatus::Allowed) {
+                        on = radio.State() == RadioState::On;
+                    } else {
+                        Wh_Log(L"Quick toggles: Windows refused the radio change (status %d).",
+                               static_cast<int>(result));
+                    }
+                }
+                // Several adapters of one kind: any that is on counts as on.
+                int& slot = isWifi ? wifi : bt;
+                slot = std::max(slot, on ? 1 : 0);
+            }
+            // No Wi-Fi radio from WinRT: read it, and on a click switch it,
+            // through the WLAN API.
+            bool viaWlan = false;
+            if (wifi < 0) {
+                int setTo = -1;
+                if (request == kToggleWifi) {
+                    setTo = g_wifiRadioState.load(std::memory_order_relaxed) == 1 ? 0 : 1;
+                }
+                wifi = WlanWifiRadio(setTo);
+                viaWlan = wifi >= 0;
+            }
+
+            // Both exchanges must run every pass; joined with || the Bluetooth
+            // one was skipped whenever Wi-Fi changed.
+            const bool wifiChanged = g_wifiRadioState.exchange(wifi) != wifi;
+            const bool btChanged = g_bluetoothRadioState.exchange(bt) != bt;
+            if (wifiChanged || btChanged) {
+                Wh_Log(L"Quick toggles: %u radios listed, Wi-Fi %d%s, Bluetooth %d (-1 = none, 0 = off, 1 = on).",
+                       listed, wifi, viaWlan ? L" (from WLAN API)" : L"", bt);
+            }
+            if (wifiChanged || btChanged || request >= 0) {
+                g_layoutDirty = true;
+            }
+        } catch (winrt::hresult_error const& e) {
+            Wh_Log(L"Quick toggles: reading the radios failed (0x%08X).", static_cast<unsigned>(e.code()));
+        } catch (...) {
+            Wh_Log(L"Quick toggles: reading the radios failed.");
+        }
+    }
+    winrt::uninit_apartment();
+#endif
+    return 0;
+}
+
+void ToggleEndpointMute();  // defined with the other window actions
+
+// Runs one Controls button. Render thread (window procedure).
+void RunQuickToggle(int id) {
+    switch (id) {
+        case kToggleWifi:
+        case kToggleBluetooth:
+            g_radioToggleRequest.store(id);
+            if (g_radioEvent) SetEvent(g_radioEvent);
+            break;
+        case kToggleMute:
+            g_quietMuteUntil.store(NowSeconds() + 1.0, std::memory_order_relaxed);
+            ToggleEndpointMute();
+            break;
+        case kToggleDnd:
+            g_quietDndUntil.store(NowSeconds() + 3.0, std::memory_order_relaxed);
+            ToggleDoNotDisturbAsync();
+            break;
+        case kToggleNightLight:
+            ShellExecuteW(nullptr, L"open", L"ms-settings:nightlight", nullptr, nullptr, SW_SHOWNORMAL);
+            break;
+        default:
+            break;
+    }
+    g_layoutDirty = true;
+}
+
 DWORD WINAPI AudioThreadProc(void*) {
     HRESULT hrCo = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
@@ -8934,7 +9347,9 @@ void ApplyVolumeReading(float level, bool muted, bool canSurface) {
         g_state.system.volumeMuted = muted;
         g_state.muted = muted;
 
-        if (canSurface && changed && flyoutEnabled) {
+        // A mute flipped from the Controls tab updates its button instead.
+        const bool quiet = NowSeconds() < g_quietMuteUntil.load(std::memory_order_relaxed);
+        if (canSurface && changed && flyoutEnabled && !quiet) {
             surfaced = !g_state.volume.active;
             g_state.volume.active = true;
             g_state.volume.percent = percent;
@@ -9455,9 +9870,24 @@ void UpdatePrivacyIndicators() {
     g_state.system.cameraApp = camApp;
 }
 
+// Right after a copy, other clipboard listeners (Windows' own clipboard history
+// among them) often have the clipboard open for a moment, and a single
+// OpenClipboard attempt then fails. Without a retry roughly every other quick
+// copy was lost, from both the copy pill and the history. Worst case this
+// blocks for ~80 ms when something holds the clipboard for good.
+bool OpenClipboardWithRetry(HWND hwnd) {
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        if (OpenClipboard(hwnd)) {
+            return true;
+        }
+        Sleep(10);
+    }
+    return false;
+}
+
 std::wstring ReadClipboardText(HWND hwnd) {
     std::wstring text;
-    if (!OpenClipboard(hwnd)) {
+    if (!OpenClipboardWithRetry(hwnd)) {
         return text;
     }
 
@@ -9480,7 +9910,7 @@ std::wstring ReadClipboardText(HWND hwnd) {
 // app actually placed on the clipboard (CF_DIB/CF_DIBV5) — Windows
 // synthesizes CF_BITMAP from those automatically.
 bool ReadClipboardImagePixels(HWND hwnd, BitmapPixels* outPixels, UINT maxDim) {
-    if (!outPixels || !OpenClipboard(hwnd)) {
+    if (!outPixels || !OpenClipboardWithRetry(hwnd)) {
         return false;
     }
 
@@ -9738,7 +10168,74 @@ void CaptureShellNotification(HWND hwnd) {
     }).detach();
 }
 
+constexpr size_t kClipboardHistoryCapacity = 25;
+constexpr size_t kClipboardHistoryMaxChars = 20000;
+
+// Password managers and other privacy-aware apps tag sensitive copies with
+// these registered formats, which is also what keeps them out of Windows' own
+// Win+V history. Such copies are never recorded.
+bool ClipboardContentIsPrivate() {
+    static const UINT kExclude = RegisterClipboardFormatW(L"ExcludeClipboardContentFromMonitorProcessing");
+    static const UINT kHistory = RegisterClipboardFormatW(L"CanIncludeInClipboardHistory");
+    if (kExclude && IsClipboardFormatAvailable(kExclude)) {
+        return true;
+    }
+    if (kHistory && IsClipboardFormatAvailable(kHistory)) {
+        // DWORD 0 means "do not keep this in history". If the flag can't be
+        // read, treat the copy as private rather than risk recording it.
+        bool exclude = true;
+        if (OpenClipboardWithRetry(nullptr)) {
+            exclude = false;
+            if (HANDLE h = GetClipboardData(kHistory)) {
+                if (GlobalSize(h) >= sizeof(DWORD)) {
+                    if (const auto* v = static_cast<const DWORD*>(GlobalLock(h))) {
+                        exclude = (*v == 0);
+                        GlobalUnlock(h);
+                    }
+                }
+            }
+            CloseClipboard();
+        }
+        return exclude;
+    }
+    return false;
+}
+
+// Adds a copy to the history, promoting an identical earlier entry instead of
+// duplicating it. Caller holds no locks.
+void PushClipboardHistory(std::wstring text) {
+    while (!text.empty() && iswspace(text.back())) text.pop_back();
+    if (text.empty()) {
+        return;
+    }
+    if (text.size() > kClipboardHistoryMaxChars) {
+        text.resize(kClipboardHistoryMaxChars);
+    }
+    std::lock_guard lock(g_stateMutex);
+    auto& list = g_state.clipboardHistory;
+    list.erase(std::remove(list.begin(), list.end(), text), list.end());
+    list.push_back(std::move(text));
+    while (list.size() > kClipboardHistoryCapacity) {
+        list.erase(list.begin());
+    }
+}
+
 void CaptureClipboard(HWND hwnd) {
+    bool historyOn = false;
+    {
+        std::lock_guard lock(g_settingsMutex);
+        historyOn = g_settings.clipboardHistory;
+    }
+    if (historyOn && !ClipboardContentIsPrivate()) {
+        PushClipboardHistory(ReadClipboardText(hwnd));
+    }
+    {
+        std::lock_guard lock(g_settingsMutex);
+        if (!g_settings.clipboard) {
+            return;  // history only; no preview pill
+        }
+    }
+
     ClipboardSnapshot clip;
     clip.expiresAt = NowSeconds() + 2.5;
     HWND owner = GetClipboardOwner();
@@ -12479,6 +12976,15 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
                     clearLabel.c_str());
         AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(trayMenu), Loc(L"File Tray"));
     }
+    if (g_settings.clipboardHistory) {
+        size_t clipCount = 0;
+        {
+            std::lock_guard lock(g_stateMutex);
+            clipCount = g_state.clipboardHistory.size();
+        }
+        AppendMenuW(menu, MF_STRING | (clipCount == 0 ? (MF_GRAYED | MF_DISABLED) : 0), 45,
+                    L"Clear clipboard history");
+    }
     AppendMenuW(menu, MF_STRING, 2, L"Pin expanded");
     AppendMenuW(menu, MF_STRING, 3, g_gameOverlayPinned.load() ? L"Hide game overlay" : L"Show game overlay");
     {
@@ -12798,6 +13304,16 @@ void ShowContextMenu(HWND hwnd, POINT screenPoint) {
         case 44:
             StartSongRecognition(hwnd);
             break;
+        case 45: {
+            {
+                std::lock_guard lock(g_stateMutex);
+                g_state.clipboardHistory.clear();
+            }
+            g_clipHistoryScroll = 0;
+            g_hoveredClipRow = -1;
+            g_layoutDirty = true;
+            break;
+        }
         case 42:
             PasteIntoFileTray(hwnd);
             break;
@@ -15543,6 +16059,236 @@ class Renderer {
         mutedBrush_->SetOpacity(0.75f);
     }
 
+    // Clipboard history (Modules.ClipboardHistory): the last text copies, newest
+    // first, in the same row style as the File Tray. Click a row to copy it again.
+    void DrawClipboardHistoryDashboard(const SharedState& state, D2D1_RECT_F rect, float scale) {
+        const float padX = FileTrayLayout::kPadX * scale;
+        const std::vector<std::wstring>& items = state.clipboardHistory;
+        const int total = static_cast<int>(items.size());
+
+        const D2D1_RECT_F headerRect = D2D1::RectF(rect.left + padX, rect.top + 18.0f * scale,
+                                                   rect.right - padX, rect.top + 38.0f * scale);
+        textBrush_->SetOpacity(0.96f);
+        if (boldTextFormat_) {
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            const wchar_t* title = L"Clipboard";
+            target_->DrawTextW(title, static_cast<UINT32>(wcslen(title)), boldTextFormat_.Get(),
+                               headerRect, textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        }
+
+        const float clearSize = FileTrayLayout::kClearBtnSize * scale;
+        const float clearTop = rect.top + FileTrayLayout::kClearBtnTop * scale;
+        const D2D1_RECT_F clearBox = D2D1::RectF(rect.right - padX - clearSize, clearTop,
+                                                 rect.right - padX, clearTop + clearSize);
+        DrawTrayBinButton(clearBox, total > 0, g_hoveredClipClear.load(std::memory_order_relaxed));
+
+        if (total > 0 && smallTextFormat_) {
+            wchar_t countBuf[48] = {};
+            swprintf_s(countBuf, L"%d %s", total, Loc(total == 1 ? L"item" : L"items"));
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+            mutedBrush_->SetOpacity(0.75f);
+            target_->DrawTextW(countBuf, static_cast<UINT32>(wcslen(countBuf)), smallTextFormat_.Get(),
+                               D2D1::RectF(headerRect.left, headerRect.top,
+                                           clearBox.left - 8.0f * scale, headerRect.bottom),
+                               mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        }
+
+        const float listTop = rect.top + FileTrayLayout::kListTop * scale;
+        const float listBottom = rect.bottom - FileTrayLayout::kListBottomInset * scale;
+
+        if (total == 0) {
+            if (textFormat_) {
+                textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                const wchar_t* hint = L"Copied text will appear here";
+                mutedBrush_->SetOpacity(0.70f);
+                target_->DrawTextW(hint, static_cast<UINT32>(wcslen(hint)), textFormat_.Get(),
+                                   D2D1::RectF(rect.left + padX, listTop, rect.right - padX, listBottom),
+                                   mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+                textFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                textFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+            mutedBrush_->SetOpacity(0.75f);
+            return;
+        }
+
+        const float rowH = FileTrayLayout::kRowHeight * scale;
+        const float rowGap = FileTrayLayout::kRowGap * scale;
+        const int capacity = FileTrayLayout::VisibleRowCapacity((rect.bottom - rect.top) / scale);
+        const int offset = ClipHistoryScrollOffset(total);
+        const int hoveredRow = g_hoveredClipRow.load(std::memory_order_relaxed);
+
+        for (int drawn = 0; drawn < capacity; ++drawn) {
+            const int index = total - 1 - (offset + drawn);
+            if (index < 0) break;
+            const float rowTop = listTop + drawn * (rowH + rowGap);
+            const D2D1_RECT_F row = D2D1::RectF(rect.left + padX, rowTop, rect.right - padX, rowTop + rowH);
+            DrawCard(row, 9.0f * scale, hoveredRow == drawn);
+
+            // One line: whitespace collapsed so a multi-line copy still reads.
+            std::wstring line;
+            line.reserve(std::min<size_t>(items[index].size(), 160));
+            bool space = false;
+            for (wchar_t ch : items[index]) {
+                if (iswspace(ch)) {
+                    space = !line.empty();
+                    continue;
+                }
+                if (space) { line.push_back(L' '); space = false; }
+                line.push_back(ch);
+                if (line.size() >= 160) break;
+            }
+
+            if (iconFormat_) {
+                accentBrush_->SetOpacity(0.80f);
+                const D2D1_RECT_F iconRect = D2D1::RectF(row.left + 8.0f * scale, row.top,
+                                                         row.left + 26.0f * scale, row.bottom);
+                iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                target_->DrawTextW(L"", 1, iconFormat_.Get(), iconRect, accentBrush_.Get(),
+                                   D2D1_DRAW_TEXT_OPTIONS_NONE);
+                iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                accentBrush_->SetOpacity(1.0f);
+            }
+
+            if (smallTextFormat_) {
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                textBrush_->SetOpacity(0.94f);
+                target_->DrawTextW(line.c_str(), static_cast<UINT32>(line.size()), smallTextFormat_.Get(),
+                                   D2D1::RectF(row.left + 32.0f * scale, row.top,
+                                               row.right - 10.0f * scale, row.bottom),
+                                   textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                smallTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+        }
+
+        // Thin scrollbar while some rows are out of view (the wheel scrolls the list).
+        if (total > FileTrayRestCapacity()) {
+            const float trackH = static_cast<float>(capacity) * rowH + static_cast<float>(capacity - 1) * rowGap;
+            const float barX = rect.right - padX + FileTrayLayout::kScrollbarGap * scale;
+            const float barW = FileTrayLayout::kScrollbarWidth * scale;
+            const D2D1_RECT_F track = D2D1::RectF(barX, listTop, barX + barW, listTop + trackH);
+            if (ID2D1SolidColorBrush* trackBrush = AcquireBrush(material_.raisedStrong)) {
+                target_->FillRoundedRectangle(D2D1::RoundedRect(track, barW * 0.5f, barW * 0.5f), trackBrush);
+            }
+            const float thumbH = std::max(14.0f * scale, trackH * capacity / static_cast<float>(total));
+            const int maxScroll = ClipHistoryMaxScroll(total);
+            const float t = maxScroll > 0 ? static_cast<float>(offset) / maxScroll : 0.0f;
+            const float thumbTop = track.top + (trackH - thumbH) * t;
+            if (ID2D1SolidColorBrush* thumb = AcquireBrush(WithAlpha(material_.accent, 0.80f * settingsOpacity_))) {
+                target_->FillRoundedRectangle(
+                    D2D1::RoundedRect(D2D1::RectF(track.left, thumbTop, track.right, thumbTop + thumbH),
+                                      barW * 0.5f, barW * 0.5f),
+                    thumb);
+            }
+        }
+
+        textBrush_->SetOpacity(0.96f);
+        mutedBrush_->SetOpacity(0.75f);
+    }
+
+    // Controls tab (Modules.QuickToggles). Toggles that are on take the accent
+    // fill; the Night light Settings shortcut carries a small arrow instead of a state.
+    void DrawQuickTogglesDashboard(const SharedState& state, D2D1_RECT_F rect, double now) {
+        // Opening the tab after a while away reads the radios right away instead
+        // of waiting out the worker's 2 s tick. Only on that transition, never per
+        // frame: a PC with no radios would otherwise re-query them every frame.
+        const double lastView = g_controlsViewTime.exchange(now, std::memory_order_relaxed);
+        if (g_radioEvent && now - lastView > 3.0) {
+            SetEvent(g_radioEvent);
+        }
+
+        if (boldTextFormat_) {
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            textBrush_->SetOpacity(0.96f);
+            const wchar_t* title = L"Controls";
+            target_->DrawTextW(title, static_cast<UINT32>(wcslen(title)), boldTextFormat_.Get(),
+                               D2D1::RectF(rect.left + FileTrayLayout::kPadX, rect.top + 18.0f,
+                                           rect.right - FileTrayLayout::kPadX, rect.top + 38.0f),
+                               textBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+            boldTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        }
+
+        const int wifi = g_wifiRadioState.load(std::memory_order_relaxed);
+        const int bt = g_bluetoothRadioState.load(std::memory_order_relaxed);
+        const bool muted = state.system.volumeMuted;
+        const int hovered = g_hoveredQuickToggle.load(std::memory_order_relaxed);
+
+        struct Button {
+            const wchar_t* glyph;
+            const wchar_t* label;
+            int state;  // -1 unavailable, 0 off, 1 on, 2 = shortcut (no state)
+        };
+        const Button buttons[QuickToggleLayout::kCount] = {
+            {L"", L"Wi-Fi", wifi},
+            {L"", L"Bluetooth", bt},
+            {muted ? L"" : L"", muted ? L"Muted" : L"Sound", muted ? 1 : 0},
+            {L"", L"Focus", g_isDnDActive.load(std::memory_order_relaxed) ? 1 : 0},
+            {L"", L"Night light", 2},
+        };
+
+        const float cx = (rect.left + rect.right) * 0.5f;
+        const float cy = rect.top + QuickToggleLayout::kRowY;
+        const float r = QuickToggleLayout::kRadius;
+        for (int i = 0; i < QuickToggleLayout::kCount; ++i) {
+            const Button& b = buttons[i];
+            const float bx = cx + (i - (QuickToggleLayout::kCount - 1) * 0.5f) * QuickToggleLayout::kSpacing;
+            const D2D1_POINT_2F c = D2D1::Point2F(bx, cy);
+            const bool on = b.state == 1;
+            const bool unavailable = b.state == -1;
+
+            D2D1_COLOR_F fill = on ? WithAlpha(material_.accent, 0.92f * settingsOpacity_)
+                                   : WithAlpha(material_.raisedStrong, material_.raisedStrong.a *
+                                                   (hovered == i ? 1.8f : 1.0f));
+            if (ID2D1SolidColorBrush* brush = AcquireBrush(fill)) {
+                target_->FillEllipse(D2D1::Ellipse(c, r, r), brush);
+            }
+
+            if (iconFormat_) {
+                iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                // On an accent fill the glyph needs to contrast with the accent, not the island.
+                const D2D1_COLOR_F ink = on ? (RelativeLuminance(material_.accent) > 0.45
+                                                   ? D2D1::ColorF(0, 0, 0, 0.90f)
+                                                   : D2D1::ColorF(1, 1, 1, 0.98f))
+                                            : WithAlpha(material_.textPrimary, unavailable ? 0.35f : 0.92f);
+                if (ID2D1SolidColorBrush* inkBrush = AcquireBrush(ink)) {
+                    target_->DrawTextW(b.glyph, 1, iconFormat_.Get(),
+                                       D2D1::RectF(bx - r, cy - r, bx + r, cy + r), inkBrush,
+                                       D2D1_DRAW_TEXT_OPTIONS_NONE);
+                }
+                iconFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+                iconFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            }
+
+            if (b.state == 2) {
+                // Shortcut marker: a small arrow at the button's top-right.
+                if (ID2D1SolidColorBrush* mark = AcquireBrush(WithAlpha(material_.textSecondary, 0.85f))) {
+                    const D2D1_POINT_2F tip = D2D1::Point2F(bx + r * 0.78f, cy - r * 0.78f);
+                    target_->DrawLine(D2D1::Point2F(tip.x - 5.0f, tip.y + 5.0f), tip, mark, 1.3f, RoundStroke());
+                    target_->DrawLine(D2D1::Point2F(tip.x - 4.0f, tip.y), tip, mark, 1.3f, RoundStroke());
+                    target_->DrawLine(D2D1::Point2F(tip.x, tip.y + 4.0f), tip, mark, 1.3f, RoundStroke());
+                }
+            }
+
+            if (smallTextFormat_) {
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                mutedBrush_->SetOpacity(unavailable ? 0.40f : 0.80f);
+                const float labelTop = rect.top + QuickToggleLayout::kLabelTop;
+                target_->DrawTextW(b.label, static_cast<UINT32>(wcslen(b.label)), smallTextFormat_.Get(),
+                                   D2D1::RectF(bx - QuickToggleLayout::kSpacing * 0.5f, labelTop,
+                                               bx + QuickToggleLayout::kSpacing * 0.5f,
+                                               labelTop + QuickToggleLayout::kLabelH),
+                                   mutedBrush_.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                smallTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+            }
+        }
+
+        textBrush_->SetOpacity(0.96f);
+        mutedBrush_->SetOpacity(0.75f);
+    }
+
     // Load colour is *semantic*, not decorative: the accent while a component is
     // comfortable, amber under pressure, red when saturated. The previous design
     // assigned a fixed rainbow colour per metric, which carried no information
@@ -16595,6 +17341,8 @@ class Renderer {
             if (settings.weather) activeTabs.push_back(1);
             if (settings.hardwareMonitorModule) activeTabs.push_back(2);
             if (settings.fileTrayModule) activeTabs.push_back(4);
+            if (settings.clipboardHistory) activeTabs.push_back(6);
+            if (settings.quickToggles) activeTabs.push_back(7);
 
             int maxTabs = static_cast<int>(activeTabs.size());
             int tabIdx = NormalizedTabIndex(settings);
@@ -16615,6 +17363,8 @@ class Renderer {
                 else if (activeTabId == 1) DrawWeatherDashboard(state, fullRect, settings, now, scale, hasWeather, wIcon, wText);
                 else if (activeTabId == 2) DrawHardwareMonitorDashboard(state, fullRect, settings, scale);
                 else if (activeTabId == 4) DrawFileTrayDashboard(state, fullRect, settings, scale);
+                else if (activeTabId == 6) DrawClipboardHistoryDashboard(state, fullRect, scale);
+                else if (activeTabId == 7) DrawQuickTogglesDashboard(state, fullRect, now);
             });
 
             DrawTabPagination(fullRect, maxTabs);
@@ -17167,6 +17917,8 @@ class Renderer {
             if (settings.weather) activeTabs.push_back(2);
             if (settings.hardwareMonitorModule) activeTabs.push_back(3);
             if (settings.fileTrayModule) activeTabs.push_back(4);
+            if (settings.clipboardHistory) activeTabs.push_back(6);
+            if (settings.quickToggles) activeTabs.push_back(7);
             if (settings.lyrics && !lyricsFirst) activeTabs.push_back(5);  // Lyrics (last)
 
             // Same settings object as the list above, so the index can't be
@@ -17416,6 +18168,10 @@ class Renderer {
                 DrawHardwareMonitorDashboard(state, rect, settings, 1.0f);
             } else if (activeTabId == 4) {
                 DrawFileTrayDashboard(state, rect, settings, 1.0f);
+            } else if (activeTabId == 6) {
+                DrawClipboardHistoryDashboard(state, rect, 1.0f);
+            } else if (activeTabId == 7) {
+                DrawQuickTogglesDashboard(state, rect, now);
             } else if (activeTabId == 5) {
                 // Laid out at the final expanded size and pinned to the top, so growing
                 // the island only reveals the lyrics instead of sliding them around.
@@ -23703,8 +24459,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
 
         case WM_CLIPBOARDUPDATE:
-            if (g_settings.clipboard) {
-                CaptureClipboard(hwnd);
+            if (g_settings.clipboard || g_settings.clipboardHistory) {
+                CaptureClipboard(hwnd);  // checks each of the two itself
             }
             return 0;
 
@@ -23795,6 +24551,18 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         SetCursor(LoadCursorW(nullptr, IDC_HAND));
                         return TRUE;
                     }
+                }
+
+                if (g_settings.quickToggles && currentTab == QuickTogglesTabIndex(g_settings) &&
+                    g_hoveredQuickToggle.load(std::memory_order_relaxed) >= 0) {
+                    SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                    return TRUE;
+                }
+                if (g_settings.clipboardHistory && currentTab == ClipboardHistoryTabIndex(g_settings) &&
+                    (g_hoveredClipRow.load(std::memory_order_relaxed) >= 0 ||
+                     g_hoveredClipClear.load(std::memory_order_relaxed))) {
+                    SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                    return TRUE;
                 }
 
                 // A File Tray row under the cursor is clickable (opens the file).
@@ -23974,6 +24742,33 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                     hoveredAction = hoveredRow;
                 }
             }
+            // Controls tab hover.
+            {
+                int toggle = -1;
+                if (g_settings.quickToggles && currentTab == QuickTogglesTabIndex(g_settings)) {
+                    toggle = QuickToggleHitTest(MediaContentFromClient(xPos, yPos));
+                }
+                if (g_hoveredQuickToggle.exchange(toggle) != toggle) g_layoutDirty = true;
+            }
+
+            // Clipboard history hover: row highlight and the bin.
+            {
+                int clipRow = -1;
+                bool clipClear = false;
+                if (g_settings.clipboardHistory && currentTab == ClipboardHistoryTabIndex(g_settings)) {
+                    int clipCount = 0;
+                    {
+                        std::lock_guard lock(g_stateMutex);
+                        clipCount = static_cast<int>(g_state.clipboardHistory.size());
+                    }
+                    const MediaContentPoint clipPt = MediaContentFromClient(xPos, yPos);
+                    clipClear = clipCount > 0 && FileTrayClearHitTest(clipPt);
+                    clipRow = clipClear ? -1 : ClipHistoryRowAt(clipPt, clipCount);
+                }
+                if (g_hoveredClipRow.exchange(clipRow) != clipRow) g_layoutDirty = true;
+                if (g_hoveredClipClear.exchange(clipClear) != clipClear) g_layoutDirty = true;
+            }
+
             bool trayHoverChanged = false;
             if (g_hoveredFileTrayRow.exchange(hoveredRow) != hoveredRow) {
                 trayHoverChanged = true;
@@ -24012,6 +24807,12 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             }
             s_trayPressActive = false;
             if (g_hoveredFileTrayRow.exchange(-1) != -1) {
+                g_layoutDirty = true;
+            }
+            if (g_hoveredClipRow.exchange(-1) != -1 || g_hoveredClipClear.exchange(false)) {
+                g_layoutDirty = true;
+            }
+            if (g_hoveredQuickToggle.exchange(-1) != -1) {
                 g_layoutDirty = true;
             }
             if (g_hoveredFileTrayAction.exchange(-1) != -1) {
@@ -24141,6 +24942,49 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 const int currentTab = NormalizedTabIndex(g_settings);
 
                 const MediaContentPoint cp = MediaContentFromClient(xPos, yPos);
+
+                // Controls tab: run the button under the cursor.
+                if (g_settings.quickToggles && currentTab == QuickTogglesTabIndex(g_settings)) {
+                    const int toggle = QuickToggleHitTest(cp);
+                    if (toggle >= 0) {
+                        RunQuickToggle(toggle);
+                    }
+                    return 0;
+                }
+
+                // Clipboard history: a row copies that text again, the bin forgets them all.
+                if (g_settings.clipboardHistory && currentTab == ClipboardHistoryTabIndex(g_settings)) {
+                    std::wstring toCopy;
+                    bool cleared = false;
+                    {
+                        std::lock_guard lock(g_stateMutex);
+                        auto& list = g_state.clipboardHistory;
+                        const int count = static_cast<int>(list.size());
+                        if (count > 0 && FileTrayClearHitTest(cp)) {
+                            list.clear();
+                            cleared = true;
+                        } else {
+                            const int row = ClipHistoryRowAt(cp, count);
+                            if (row >= 0) {
+                                const int index = ClipHistoryItemForRow(row, count);
+                                if (index >= 0 && index < count) toCopy = list[static_cast<size_t>(index)];
+                            }
+                        }
+                    }
+                    if (cleared) {
+                        g_clipHistoryScroll = 0;
+                        g_hoveredClipRow = -1;
+                        g_hoveredClipClear = false;
+                    }
+                    if (!toCopy.empty()) {
+                        // The resulting WM_CLIPBOARDUPDATE moves it to the top and
+                        // shows the usual "Copied" pill as confirmation.
+                        g_clipHistoryScroll = 0;
+                        CopyTextToClipboard(hwnd, toCopy);
+                    }
+                    g_layoutDirty = true;
+                    return 0;  // a click on the list never falls through to "open the media app"
+                }
 
                 // File Tray: the bin clears the shelf, the cut button removes one file,
                 // and a plain click on a row opens it with its default app. (Dragging a
@@ -24355,6 +25199,39 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                         return 0;
                     }
                     s_trayWheelAccum = 0;  // fresh gesture at the edge: fall through to tab switching
+                }
+            }
+
+            // Clipboard history: the wheel scrolls the list while the cursor is over
+            // it and there is somewhere to go; at either end it switches tabs as usual.
+            if (g_settings.clipboardHistory &&
+                NormalizedTabIndex(g_settings) == ClipboardHistoryTabIndex(g_settings)) {
+                POINT wheelPt = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ScreenToClient(hwnd, &wheelPt);
+                const MediaContentPoint wheelCp = MediaContentFromClient(wheelPt.x, wheelPt.y);
+                int clipCount = 0;
+                {
+                    std::lock_guard lock(g_stateMutex);
+                    clipCount = static_cast<int>(g_state.clipboardHistory.size());
+                }
+                if (clipCount > FileTrayRestCapacity() && FileTrayListHitTest(wheelCp)) {
+                    static int s_clipWheelAccum = 0;
+                    if ((s_clipWheelAccum > 0) != (delta > 0)) s_clipWheelAccum = 0;
+                    s_clipWheelAccum += delta;
+                    const int steps = abs(s_clipWheelAccum) / WHEEL_DELTA;
+                    const int dir = delta > 0 ? -1 : 1;  // wheel up = toward the newest
+                    const int offset = ClipHistoryScrollOffset(clipCount);
+                    const bool canScroll = dir < 0 ? offset > 0 : offset < ClipHistoryMaxScroll(clipCount);
+                    if (canScroll) {
+                        if (steps > 0) {
+                            s_clipWheelAccum -= (s_clipWheelAccum > 0 ? 1 : -1) * steps * WHEEL_DELTA;
+                            ClipHistoryScrollBy(clipCount, dir * steps);
+                            g_hoveredClipRow = ClipHistoryRowAt(wheelCp, clipCount);
+                            g_layoutDirty = true;
+                        }
+                        return 0;
+                    }
+                    s_clipWheelAccum = 0;
                 }
             }
 
@@ -25577,6 +26454,7 @@ bool StartThreads() {
     g_stopEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     g_settingsChangedEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     g_mediaRefreshEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    g_radioEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!g_stopEvent || !g_settingsChangedEvent) {
         return false;
     }
@@ -25597,6 +26475,7 @@ bool StartThreads() {
     g_notificationThread = CreateThread(nullptr, 0, NotificationThreadProc, nullptr, 0, nullptr);
 #endif
     g_bluetoothThread = CreateThread(nullptr, 0, BluetoothThreadProc, nullptr, 0, nullptr);
+    g_radioThread = CreateThread(nullptr, 0, RadioThreadProc, nullptr, 0, nullptr);
     SubscribeDndNotification();
 
     return true;
@@ -25614,7 +26493,7 @@ void StopThreads() {
         SetEvent(g_stopEvent);
     }
 
-    HANDLE handles[] = {g_renderThread, g_mediaThread, g_audioThread, g_weatherThread, g_lyricsThread, g_notificationThread, g_keyboardThread, g_mouseThread, g_bluetoothThread};
+    HANDLE handles[] = {g_renderThread, g_mediaThread, g_audioThread, g_weatherThread, g_lyricsThread, g_notificationThread, g_keyboardThread, g_mouseThread, g_bluetoothThread, g_radioThread};
     for (HANDLE handle : handles) {
         if (handle) {
             WaitForSingleObject(handle, 3000);
@@ -25633,6 +26512,7 @@ void StopThreads() {
     g_mouseThread = nullptr;
     g_mouseThreadId = 0;
     g_bluetoothThread = nullptr;
+    g_radioThread = nullptr;
 
     if (g_stopEvent) {
         CloseHandle(g_stopEvent);
@@ -25645,6 +26525,10 @@ void StopThreads() {
     if (g_mediaRefreshEvent) {
         CloseHandle(g_mediaRefreshEvent);
         g_mediaRefreshEvent = nullptr;
+    }
+    if (g_radioEvent) {
+        CloseHandle(g_radioEvent);
+        g_radioEvent = nullptr;
     }
 
     g_running = false;
