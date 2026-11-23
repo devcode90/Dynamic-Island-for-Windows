@@ -19560,6 +19560,25 @@ class Renderer {
         return h;
     }
 
+    static D2D1_RECT_F ComputeCoverSourceRect(ID2D1Bitmap* bitmap, const D2D1_RECT_F& dst) {
+        const D2D1_SIZE_F srcSize = bitmap->GetSize();
+        const float dstW = dst.right - dst.left;
+        const float dstH = dst.bottom - dst.top;
+        if (srcSize.width <= 0.0f || srcSize.height <= 0.0f || dstW <= 0.0f || dstH <= 0.0f) {
+            return D2D1::RectF(0.0f, 0.0f, srcSize.width, srcSize.height);
+        }
+        const float srcAspect = srcSize.width / srcSize.height;
+        const float dstAspect = dstW / dstH;
+        if (srcAspect > dstAspect) {
+            const float cropW = srcSize.height * dstAspect;
+            const float x = (srcSize.width - cropW) * 0.5f;
+            return D2D1::RectF(x, 0.0f, x + cropW, srcSize.height);
+        }
+        const float cropH = srcSize.width / dstAspect;
+        const float y = (srcSize.height - cropH) * 0.5f;
+        return D2D1::RectF(0.0f, y, srcSize.width, y + cropH);
+    }
+
     void DrawArtFace(ID2D1Bitmap* bitmap, D2D1_RECT_F rect, float radius) {
         ComPtr<ID2D1RoundedRectangleGeometry> mask;
         HRESULT hrMask = d2dFactory_->CreateRoundedRectangleGeometry(D2D1::RoundedRect(rect, radius, radius), &mask);
@@ -19572,7 +19591,8 @@ class Renderer {
             target_->PushAxisAlignedClip(rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
         }
         if (bitmap) {
-            target_->DrawBitmap(bitmap, rect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            const D2D1_RECT_F src = ComputeCoverSourceRect(bitmap, rect);
+            target_->DrawBitmap(bitmap, rect, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src);
         } else {
             accentBrush_->SetOpacity(0.24f);
             target_->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), accentBrush_.Get());
@@ -19697,7 +19717,8 @@ class Renderer {
             target_->SetTransform(
                 D2D1::Matrix3x2F::Rotation(angle - lag * static_cast<float>(k), c) * scaled);
             if (bitmap) {
-                target_->DrawBitmap(bitmap, rect, a, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                const D2D1_RECT_F src = ComputeCoverSourceRect(bitmap, rect);
+                target_->DrawBitmap(bitmap, rect, a, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src);
             } else {
                 accentBrush_->SetOpacity(0.24f);
                 target_->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), accentBrush_.Get());
@@ -20270,8 +20291,9 @@ class Renderer {
             EnsureArtBitmap(media);
 
             D2D1_RECT_F dst = D2D1::RectF(rect.left, rect.top, rect.right, rect.bottom);
+            const D2D1_RECT_F src = ComputeCoverSourceRect(artBitmap_.Get(), dst);
             target_->DrawBitmap(artBitmap_.Get(), dst, 1.0f,
-                                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                                D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src);
         } else {
             accentBrush_->SetOpacity(0.24f);
             target_->FillRoundedRectangle(D2D1::RoundedRect(rect, radius, radius), accentBrush_.Get());
