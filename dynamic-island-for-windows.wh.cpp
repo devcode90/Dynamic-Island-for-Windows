@@ -25427,6 +25427,9 @@ DWORD WINAPI RenderThreadProc(void*) {
             Settings renderSettings = GetSettingsCopy();
             if (ctrlHoverCT) {
                 renderSettings.pillOpacity = Clamp(renderSettings.pillOpacity * 0.35f, 0.15f, 0.45f);
+                // The separate DWM window still blurs and can intercept clicks.
+                // Sync hides it for this frame; the saved material is restored on release.
+                renderSettings.backdropMaterial = BackdropMaterial::None;
             } else if (renderSettings.themePreset == ThemePreset::Graphite && g_pillOpacityOverride.load() < 0) {
                 const bool isExpanded = isHoverExpanded || pinned || isTransientAlert || (widthSpring.value > 260.0f);
                 renderSettings.pillOpacity = isExpanded ? 0.98f : 0.88f;
